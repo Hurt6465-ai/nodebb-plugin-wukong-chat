@@ -37,170 +37,170 @@
   };
 
   var LANG_LIST = [
-    { n: "涓枃", code: "zh-CN", f: "馃嚚馃嚦" },
-    { n: "English", code: "en", f: "馃嚭馃嚫" },
-    { n: "醼欋�坚�斸�横�欋��呩��", code: "my", f: "馃嚥馃嚥" },
-    { n: "鏃ユ湰瑾�", code: "ja", f: "馃嚡馃嚨" },
-    { n: "頃滉淡鞏�", code: "ko", f: "馃嚢馃嚪" },
-    { n: "喔犩覆喔┼覆喙勦笚喔�", code: "th", f: "馃嚬馃嚟" },
-    { n: "Ti岷縩g Vi峄噒", code: "vi", f: "馃嚮馃嚦" },
-    { n: "袪褍褋褋泻懈泄", code: "ru", f: "馃嚪馃嚭" }
+    { n: "中文", code: "zh-CN", f: "🇨🇳" },
+    { n: "English", code: "en", f: "🇺🇸" },
+    { n: "မြန်မာစာ", code: "my", f: "🇲🇲" },
+    { n: "日本語", code: "ja", f: "🇯🇵" },
+    { n: "한국어", code: "ko", f: "🇰🇷" },
+    { n: "ภาษาไทย", code: "th", f: "🇹🇭" },
+    { n: "Tiếng Việt", code: "vi", f: "🇻🇳" },
+    { n: "Русский", code: "ru", f: "🇷🇺" }
   ];
 
   var LANG_CODE_MAP = {
-    "鑷姩妫�娴�": "auto",
+    "自动检测": "auto",
     auto: "auto",
-    "涓枃": "zh-CN",
+    "中文": "zh-CN",
     "English": "en",
-    "醼欋�坚�斸�横�欋��呩��": "my",
-    "缂呯敻璇�": "my",
-    "鏃ユ湰瑾�": "ja",
-    "頃滉淡鞏�": "ko",
-    "喔犩覆喔┼覆喙勦笚喔�": "th",
-    "Ti岷縩g Vi峄噒": "vi",
-    "袪褍褋褋泻懈泄": "ru"
+    "မြန်မာစာ": "my",
+    "缅甸语": "my",
+    "日本語": "ja",
+    "한국어": "ko",
+    "ภาษาไทย": "th",
+    "Tiếng Việt": "vi",
+    "Русский": "ru"
   };
 
   var FALLBACK_I18N = {
-    app_name: "鎮熺┖鑱婂ぉ",
-    loading_chat: "姝ｅ湪鍔犺浇鎮熺┖鑱婂ぉ...",
-    connecting: "姝ｅ湪杩炴帴鎮熺┖...",
-    connect_success: "宸茶繛鎺�",
-    connect_failed: "杩炴帴澶辫触",
-    not_ready: "鎮熺┖鏈氨缁�",
-    login_required: "璇峰厛鐧诲綍",
-    chat: "鑱婂ぉ",
-    chat_room: "鑱婂ぉ瀹�",
-    conversation: "浼氳瘽",
-    new_chat: "寮�濮嬭亰澶�",
-    enter_uid: "杈撳叆 NodeBB 鐢ㄦ埛 UID",
-    open_chat: "鎵撳紑鑱婂ぉ",
-    back: "杩斿洖",
-    settings: "璁剧疆",
-    close: "鍏抽棴",
-    save: "淇濆瓨閰嶇疆",
-    saved: "閰嶇疆宸蹭繚瀛�",
-    message_placeholder: "鍙戦�佹秷鎭�...",
-    send: "鍙戦��",
-    record: "褰曢煶",
-    cancel: "鍙栨秷",
-    pause: "鏆傚仠",
-    resume: "缁х画",
-    delete: "鍒犻櫎",
-    quote: "寮曠敤",
-    translate: "缈昏瘧",
-    recall: "鎾ゅ洖",
-    copy: "澶嶅埗",
-    copied: "宸插鍒�",
-    retry: "閲嶈瘯",
-    loading: "鍔犺浇涓�...",
-    load_more: "鍔犺浇鏇村",
-    no_more: "娌℃湁鏇村鍘嗗彶",
-    today: "浠婂ぉ",
-    yesterday: "鏄ㄥぉ",
-    before_yesterday: "鍓嶅ぉ",
-    image: "鍥剧墖",
-    video: "瑙嗛",
-    voice: "璇煶",
-    file: "鏂囦欢",
-    gallery: "鍥剧墖闆�",
-    recalled: "姝ゆ秷鎭凡琚挙鍥�",
-    media: "濯掍綋",
-    camera: "鎷嶆憚",
-    album: "鐩稿唽鍥剧墖/瑙嗛",
-    uploading: "姝ｅ湪涓婁紶...",
-    upload_failed: "涓婁紶澶辫触",
-    compressing_image: "姝ｅ湪鍘嬬缉鍥剧墖...",
-    checking_video: "姝ｅ湪妫�鏌ヨ棰�...",
-    video_too_long: "瑙嗛杩囬暱",
-    record_unavailable: "褰撳墠娴忚鍣ㄤ笉鏀寔褰曢煶",
-    record_denied: "褰曢煶涓嶅彲鐢ㄦ垨琚嫆缁�",
-    voice_send_failed: "璇煶鍙戦�佸け璐�",
-    select_language: "閫夋嫨璇█",
-    source_language: "鎴戠殑璇█",
-    target_language: "瀵规柟璇█",
-    swap: "鍒囨崲",
-    translate_bar: "缈昏瘧",
-    translate_provider: "缈昏瘧鏂瑰紡",
-    google_translate: "璋锋瓕缈昏瘧",
-    ai_translate: "AI 缈昏瘧",
-    send_translate_on: "璇戝彂宸插紑鍚�",
-    send_translate_off: "璇戝彂宸插叧闂�",
-    auto_translate: "鑷姩缈昏瘧鏈�鏂板鏂规秷鎭�",
-    send_translate: "杈撳叆鍐呭缈昏瘧鍚庡彂閫�",
-    translation_loading: "缈昏瘧涓�...",
-    translation_failed: "缈昏瘧澶辫触",
-    translation_empty: "缈昏瘧涓虹┖",
-    smart_reply: "杩介棶姘斿泭",
-    wingman: "鍍氭満",
-    wingman_need_ai: "鍍氭満闇�瑕佸厛鍦ㄨ缃噷濉啓 AI 鎺ュ彛銆並ey 鍜屾ā鍨嬶紝鎴栨湇鍔＄閰嶇疆 AI_PROXY銆�",
-    thinking: "鎬濊�冧腑鈥�",
-    wingman_failed: "鍍氭満鍒嗘瀽澶辫触锛岀◢鍚庡啀璇曘��",
-    safe: "瀹夊叏",
-    reply: "鍥炲",
-    context_memory: "涓婁笅鏂�",
-    context_rounds: "鍘嗗彶杞暟",
-    target_gender: "瀵规柟鎬у埆",
-    girl: "濂崇敓",
-    boy: "鐢风敓",
-    unspecified: "涓嶆寚瀹�",
-    relationship_stage: "鍏崇郴闃舵",
-    just_met: "鍒氳璇�",
-    few_chats: "鑱婅繃鍑犳",
-    flirting: "鏈夌偣鏆ф槯",
-    dated: "宸茬害杩囦細",
-    communication_style: "鑱婂ぉ椋庢牸",
-    communication_style_placeholder: "鑷劧鐩存帴锛屽伓灏斿菇榛�",
-    ai_endpoint: "AI 鎺ュ彛 URL",
+    app_name: "悟空聊天",
+    loading_chat: "正在加载悟空聊天...",
+    connecting: "正在连接悟空...",
+    connect_success: "已连接",
+    connect_failed: "连接失败",
+    not_ready: "悟空未就绪",
+    login_required: "请先登录",
+    chat: "聊天",
+    chat_room: "聊天室",
+    conversation: "会话",
+    new_chat: "开始聊天",
+    enter_uid: "输入 NodeBB 用户 UID",
+    open_chat: "打开聊天",
+    back: "返回",
+    settings: "设置",
+    close: "关闭",
+    save: "保存配置",
+    saved: "配置已保存",
+    message_placeholder: "发送消息...",
+    send: "发送",
+    record: "录音",
+    cancel: "取消",
+    pause: "暂停",
+    resume: "继续",
+    delete: "删除",
+    quote: "引用",
+    translate: "翻译",
+    recall: "撤回",
+    copy: "复制",
+    copied: "已复制",
+    retry: "重试",
+    loading: "加载中...",
+    load_more: "加载更多",
+    no_more: "没有更多历史",
+    today: "今天",
+    yesterday: "昨天",
+    before_yesterday: "前天",
+    image: "图片",
+    video: "视频",
+    voice: "语音",
+    file: "文件",
+    gallery: "图片集",
+    recalled: "此消息已被撤回",
+    media: "媒体",
+    camera: "拍摄",
+    album: "相册图片/视频",
+    uploading: "正在上传...",
+    upload_failed: "上传失败",
+    compressing_image: "正在压缩图片...",
+    checking_video: "正在检查视频...",
+    video_too_long: "视频过长",
+    record_unavailable: "当前浏览器不支持录音",
+    record_denied: "录音不可用或被拒绝",
+    voice_send_failed: "语音发送失败",
+    select_language: "选择语言",
+    source_language: "我的语言",
+    target_language: "对方语言",
+    swap: "切换",
+    translate_bar: "翻译",
+    translate_provider: "翻译方式",
+    google_translate: "谷歌翻译",
+    ai_translate: "AI 翻译",
+    send_translate_on: "译发已开启",
+    send_translate_off: "译发已关闭",
+    auto_translate: "自动翻译最新对方消息",
+    send_translate: "输入内容翻译后发送",
+    translation_loading: "翻译中...",
+    translation_failed: "翻译失败",
+    translation_empty: "翻译为空",
+    smart_reply: "追问气囊",
+    wingman: "僚机",
+    wingman_need_ai: "僚机需要先在设置里填写 AI 接口、Key 和模型，或服务端配置 AI_PROXY。",
+    thinking: "思考中…",
+    wingman_failed: "僚机分析失败，稍后再试。",
+    safe: "安全",
+    reply: "回复",
+    context_memory: "上下文",
+    context_rounds: "历史轮数",
+    target_gender: "对方性别",
+    girl: "女生",
+    boy: "男生",
+    unspecified: "不指定",
+    relationship_stage: "关系阶段",
+    just_met: "刚认识",
+    few_chats: "聊过几次",
+    flirting: "有点暧昧",
+    dated: "已约过会",
+    communication_style: "聊天风格",
+    communication_style_placeholder: "自然直接，偶尔幽默",
+    ai_endpoint: "AI 接口 URL",
     api_key: "API Key",
-    model: "妯″瀷",
-    background: "鑳屾櫙",
-    set_background: "璁剧疆鑷畾涔夎儗鏅浘鐗�",
-    fog_mask: "鐧介浘閬僵",
-    clear_local_history: "娓呯┖鏈湴鑱婂ぉ璁板綍",
-    confirm_clear: "纭畾瑕佹竻绌轰笌璇ヤ細璇濈殑鎵�鏈夋湰鍦拌褰曞悧锛�",
-    history_cleared: "宸叉竻绌鸿褰�",
-    go_bottom: "鍥炲埌搴曢儴",
-    peer_loading: "鍔犺浇涓�...",
-    topic: "涓婚鑱婂ぉ瀹�",
-    uid_invalid: "璇疯緭鍏ョ敤鎴� UID",
-    same_user: "涓嶈兘鍜岃嚜宸辫亰澶�",
-    open_failed: "鎵撳紑澶辫触",
-    network_error: "缃戠粶閿欒",
-    sdk_loading: "姝ｅ湪鍔犺浇鎮熺┖ SDK...",
-    sdk_failed: "鎮熺┖ SDK 鍔犺浇澶辫触",
-    empty_history: "鏆傛棤鍘嗗彶",
-    unknown_user: "鐢ㄦ埛"
+    model: "模型",
+    background: "背景",
+    set_background: "设置自定义背景图片",
+    fog_mask: "白雾遮罩",
+    clear_local_history: "清空本地聊天记录",
+    confirm_clear: "确定要清空与该会话的所有本地记录吗？",
+    history_cleared: "已清空记录",
+    go_bottom: "回到底部",
+    peer_loading: "加载中...",
+    topic: "主题聊天室",
+    uid_invalid: "请输入用户 UID",
+    same_user: "不能和自己聊天",
+    open_failed: "打开失败",
+    network_error: "网络错误",
+    sdk_loading: "正在加载悟空 SDK...",
+    sdk_failed: "悟空 SDK 加载失败",
+    empty_history: "暂无历史",
+    unknown_user: "用户"
   };
 
   var DEFAULT_TRANSLATE_PROMPT =
-    "灏嗕互涓嬫秷鎭炕璇戞垚 {{myLang}}銆俓n\n" +
-    "瑕佹眰锛歕n" +
-    "- 閲囩敤鑷劧鐩磋瘧椋庢牸锛氫繚鐣欏師鏂囩粨鏋勩�佽姘斻�佽〃鎯呯鍙峰拰鎹㈣锛岃瘧鏂囪璧锋潵鍍� {{myLang}} 鍘熺敓娑堟伅锛屼笉鐢熺‖銆俓n" +
-    "- 鑻ュ師鏂囧甫鏈夋毀鏄с�佽皟渚冦�佸喎娣°�佹暦琛嶃�佹拻濞囥�佹姳鎬ㄧ瓑璇皵锛岃瘧鏂囧繀椤讳繚鐣欒繖绉嶈亰澶╂劅瑙夈�俓n" +
-    "- 淇濈暀閾炬帴銆佺敤鎴峰悕銆佷唬鐮佸潡銆丮arkdown銆佸垪琛ㄥ拰琛ㄦ儏銆俓n" +
-    "- 鍙緭鍑� JSON锛歿\"translation\":\"璇戞枃\"}\n" +
-    "- 涓嶈娣诲姞浠讳綍瑙ｉ噴鎴栭澶栨枃瀛椼�俓n\n" +
-    "寰呯炕璇戞秷鎭細\n" +
+    "将以下消息翻译成 {{myLang}}。\n\n" +
+    "要求：\n" +
+    "- 采用自然直译风格：保留原文结构、语气、表情符号和换行，译文读起来像 {{myLang}} 原生消息，不生硬。\n" +
+    "- 若原文带有暧昧、调侃、冷淡、敷衍、撒娇、抱怨等语气，译文必须保留这种聊天感觉。\n" +
+    "- 保留链接、用户名、代码块、Markdown、列表和表情。\n" +
+    "- 只输出 JSON：{\"translation\":\"译文\"}\n" +
+    "- 不要添加任何解释或额外文字。\n\n" +
+    "待翻译消息：\n" +
     "\"{{peerMessage}}\"";
 
   var DEFAULT_WINGMAN_PROMPT =
-    "浣犳槸鎴戠殑鎯呮劅椤鹃棶鍜岃亰澶╁儦鏈恒�傛牴鎹巻鍙茶亰澶╀笂涓嬫枃锛屼互鍙婁互涓嬩俊鎭紝甯垜鍒嗘瀽瀵规柟娑堟伅骞剁敓鎴愮煭鍥炲寤鸿銆俓n\n" +
-    "銆愭垜鐨勪俊鎭�慭n" +
-    "- 鎴戠殑璇█锛歿{myLang}}\n" +
-    "- 瀵规柟鎬у埆锛歿{targetGender}}锛堝コ鐢�/鐢风敓/涓嶆寚瀹氾級\n" +
-    "- 褰撳墠鍏崇郴闃舵锛歿{relationshipStage}}锛堝垰璁よ瘑/鑱婅繃鍑犳/鏈夌偣鏆ф槯/宸茬害杩囦細锛塡n" +
-    "- 鎴戠殑鑱婂ぉ椋庢牸锛歿{communicationStyle}}锛堥粯璁わ細鑷劧鐩存帴锛屽伓灏斿菇榛橈級\n\n" +
-    "銆愭渶杩戝璇濆巻鍙层�慭n" +
+    "你是我的情感顾问和聊天僚机。根据历史聊天上下文，以及以下信息，帮我分析对方消息并生成短回复建议。\n\n" +
+    "【我的信息】\n" +
+    "- 我的语言：{{myLang}}\n" +
+    "- 对方性别：{{targetGender}}（女生/男生/不指定）\n" +
+    "- 当前关系阶段：{{relationshipStage}}（刚认识/聊过几次/有点暧昧/已约过会）\n" +
+    "- 我的聊天风格：{{communicationStyle}}（默认：自然直接，偶尔幽默）\n\n" +
+    "【最近对话历史】\n" +
     "{{history}}\n\n" +
-    "銆愬鏂瑰垰鍙戠殑娑堟伅銆慭n" +
+    "【对方刚发的消息】\n" +
     "\"{{peerMessage}}\"\n\n" +
-    "銆愪綘闇�瑕佸畬鎴愮殑浠诲姟銆慭n" +
-    "1. 鍋氭儏鎰熷垎鏋愩��50瀛椾互鍐咃紝鏍煎紡涓ユ牸鍐欎负锛歕"[鎯呯华鐘舵�乚锛孾琛ㄩ潰鎰忔�漖锛孾鍙兘娼滃彴璇峕銆俓" 鑻ユ秷鎭お鐭棤娉曞垽鏂紝鍐橽"娑堟伅寰堢煭锛屾甯告帴鍗冲彲銆俓"\n" +
-    "2. 鐢熸垚3-5鏉＄煭鍥炲銆傛瘡鏉″繀椤昏兘鐩存帴鍙戦�侊紝10瀛椾互鍐咃紝鍙ｈ鍖栵紝鏈夋帴璇濋挬瀛愩�俓n\n" +
-    "銆愯緭鍑烘牸寮忋�慭n" +
-    "鍙緭鍑轰竴涓� JSON锛屼笉瑕佷换浣� Markdown 鏍囪锛屾牸寮忓涓嬶細\n" +
-    "{\"emotion_analysis\":\"杩欓噷濉儏鎰熷垎鏋怽",\"quick_replies\":[{\"label\":\"6瀛楀唴鏍囩\",\"text\":\"10瀛楀唴鐭洖澶峔",\"style\":\"杞绘澗骞介粯/娓╂殩鍏冲績/鐪熻瘹璧板績/鎺ㄨ繘鍏崇郴/鍖栬В灏村艾\",\"affinity_risk\":\"椋庨櫓璇存槑\"}]}";
+    "【你需要完成的任务】\n" +
+    "1. 做情感分析。50字以内，格式严格写为：\"[情绪状态]，[表面意思]，[可能潜台词]。\" 若消息太短无法判断，写\"消息很短，正常接即可。\"\n" +
+    "2. 生成3-5条短回复。每条必须能直接发送，10字以内，口语化，有接话钩子。\n\n" +
+    "【输出格式】\n" +
+    "只输出一个 JSON，不要任何 Markdown 标记，格式如下：\n" +
+    "{\"emotion_analysis\":\"这里填情感分析\",\"quick_replies\":[{\"label\":\"6字内标签\",\"text\":\"10字内短回复\",\"style\":\"轻松幽默/温暖关心/真诚走心/推进关系/化解尴尬\",\"affinity_risk\":\"风险说明\"}]}";
 
   var ICON = {
     play: '<i class="fa fa-play"></i>',
@@ -216,7 +216,7 @@
     gear: '<i class="fa fa-ellipsis-v"></i>',
     trash: '<i class="fa fa-trash"></i>',
     copy: '<i class="fa fa-copy"></i>',
-    ai: '<span class="nbb-wk-ai-mark">璇�</span>'
+    ai: '<span class="nbb-wk-ai-mark">译</span>'
   };
 
   var waveHeights = [5, 8, 12, 16, 10, 7, 14, 9, 13, 6, 11, 15];
@@ -382,15 +382,15 @@
     var defaults = {
       uiLang: detectUILang(),
       autoTranslateLastMsg: false,
-      sourceLang: "涓枃",
-      targetLang: "醼欋�坚�斸�横�欋��呩��",
+      sourceLang: "中文",
+      targetLang: "မြန်မာစာ",
       sendTranslateEnabled: false,
       smartReplyEnabled: false,
       contextMemoryEnabled: true,
       contextRounds: 30,
-      targetGender: "濂崇敓",
-      relationshipStage: "鍒氳璇�",
-      communicationStyle: "鑷劧鐩存帴锛屽伓灏斿菇榛�",
+      targetGender: "女生",
+      relationshipStage: "刚认识",
+      communicationStyle: "自然直接，偶尔幽默",
       voiceMaxDuration: 60,
       translateProvider: "google",
       ai: {
@@ -409,9 +409,9 @@
     if (!cfg.targetLang) cfg.targetLang = defaults.targetLang;
     cfg.contextRounds = Number(cfg.contextRounds) || 30;
     if ([10, 30, 50, 100].indexOf(cfg.contextRounds) === -1) cfg.contextRounds = 30;
-    if (["濂崇敓", "鐢风敓", "涓嶆寚瀹�"].indexOf(cfg.targetGender) === -1) cfg.targetGender = "濂崇敓";
-    if (!cfg.relationshipStage) cfg.relationshipStage = "鍒氳璇�";
-    if (!cfg.communicationStyle) cfg.communicationStyle = "鑷劧鐩存帴锛屽伓灏斿菇榛�";
+    if (["女生", "男生", "不指定"].indexOf(cfg.targetGender) === -1) cfg.targetGender = "女生";
+    if (!cfg.relationshipStage) cfg.relationshipStage = "刚认识";
+    if (!cfg.communicationStyle) cfg.communicationStyle = "自然直接，偶尔幽默";
     if (!Number.isFinite(Number(cfg.ai.temperature))) cfg.ai.temperature = 0.2;
     return cfg;
   }
@@ -587,7 +587,7 @@
 
   function getFlag(langName) {
     for (var i = 0; i < LANG_LIST.length; i++) if (LANG_LIST[i].n === langName) return LANG_LIST[i].f;
-    return "馃寪";
+    return "🌐";
   }
 
   function getLangCode(langName, fallback) {
@@ -704,7 +704,7 @@
         '<div class="nbb-wk-bg" id="nbb-wk-bg"></div>' +
         '<div class="nbb-wk-bg-mask" id="nbb-wk-bg-mask"></div>' +
         '<header class="nbb-wk-header">' +
-          '<button type="button" class="nbb-wk-back" id="nbb-wk-back" aria-label="' + escAttr(t("back")) + '">鈥�</button>' +
+          '<button type="button" class="nbb-wk-back" id="nbb-wk-back" aria-label="' + escAttr(t("back")) + '">‹</button>' +
           '<div class="nbb-wk-peer">' +
             '<div class="nbb-wk-avatar" id="nbb-wk-peer-avatar">' + peerAvatar + '</div>' +
             '<div class="nbb-wk-peer-info">' +
@@ -729,9 +729,9 @@
           '<div class="nbb-wk-translate-line">' +
             '<div class="nbb-wk-translate-bar" id="nbb-wk-translate-bar">' +
               '<button type="button" class="nbb-wk-lang-btn" id="nbb-wk-src-lang-btn"></button>' +
-              '<button type="button" class="nbb-wk-swap-btn" id="nbb-wk-lang-swap">鈬�</button>' +
+              '<button type="button" class="nbb-wk-swap-btn" id="nbb-wk-lang-swap">⇄</button>' +
               '<button type="button" class="nbb-wk-lang-btn" id="nbb-wk-tgt-lang-btn"></button>' +
-              '<button type="button" class="nbb-wk-toggle-ai-send" id="nbb-wk-send-translate-toggle" title="' + escAttr(t("send_translate")) + '">璇�</button>' +
+              '<button type="button" class="nbb-wk-toggle-ai-send" id="nbb-wk-send-translate-toggle" title="' + escAttr(t("send_translate")) + '">译</button>' +
             '</div>' +
           '</div>' +
           '<div id="nbb-wk-wingman-panel" class="nbb-wk-wingman-panel" hidden>' +
@@ -744,7 +744,7 @@
               '<div class="nbb-wk-quote-preview-name" id="nbb-wk-quote-preview-name"></div>' +
               '<div class="nbb-wk-quote-preview-text" id="nbb-wk-quote-preview-text"></div>' +
             '</div>' +
-            '<button id="nbb-wk-quote-close" class="nbb-wk-quote-preview-close">鉁�</button>' +
+            '<button id="nbb-wk-quote-close" class="nbb-wk-quote-preview-close">✕</button>' +
           '</div>' +
           '<div class="nbb-wk-toolbar" id="nbb-wk-toolbar">' +
             '<div id="nbb-wk-upload-progress-wrap" class="nbb-wk-progress-wrap" hidden><div id="nbb-wk-upload-progress-bar"></div></div>' +
@@ -787,7 +787,7 @@
     }).join("");
     return '<div class="nbb-wk-modal-mask" id="nbb-wk-lang-mask" hidden>' +
       '<div class="nbb-wk-modal nbb-wk-lang-modal">' +
-        '<div class="nbb-wk-modal-head"><h3>' + esc(t("select_language")) + '</h3><button id="nbb-wk-lang-close">鉁�</button></div>' +
+        '<div class="nbb-wk-modal-head"><h3>' + esc(t("select_language")) + '</h3><button id="nbb-wk-lang-close">✕</button></div>' +
         '<div class="nbb-wk-lang-grid" id="nbb-wk-lang-grid">' + items + '</div>' +
       '</div>' +
     '</div>';
@@ -798,7 +798,7 @@
       '<div class="nbb-wk-modal nbb-wk-settings-modal">' +
         '<div class="nbb-wk-settings-head"><h3>' + esc(t("settings")) + '</h3><button id="nbb-wk-settings-close-x"><i class="fa fa-times"></i></button></div>' +
         '<div class="nbb-wk-settings-body">' +
-          '<div class="nbb-wk-settings-section"><div class="nbb-wk-settings-section-title">馃寪 ' + esc(t("translate_provider")) + '</div>' +
+          '<div class="nbb-wk-settings-section"><div class="nbb-wk-settings-section-title">🌐 ' + esc(t("translate_provider")) + '</div>' +
             '<div class="nbb-wk-provider-tabs">' +
               '<button type="button" class="nbb-wk-provider-tab" id="nbb-wk-provider-google" data-provider="google">' + esc(t("google_translate")) + '</button>' +
               '<button type="button" class="nbb-wk-provider-tab" id="nbb-wk-provider-ai" data-provider="ai">' + esc(t("ai_translate")) + '</button>' +
@@ -809,10 +809,10 @@
               '<label class="nbb-wk-setting-field"><span>' + esc(t("model")) + '</span><input id="nbb-wk-ai-model" type="text" placeholder="gpt-4o-mini / qwen / deepseek" /></label>' +
             '</div>' +
           '</div>' +
-          '<div class="nbb-wk-settings-section"><div class="nbb-wk-settings-section-title">馃 ' + esc(t("wingman")) + '</div>' +
+          '<div class="nbb-wk-settings-section"><div class="nbb-wk-settings-section-title">🧠 ' + esc(t("wingman")) + '</div>' +
             '<div class="nbb-wk-setting-row">' +
-              '<label class="nbb-wk-setting-field"><span>' + esc(t("target_gender")) + '</span><select id="nbb-wk-target-gender"><option value="濂崇敓">' + esc(t("girl")) + '</option><option value="鐢风敓">' + esc(t("boy")) + '</option><option value="涓嶆寚瀹�">' + esc(t("unspecified")) + '</option></select></label>' +
-              '<label class="nbb-wk-setting-field"><span>' + esc(t("relationship_stage")) + '</span><select id="nbb-wk-relationship-stage"><option value="鍒氳璇�">' + esc(t("just_met")) + '</option><option value="鑱婅繃鍑犳">' + esc(t("few_chats")) + '</option><option value="鏈夌偣鏆ф槯">' + esc(t("flirting")) + '</option><option value="宸茬害杩囦細">' + esc(t("dated")) + '</option></select></label>' +
+              '<label class="nbb-wk-setting-field"><span>' + esc(t("target_gender")) + '</span><select id="nbb-wk-target-gender"><option value="女生">' + esc(t("girl")) + '</option><option value="男生">' + esc(t("boy")) + '</option><option value="不指定">' + esc(t("unspecified")) + '</option></select></label>' +
+              '<label class="nbb-wk-setting-field"><span>' + esc(t("relationship_stage")) + '</span><select id="nbb-wk-relationship-stage"><option value="刚认识">' + esc(t("just_met")) + '</option><option value="聊过几次">' + esc(t("few_chats")) + '</option><option value="有点暧昧">' + esc(t("flirting")) + '</option><option value="已约过会">' + esc(t("dated")) + '</option></select></label>' +
             '</div>' +
             '<label class="nbb-wk-setting-field"><span>' + esc(t("communication_style")) + '</span><input id="nbb-wk-communication-style" type="text" placeholder="' + escAttr(t("communication_style_placeholder")) + '" /></label>' +
             '<div class="nbb-wk-setting-row nbb-wk-setting-row-toggles">' +
@@ -821,10 +821,10 @@
             '</div>' +
             '<label class="nbb-wk-setting-field"><span>' + esc(t("context_rounds")) + '</span><select id="nbb-wk-context-rounds-setting"><option value="10">10</option><option value="30">30</option><option value="50">50</option><option value="100">100</option></select></label>' +
           '</div>' +
-          '<div class="nbb-wk-settings-section"><div class="nbb-wk-settings-section-title">鉁� ' + esc(t("chat")) + '</div>' +
+          '<div class="nbb-wk-settings-section"><div class="nbb-wk-settings-section-title">✨ ' + esc(t("chat")) + '</div>' +
             '<label class="nbb-wk-setting-toggle"><span>' + esc(t("auto_translate")) + '</span><input id="nbb-wk-auto-trans-setting" type="checkbox" /></label>' +
           '</div>' +
-          '<div class="nbb-wk-settings-section"><div class="nbb-wk-settings-section-title">馃柤锔� ' + esc(t("background")) + '</div>' +
+          '<div class="nbb-wk-settings-section"><div class="nbb-wk-settings-section-title">🖼️ ' + esc(t("background")) + '</div>' +
             '<button id="nbb-wk-bg-upload-btn" class="nbb-wk-bg-upload-btn" type="button">' + esc(t("set_background")) + '</button>' +
             '<label class="nbb-wk-setting-field"><span>' + esc(t("fog_mask")) + ' <em id="nbb-wk-bg-op-val">85%</em></span><input id="nbb-wk-bg-opacity" type="range" min="0" max="1" step="0.05" /></label>' +
           '</div>' +
@@ -1143,9 +1143,9 @@
     byId("nbb-wk-auto-trans-setting") && (byId("nbb-wk-auto-trans-setting").checked = !!state.cfg.autoTranslateLastMsg);
     byId("nbb-wk-context-memory-setting") && (byId("nbb-wk-context-memory-setting").checked = !!state.cfg.contextMemoryEnabled);
     byId("nbb-wk-context-rounds-setting") && (byId("nbb-wk-context-rounds-setting").value = String(state.cfg.contextRounds || 30));
-    byId("nbb-wk-target-gender") && (byId("nbb-wk-target-gender").value = state.cfg.targetGender || "濂崇敓");
-    byId("nbb-wk-relationship-stage") && (byId("nbb-wk-relationship-stage").value = state.cfg.relationshipStage || "鍒氳璇�");
-    byId("nbb-wk-communication-style") && (byId("nbb-wk-communication-style").value = state.cfg.communicationStyle || "鑷劧鐩存帴锛屽伓灏斿菇榛�");
+    byId("nbb-wk-target-gender") && (byId("nbb-wk-target-gender").value = state.cfg.targetGender || "女生");
+    byId("nbb-wk-relationship-stage") && (byId("nbb-wk-relationship-stage").value = state.cfg.relationshipStage || "刚认识");
+    byId("nbb-wk-communication-style") && (byId("nbb-wk-communication-style").value = state.cfg.communicationStyle || "自然直接，偶尔幽默");
     var op = state.bg && state.bg.opacity !== undefined ? state.bg.opacity : 0.85;
     byId("nbb-wk-bg-opacity") && (byId("nbb-wk-bg-opacity").value = op);
     byId("nbb-wk-bg-op-val") && (byId("nbb-wk-bg-op-val").innerText = Math.round(op * 100) + "%");
@@ -1158,9 +1158,9 @@
     state.cfg.autoTranslateLastMsg = !!(byId("nbb-wk-auto-trans-setting") && byId("nbb-wk-auto-trans-setting").checked);
     state.cfg.contextMemoryEnabled = !!(byId("nbb-wk-context-memory-setting") && byId("nbb-wk-context-memory-setting").checked);
     state.cfg.contextRounds = Number(byId("nbb-wk-context-rounds-setting") && byId("nbb-wk-context-rounds-setting").value) || 30;
-    state.cfg.targetGender = (byId("nbb-wk-target-gender") && byId("nbb-wk-target-gender").value) || "濂崇敓";
-    state.cfg.relationshipStage = (byId("nbb-wk-relationship-stage") && byId("nbb-wk-relationship-stage").value) || "鍒氳璇�";
-    state.cfg.communicationStyle = (byId("nbb-wk-communication-style") && byId("nbb-wk-communication-style").value.trim()) || "鑷劧鐩存帴锛屽伓灏斿菇榛�";
+    state.cfg.targetGender = (byId("nbb-wk-target-gender") && byId("nbb-wk-target-gender").value) || "女生";
+    state.cfg.relationshipStage = (byId("nbb-wk-relationship-stage") && byId("nbb-wk-relationship-stage").value) || "刚认识";
+    state.cfg.communicationStyle = (byId("nbb-wk-communication-style") && byId("nbb-wk-communication-style").value.trim()) || "自然直接，偶尔幽默";
     state.cfg.ai.endpoint = (byId("nbb-wk-ai-endpoint") && byId("nbb-wk-ai-endpoint").value.trim()) || "";
     state.cfg.ai.apiKey = (byId("nbb-wk-ai-key") && byId("nbb-wk-ai-key").value.trim()) || "";
     state.cfg.ai.model = (byId("nbb-wk-ai-model") && byId("nbb-wk-ai-model").value.trim()) || "gpt-4o-mini";
@@ -1428,16 +1428,16 @@
     if (payload.type === "image" && payload.url) return { type: "image", text: t("image"), mediaUrl: payload.url };
     if (payload.type === "video" && payload.url) return { type: "video", text: t("video"), mediaUrl: payload.url };
     if (payload.type === "voice" && payload.url) return { type: "voice", text: t("voice"), audioUrl: payload.url, durationStr: payload.duration ? formatDuration(payload.duration) : "" };
-    if ((match = text.match(/^!\[\]\((.+?)\)$/)) || (match = text.match(/^\[鍥剧墖\]\((.+?)\)$/))) {
+    if ((match = text.match(/^!\[\]\((.+?)\)$/)) || (match = text.match(/^\[图片\]\((.+?)\)$/))) {
       return { type: "image", text: t("image"), mediaUrl: match[1] };
     }
-    if ((match = text.match(/^\[瑙嗛\]\((.+?)\)$/))) {
+    if ((match = text.match(/^\[视频\]\((.+?)\)$/))) {
       return { type: "video", text: t("video"), mediaUrl: match[1] };
     }
-    if ((match = text.match(/^\[璇煶娑堟伅\]\((.+?)\)$/))) {
+    if ((match = text.match(/^\[语音消息\]\((.+?)\)$/))) {
       return { type: "voice", text: t("voice"), audioUrl: match[1] };
     }
-    if ((match = text.match(/^\[鏂囦欢\]\((.+?)\)$/))) {
+    if ((match = text.match(/^\[文件\]\((.+?)\)$/))) {
       return { type: "file", text: t("file"), mediaUrl: match[1] };
     }
     return { type: "text", text: text };
@@ -1835,10 +1835,10 @@
 
   function buildTranslationAreaHtml(m) {
     if (!m.translation || !m.translationOpen) return "";
-    var loading = m.translation === t("translation_loading") || m.translation === "缈昏瘧涓�...";
-    var isError = /^缈昏瘧澶辫触|Translation failed|醼樶��炨��曖�坚�斸��/.test(m.translation || "");
+    var loading = m.translation === t("translation_loading") || m.translation === "翻译中...";
+    var isError = /^翻译失败|Translation failed|ဘာသာပြန်/.test(m.translation || "");
     return '<div class="nbb-wk-translation-wrap"><div class="nbb-wk-translation-text' + (isError ? " is-error" : "") + '"' + (isError ? ' data-act="retry-translate"' : "") + '>' +
-      (loading ? "鈴� " : "鉁� ") + esc(m.translation) + (isError ? "锛�" + esc(t("retry")) + "锛�" : "") + '</div></div>';
+      (loading ? "⏳ " : "✨ ") + esc(m.translation) + (isError ? "（" + esc(t("retry")) + "）" : "") + '</div></div>';
   }
 
   function observeLazyElements() {
@@ -2343,8 +2343,8 @@
         });
         if (!url) continue;
         if ((uploadFile.type || raw.type || "").indexOf("image/") === 0) sendText("![](" + url + ")");
-        else if ((uploadFile.type || raw.type || "").indexOf("video/") === 0) sendText("[瑙嗛](" + url + ")");
-        else sendText("[鏂囦欢](" + url + ")");
+        else if ((uploadFile.type || raw.type || "").indexOf("video/") === 0) sendText("[视频](" + url + ")");
+        else sendText("[文件](" + url + ")");
       }
     } catch (err) {
       warn("pick-media", err);
@@ -2409,7 +2409,7 @@
             if (wrap) wrap.hidden = false;
             if (bar) bar.style.width = "0%";
             var url = await uploadToNodeBB(file, function (pct) { if (bar) bar.style.width = (pct * 100) + "%"; });
-            sendText("[璇煶娑堟伅](" + url + ")");
+            sendText("[语音消息](" + url + ")");
           } catch (e) {
             warn("record-upload", e);
             toast(t("voice_send_failed"));
@@ -2528,13 +2528,13 @@
   async function translateViaAI(text, from, to, ai) {
     ai = ai || state.cfg.ai || {};
     var prompt = fillTemplate(ai.translatePrompt || DEFAULT_TRANSLATE_PROMPT, {
-      myLang: to || state.cfg.sourceLang || "涓枃",
+      myLang: to || state.cfg.sourceLang || "中文",
       peerMessage: text,
       sourceLang: from || "auto",
-      targetLang: to || state.cfg.sourceLang || "涓枃"
+      targetLang: to || state.cfg.sourceLang || "中文"
     });
     var raw = await rawAIRequest([
-      { role: "system", content: "浣犳槸鏋侀�熻亰澶╃炕璇戝櫒銆傚繀椤诲彧杈撳嚭鍙В鏋� JSON銆�" },
+      { role: "system", content: "你是极速聊天翻译器。必须只输出可解析 JSON。" },
       { role: "user", content: prompt }
     ], ai, 9000);
     var json = parseJsonLoose(raw);
@@ -2564,7 +2564,7 @@
   function executePeerTranslateOnly(msg, opts) {
     opts = opts || {};
     if (!msg || msg.recalled || msg.type !== "text" || msg.mine) return Promise.resolve("");
-    var isRetry = !!opts.forceRetry || /^缈昏瘧澶辫触|Translation failed|醼樶��炨��曖�坚�斸��/.test(msg.translation || "");
+    var isRetry = !!opts.forceRetry || /^翻译失败|Translation failed|ဘာသာပြန်/.test(msg.translation || "");
     if (state.translateInflight[msg.id] && !isRetry) {
       if (opts.forceOpen) {
         msg.translationOpen = true;
@@ -2621,7 +2621,7 @@
   function executePeerTranslateAndWingman(msg, opts) {
     opts = opts || {};
     if (!msg || msg.recalled || msg.type !== "text" || msg.mine) return;
-    var isRetry = !!opts.forceRetry || /^缈昏瘧澶辫触|Translation failed|醼樶��炨��曖�坚�斸��/.test(msg.translation || "");
+    var isRetry = !!opts.forceRetry || /^翻译失败|Translation failed|ဘာသာပြန်/.test(msg.translation || "");
     if (msg.translation && msg.translation !== t("translation_loading") && !isRetry) {
       msg.translationOpen = opts.forceOpen ? true : !msg.translationOpen;
       msgTouch(msg);
@@ -2635,15 +2635,15 @@
   }
 
   function buildHistoryForPrompt(currentMsg) {
-    if (!state.cfg.contextMemoryEnabled) return "锛堟湭鍚敤涓婁笅鏂囪蹇嗭級";
+    if (!state.cfg.contextMemoryEnabled) return "（未启用上下文记忆）";
     var all = state.messages.filter(function (m) {
       return m && m.type === "text" && !m.recalled && m.text && String(m.id) !== String(currentMsg.id);
     });
     var max = Math.max(1, Number(state.cfg.contextRounds || 30)) * 2;
     var slice = all.slice(-max);
-    if (!slice.length) return "锛堟殏鏃犲巻鍙诧級";
+    if (!slice.length) return "（暂无历史）";
     return slice.map(function (m) {
-      return (m.mine ? "鎴�" : "瀵规柟") + "锛�" + String(m.text || "").replace(/\s+/g, " ").slice(0, 220);
+      return (m.mine ? "我" : "对方") + "：" + String(m.text || "").replace(/\s+/g, " ").slice(0, 220);
     }).join("\n");
   }
 
@@ -2683,18 +2683,18 @@
       peerMessage: msg.text
     });
     var raw = await rawAIRequest([
-      { role: "system", content: "鍙緭鍑哄彲瑙ｆ瀽鐨� JSON锛屼笉瑕佷娇鐢� Markdown锛屼笉瑕佽В閲娿�傛墍鏈� quick_replies.text 蹇呴』 10 瀛椾互鍐呫��" },
+      { role: "system", content: "只输出可解析的 JSON，不要使用 Markdown，不要解释。所有 quick_replies.text 必须 10 字以内。" },
       { role: "user", content: prompt }
     ], ai, 18000);
     var json = parseJsonLoose(raw);
     if (!json) return { emotion_analysis: raw.slice(0, 80), quick_replies: [] };
     if (!Array.isArray(json.quick_replies)) json.quick_replies = [];
     json.quick_replies = json.quick_replies.slice(0, 5).map(function (r) {
-      if (typeof r === "string") return { label: t("reply"), text: r.slice(0, 10), style: "鑷劧", affinity_risk: t("safe") };
+      if (typeof r === "string") return { label: t("reply"), text: r.slice(0, 10), style: "自然", affinity_risk: t("safe") };
       return {
         label: String(r.label || r.style || t("reply")).slice(0, 6),
         text: String(r.text || r.reply || "").trim().slice(0, 10),
-        style: String(r.style || "鑷劧"),
+        style: String(r.style || "自然"),
         affinity_risk: String(r.affinity_risk || r.risk || t("safe"))
       };
     }).filter(function (r) { return !!r.text; });
@@ -2736,7 +2736,7 @@
       var item = replies[i];
       var text = String(item.text || "").trim().slice(0, 10);
       if (!text) continue;
-      html += '<button class="nbb-wk-sr-pill" data-text="' + escAttr(text) + '" title="' + escAttr((item.style || "") + " 路 " + (item.affinity_risk || "")) + '">' + esc(text) + '<em>' + esc(item.label || item.style || "") + '</em></button>';
+      html += '<button class="nbb-wk-sr-pill" data-text="' + escAttr(text) + '" title="' + escAttr((item.style || "") + " · " + (item.affinity_risk || "")) + '">' + esc(text) + '<em>' + esc(item.label || item.style || "") + '</em></button>';
     }
     bar.innerHTML = html;
     updateFooterHeight();
