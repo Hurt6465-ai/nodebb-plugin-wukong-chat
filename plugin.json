@@ -5,14 +5,17 @@
   "url": "https://bbs.886.best",
   "library": "./library.js",
   "hooks": [
-    { "hook": "static:app.load", "method": "init" },
-    { "hook": "filter:navigation.available", "method": "addNavigation" }
+    {
+      "hook": "static:app.load",
+      "method": "init"
+    },
+    {
+      "hook": "filter:navigation.available",
+      "method": "addNavigation"
+    }
   ],
-  "scripts": [
-    "public/wukong-chat.js"
-  ],
-  "css": [
-    "public/wukong-chat.css"
-  ],
-  "templates": "templates"
+  "templates": "templates",
+  "staticDirs": {
+    "static": "public"
+  }
 }
