@@ -5,7 +5,7 @@
   if (window[APP_KEY]) return;
   window[APP_KEY] = true;
 
-  var PLUGIN_BASE = "/plugins/nodebb-plugin-wukong-chat";
+  var PLUGIN_BASE = "/plugins/nodebb-plugin-wukong-chat/static";
   var SDK_URL = "https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js";
 
   var DB_NAME = "NBB_Wukong_Chat_V5";
