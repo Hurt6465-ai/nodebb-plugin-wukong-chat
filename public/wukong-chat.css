@@ -1641,3 +1641,40 @@ body.nbb-wk-has-bg .nbb-wk-row.mine.has-tail .nbb-wk-bubble {
     align-items: stretch;
   }
 }
+
+/* force hidden overlays to stay hidden */
+#nodebb-wukong-root [hidden],
+.nbb-wk-root [hidden],
+.nbb-wk-shell [hidden],
+.nbb-wk-preview-mask[hidden],
+.nbb-wk-modal-mask[hidden],
+.nbb-wk-settings-mask[hidden],
+.nbb-wk-context-overlay[hidden] {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* independent page must be true fullscreen */
+#nodebb-wukong-root,
+.nbb-wk-root,
+#nbb-wk-shell,
+.nbb-wk-shell {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  transform: none !important;
+  z-index: 2147483000 !important;
+}
+
+.nbb-wk-main {
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+
