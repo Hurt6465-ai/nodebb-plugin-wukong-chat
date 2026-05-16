@@ -1,17 +1,19 @@
 {
   "name": "nodebb-plugin-wukong-chat",
-  "version": "0.3.0",
-  "description": "悟空独立版聊天窗口",
+  "version": "0.17.0",
+  "description": "悟空独立聊天窗口",
   "main": "library.js",
-  "license": "MIT",
   "keywords": [
     "nodebb",
-    "nodebb-plugin",
+    "plugin",
     "wukongim",
     "chat"
   ],
-  "dependencies": {},
+  "license": "MIT",
   "nbbpm": {
-    "compatibility": "^3.0.0 || ^4.0.0"
+    "compatibility": "^4.0.0"
+  },
+  "dependencies": {
+    "multer": "^1.4.5-lts.1"
   }
 }
