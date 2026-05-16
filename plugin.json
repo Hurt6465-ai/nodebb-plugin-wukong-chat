@@ -12,6 +12,10 @@
     {
       "hook": "filter:navigation.available",
       "method": "addNavigation"
+    },
+    {
+      "hook": "action:user.create",
+      "method": "onUserCreate"
     }
   ],
   "templates": "templates",
