@@ -6,7 +6,7 @@
   window[APP_KEY] = true;
 
   var PLUGIN_BASE = "/plugins/nodebb-plugin-wukong-chat/static";
-  var SDK_URL = "https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js";
+  var SDK_URL = "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1";
 
   var DB_NAME = "NBB_Wukong_Chat_V5";
   var MAX_MESSAGES_IN_MEMORY = 900;
@@ -572,20 +572,64 @@
   function parsePage(root) {
     var cfg = window.__NBB_WUKONG_PAGE__ || {};
     var pathMatch = location.pathname.match(/\/wukong\/([^/?#]+)/);
-    var targetUid =
-      String((root && root.getAttribute("data-target-uid")) || cfg.targetUid || (pathMatch && pathMatch[1]) || "").replace(/[^0-9]/g, "");
-    var tid = String((root && root.getAttribute("data-tid")) || cfg.tid || "").replace(/[^0-9]/g, "");
-    var channelId = String((root && root.getAttribute("data-channel-id")) || cfg.channelId || "").trim();
-    var channelType = Number((root && root.getAttribute("data-channel-type")) || cfg.channelType || 0);
     var q = new URLSearchParams(location.search);
-    if (!targetUid && q.get("uid")) targetUid = String(q.get("uid")).replace(/[^0-9]/g, "");
-    if (!tid && q.get("tid")) tid = String(q.get("tid")).replace(/[^0-9]/g, "");
-    if (!channelId && q.get("channel_id")) channelId = String(q.get("channel_id")).trim();
-    if (!channelType && q.get("channel_type")) channelType = Number(q.get("channel_type"));
-    return { targetUid: targetUid, tid: tid, channelId: channelId, channelType: channelType || 1 };
-  }
 
-  function getFlag(langName) {
+    function raw(v) {
+      if (v === undefined || v === null) return "";
+      var s = String(v).trim();
+      if (!s) return "";
+      if (/^\{[^}]+\}$/.test(s)) return "";
+      if (s === "undefined" || s === "null") return "";
+      return s;
+    }
+
+    function digits(v) {
+      return raw(v).replace(/[^0-9]/g, "");
+    }
+
+    var attrTargetUid = root ? root.getAttribute("data-target-uid") : "";
+    var attrTid = root ? root.getAttribute("data-tid") : "";
+    var attrChannelId = root ? root.getAttribute("data-channel-id") : "";
+    var attrChannelType = root ? root.getAttribute("data-channel-type") : "";
+
+    var targetUid =
+      digits(attrTargetUid) ||
+      digits(cfg.targetUid) ||
+      digits(pathMatch && pathMatch[1]) ||
+      digits(q.get("uid"));
+
+    var tid =
+      digits(attrTid) ||
+      digits(cfg.tid) ||
+      digits(q.get("tid"));
+
+    var channelId =
+      raw(attrChannelId) ||
+      raw(cfg.channelId) ||
+      raw(q.get("channel_id"));
+
+    var typeRaw =
+      raw(attrChannelType) ||
+      raw(cfg.channelType) ||
+      raw(q.get("channel_type"));
+
+    var channelType = Number(typeRaw || 0);
+    if ([1, 2].indexOf(channelType) === -1) {
+      channelType = channelId.indexOf("nbb_topic_") === 0 || tid ? 2 : 1;
+    }
+
+    if (targetUid && !tid && (!channelId || /^\{[^}]+\}$/.test(channelId))) {
+      channelId = "";
+      channelType = 1;
+    }
+
+    return {
+      targetUid: targetUid,
+      tid: tid,
+      channelId: channelId,
+      channelType: channelType
+    };
+  } function getFlag(langName) {
     for (var i = 0; i < LANG_LIST.length; i++) if (LANG_LIST[i].n === langName) return LANG_LIST[i].f;
     return "🌐";
   }
