@@ -986,12 +986,17 @@
     if (state.pendingUserProfileFetch[uid]) return state.pendingUserProfileFetch[uid];
 
     state.pendingUserProfileFetch[uid] = cpFetchJSON(cpApiBase() + "/user/" + encodeURIComponent(uid))
-      .then(function (u) {
-        if (!u || !u.uid) return null;
+      .then(function (res) {
+        var u = pickUserRecord(res) || (res && res.user) || (res && res.data) || res;
+        if (res && res.userData) u = res.userData;
+        if (res && res.users && res.users[0]) u = res.users[0];
+        if (!u || !(u.uid || u.userId || u.id)) return null;
         setPeerFromUser(u);
-        state.userProfileCache[String(u.uid)] = u;
-        applyUserProfileToMessages(String(u.uid), u);
-        return u;
+        var realUid = String(u.uid || u.userId || u.id || uid);
+        var profile = state.userProfileCache[realUid] || u;
+        state.userProfileCache[realUid] = profile;
+        applyUserProfileToMessages(realUid, profile);
+        return profile;
       })
       .catch(function (e) {
         warn("fetch-user-profile", e);
@@ -1237,6 +1242,17 @@
       if (routeSlug) {
         name = routeSlug;
         userslug = userslug || routeSlug;
+      }
+    }
+
+    if (!name) {
+      var fallbackUid = cpGetTargetUid() || (cpGetChannelType() === 1 ? cpDigits(cpGetChannelId()) : "");
+      if (fallbackUid) {
+        uid = uid || String(fallbackUid);
+        name = "用户" + fallbackUid;
+        userslug = userslug || String(fallbackUid);
+        if (!state.peerUidCache) state.peerUidCache = String(fallbackUid);
+        setTimeout(function () { fetchUserProfile(fallbackUid); }, 0);
       }
     }
 
@@ -1989,6 +2005,7 @@
 
     injectStyle();
     injectRoot();
+    closeAllTransientMasks();
     // 先用路由用户名占位，避免标题长时间停留在“加载中...”
     updateHeaderPeerInfo(null);
     hydratePeerFromRoute().then(function () {
@@ -2118,8 +2135,40 @@
     var link = document.createElement("link");
     link.id = "cp-chat-style";
     link.rel = "stylesheet";
-    link.href = getPluginStaticBase() + "/wukong-chat.css?v=0.19.0-mobile-telegram-v2";
+    link.href = getPluginStaticBase() + "/wukong-chat.css?v=0.20.0-mobile-telegram-v3";
     document.head.appendChild(link);
+  }
+
+  function setMaskOpen(id, open) {
+    var el = byId(id);
+    if (!el) return;
+
+    if (open) {
+      el.hidden = false;
+      el.removeAttribute("hidden");
+      el.classList.add("show", "is-open");
+      el.style.removeProperty("display");
+      el.style.removeProperty("visibility");
+      el.style.removeProperty("opacity");
+      el.style.removeProperty("pointer-events");
+    } else {
+      el.classList.remove("show", "is-open", "active");
+      el.removeAttribute("data-open");
+      el.hidden = true;
+      el.setAttribute("hidden", "");
+      el.style.removeProperty("display");
+      el.style.removeProperty("visibility");
+      el.style.removeProperty("opacity");
+      el.style.removeProperty("pointer-events");
+    }
+  }
+
+  function closeAllTransientMasks() {
+    ["cp-settings-mask", "cp-lang-mask", "cp-context-overlay", "cp-preview-mask", "cp-media-pop"].forEach(function (id) {
+      setMaskOpen(id, false);
+    });
+    state.previewOpen = false;
+    state.settingsOpen = false;
   }
 
 
@@ -2143,7 +2192,7 @@
     if (byId('cp-header-back')) byId('cp-header-back').setAttribute('aria-label', cpT('back', '返回'));
     if (byId('cp-header-more')) byId('cp-header-more').setAttribute('aria-label', cpT('settings', '设置'));
     if (byId('cp-input')) byId('cp-input').setAttribute('placeholder', cpT('sendMessage', '发送消息...'));
-    setText('cp-peer-info', 'loading', '加载中...');
+    // Do not reset the chat title to loading here; updateHeaderPeerInfo owns it.
     var spinner = byId('cp-top-spinner');
     if (spinner) spinner.innerHTML = ICON.spinner + ' ' + esc(cpT('loading', '加载中...'));
 
@@ -2554,16 +2603,16 @@
 
     byId("cp-src-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "source";
-      byId("cp-lang-mask").hidden = false;
+      setMaskOpen("cp-lang-mask", true);
     });
 
     byId("cp-tgt-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "target";
-      byId("cp-lang-mask").hidden = false;
+      setMaskOpen("cp-lang-mask", true);
     });
 
     byId("cp-lang-close").addEventListener("click", function () {
-      byId("cp-lang-mask").hidden = true;
+      setMaskOpen("cp-lang-mask", false);
     });
 
     byId("cp-lang-grid").addEventListener("click", function (e) {
@@ -2577,7 +2626,7 @@
 
       syncTranslateBar();
       saveJSON(KEY_CFG, state.cfg);
-      byId("cp-lang-mask").hidden = true;
+      setMaskOpen("cp-lang-mask", false);
       clearWingmanPanel();
     });
 
@@ -2821,18 +2870,21 @@
   }
 
   function openSettings() {
-    byId("cp-settings-mask").hidden = false;
-    state.settingsOpen = true;
-    history.pushState({ cpSettings: true }, "", location.href);
+    setMaskOpen("cp-settings-mask", true);
+    if (!state.settingsOpen) {
+      state.settingsOpen = true;
+      try {
+        history.pushState({ cpSettings: true }, "", location.href);
+      } catch (_) {}
+    }
   }
 
   function closeSettings(fromPopState) {
-    if (!state.settingsOpen) return;
-
+    var wasOpen = !!state.settingsOpen;
     state.settingsOpen = false;
-    byId("cp-settings-mask").hidden = true;
+    setMaskOpen("cp-settings-mask", false);
 
-    if (!fromPopState) {
+    if (!fromPopState && wasOpen) {
       try {
         history.back();
       } catch (_) {}
@@ -3131,11 +3183,11 @@
     html += '<div class="cp-menu-item danger" data-action="delete">' + ICON.trash + ' 删除</div>';
 
     menu.innerHTML = html;
-    byId("cp-context-overlay").hidden = false;
+    setMaskOpen("cp-context-overlay", true);
   }
 
   function hideContextMenu() {
-    byId("cp-context-overlay").hidden = true;
+    setMaskOpen("cp-context-overlay", false);
     state.contextMsg = null;
   }
 
