@@ -3,6 +3,21 @@
   "use strict";
 
 
+  function ensureMobileViewport() {
+    var content = "width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no";
+    var meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.setAttribute("name", "viewport");
+      document.head.appendChild(meta);
+    }
+    if (meta.getAttribute("content") !== content) {
+      meta.setAttribute("content", content);
+    }
+  }
+  ensureMobileViewport();
+
+
   var CP_PLUGIN = (window.CPChatHarmony = window.CPChatHarmony || {});
   function cpPluginConfig() {
     return (window.CPChatHarmony && window.CPChatHarmony.config) || {};
@@ -16,110 +31,6 @@
       console.log.apply(console, ['[cp-chat-harmony]'].concat(Array.prototype.slice.call(arguments)));
     }
   }
-
-  /* ===== Independent /wukong page helpers ===== */
-  function cpIndependentMode() {
-    var cfg = cpPluginConfig();
-    return !!(cfg.independent || document.querySelector('[data-wukong-root="1"]') || /^\/wukong(?:\/|$)/i.test(location.pathname));
-  }
-
-  function cpRaw(v) {
-    if (v === undefined || v === null) return "";
-    var s = String(v).trim();
-    if (!s || s === "undefined" || s === "null") return "";
-    if (/^\{[^}]+\}$/.test(s)) return "";
-    return s;
-  }
-
-  function cpDigits(v) {
-    return cpRaw(v).replace(/[^0-9]/g, "");
-  }
-
-  function cpApiBase() {
-    return cpRaw(cpPluginConfig().apiBase) || "/api/wukong";
-  }
-
-  function cpPageConfig() {
-    var root = document.getElementById("nodebb-wukong-root");
-    var cfg = window.__NBB_WUKONG_PAGE__ || {};
-    var q = new URLSearchParams(location.search || "");
-    var mUser = String(location.pathname || "").match(/\/wukong\/(\d+)/i);
-    var targetUid = cpDigits(root && root.getAttribute("data-target-uid")) || cpDigits(cfg.targetUid) || cpDigits(mUser && mUser[1]) || cpDigits(q.get("uid"));
-    var tid = cpDigits(root && root.getAttribute("data-tid")) || cpDigits(cfg.tid) || cpDigits(q.get("tid"));
-    var channelId = cpRaw(root && root.getAttribute("data-channel-id")) || cpRaw(cfg.channelId) || cpRaw(q.get("channel_id"));
-    var channelType = Number(cpRaw(root && root.getAttribute("data-channel-type")) || cpRaw(cfg.channelType) || cpRaw(q.get("channel_type")) || 0);
-
-    if (tid && !channelId) channelId = "nbb_topic_" + tid;
-    if (!channelId && targetUid) channelId = targetUid;
-    if (channelType !== 1 && channelType !== 2) channelType = tid || String(channelId).indexOf("nbb_topic_") === 0 ? 2 : 1;
-
-    return {
-      targetUid: targetUid,
-      tid: tid,
-      channelId: channelId,
-      channelType: channelType
-    };
-  }
-
-  function cpGetTargetUid() {
-    var c = cpPageConfig();
-    return c.channelType === 1 ? cpDigits(c.targetUid || c.channelId) : "";
-  }
-
-  function cpGetChannelId() {
-    var c = cpPageConfig();
-    return c.channelId || c.targetUid || "";
-  }
-
-  function cpGetChannelType() {
-    return Number(cpPageConfig().channelType || 1) || 1;
-  }
-
-  async function cpFetchJSON(url, opts) {
-    var res = await fetch(url, Object.assign({ credentials: "include", headers: { accept: "application/json" } }, opts || {}));
-    var text = await res.text();
-    var data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
-    if (!res.ok) {
-      var msg = (data && (data.error || data.message)) || ("HTTP " + res.status + " " + url);
-      throw new Error(msg);
-    }
-    return data;
-  }
-
-  function cpLoadScriptSequential(urls, onload, onerror) {
-    urls = (urls || []).filter(Boolean);
-    if (window.wk && window.wk.WKSDK) return onload();
-    var idx = 0;
-    var tryNext = function () {
-      if (idx >= urls.length) {
-        if (onerror) onerror(new Error("all_wukong_sdk_urls_failed"));
-        return;
-      }
-      var url = urls[idx++];
-      var s = document.createElement("script");
-      s.src = url;
-      s.async = true;
-      s.onload = function () {
-        if (window.wk && window.wk.WKSDK) onload();
-        else tryNext();
-      };
-      s.onerror = tryNext;
-      document.head.appendChild(s);
-    };
-    tryNext();
-  }
-
-  function cpPickUserRecord(obj) {
-    if (!obj || typeof obj !== "object") return null;
-    if (obj.user && typeof obj.user === "object") return obj.user;
-    if (obj.data && typeof obj.data === "object") return cpPickUserRecord(obj.data) || obj.data;
-    if (obj.userData && typeof obj.userData === "object") return obj.userData;
-    if (obj.profile && typeof obj.profile === "object") return obj.profile;
-    if (obj.uid || obj.username || obj.userslug || obj.displayname || obj.picture || obj.icontext) return obj;
-    return null;
-  }
-
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
@@ -149,7 +60,8 @@
   var CALL_SIGNAL_PREFIX = "__cp_harmony_call__:";
 
   function isCallSignalText(text) {
-    return String(text == null ? "" : text).indexOf(CALL_SIGNAL_PREFIX) === 0;
+    var s = String(text == null ? "" : text).trim();
+    return s.indexOf(CALL_SIGNAL_PREFIX) === 0 || s.indexOf("__wkcall__:") === 0 || s.indexOf("__wkcall__：") === 0;
   }
 
   function isCallSignalMessage(m) {
@@ -254,19 +166,40 @@
     '  ]\n' +
     '}';
 
+  function cpSvgIcon(name, extraClass) {
+    var paths = {
+      plus: '<path d="M12 5v14"></path><path d="M5 12h14"></path>',
+      play: '<path d="M8 5v14l11-7z"></path>',
+      pause: '<path d="M9 5v14"></path><path d="M15 5v14"></path>',
+      mic: '<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"></path><path d="M5 11a7 7 0 0 0 14 0"></path><path d="M12 18v3"></path><path d="M8 21h8"></path>',
+      send: '<path d="M12 19V5"></path><path d="M5 12l7-7 7 7"></path>',
+      image: '<rect x="3" y="5" width="18" height="14" rx="3"></rect><circle cx="8.5" cy="10" r="1.5"></circle><path d="M21 15l-5-5L5 19"></path>',
+      camera: '<path d="M7 7l1.5-2h7L17 7h2a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-7a3 3 0 0 1 3-3h2z"></path><circle cx="12" cy="13" r="4"></circle>',
+      quote: '<path d="M10 11H6a4 4 0 0 1 4-4v2a2 2 0 0 0-2 2h2v5H5v-5a7 7 0 0 1 7-7"></path><path d="M19 11h-4a4 4 0 0 1 4-4v2a2 2 0 0 0-2 2h2v5h-5v-5a7 7 0 0 1 7-7"></path>',
+      recall: '<path d="M3 7v6h6"></path><path d="M21 17a9 9 0 0 0-15-6.7L3 13"></path>',
+      trash: '<path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 14h10l1-14"></path><path d="M9 7V4h6v3"></path>',
+      close: '<path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>'
+    };
+    var cls = "cp-icon" + (extraClass ? " " + extraClass : "");
+    return '<svg class="' + cls + '" viewBox="0 0 24 24" aria-hidden="true">' + (paths[name] || paths.plus) + "</svg>";
+  }
+
   var ICON = {
-    play: '<span class="cp-icon-text cp-icon-play">▶</span>',
-    pause: '<span class="cp-icon-text cp-icon-pause">Ⅱ</span>',
-    mic: '<span class="cp-icon-text cp-icon-mic">🎙</span>',
-    send: '<span class="cp-icon-text cp-icon-send">↑</span>',
-    photo: '<span class="cp-icon-text cp-icon-plus">＋</span>',
-    quote: '<span class="cp-icon-text cp-icon-quote">↩</span>',
-    recall: '<span class="cp-icon-text cp-icon-recall">↶</span>',
-    trans: '<span class="cp-i cp-i-language"><i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i><span class="cp-i-fallback">译</span></span>',
-    camera: '<span class="cp-icon-text cp-icon-camera">📷</span>',
-    album: '<span class="cp-icon-text cp-icon-album">🖼</span>',
-    ai: '<span class="cp-i cp-i-language"><i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i><span class="cp-i-fallback">译</span></span>'
+    play: cpSvgIcon("play"),
+    pause: cpSvgIcon("pause"),
+    mic: cpSvgIcon("mic"),
+    send: cpSvgIcon("send"),
+    photo: cpSvgIcon("plus"),
+    quote: cpSvgIcon("quote"),
+    recall: cpSvgIcon("recall"),
+    trans: '<span class="cp-lang-icon"><i class="fa-solid fa-language fa fa-language"></i><span class="cp-lang-fallback">译</span></span>',
+    camera: cpSvgIcon("camera"),
+    album: cpSvgIcon("image"),
+    trash: cpSvgIcon("trash"),
+    close: cpSvgIcon("close"),
+    ai: '<span class="cp-ai-glyph"><i class="fa-solid fa-language fa fa-language"></i><span class="cp-ai-fallback">译</span></span>'
   };
+
 
   var waveHeights = [5, 8, 12, 16, 10, 7, 14, 9, 13, 6, 11, 15];
   var persistTimer = null;
@@ -856,14 +789,26 @@
   }
 
   function getRoutePeerSlug() {
-    var pageUid = cpGetTargetUid();
-    if (pageUid) return pageUid;
+    var page = window.__NBB_WUKONG_PAGE__ || {};
+    var cfg = cpPluginConfig() || {};
+
+    var direct = page.targetUid || cfg.targetUid || cfg.uid || "";
+    if (direct) return String(direct);
+
+    var q = new URLSearchParams(location.search || "");
+    direct = q.get("uid") || q.get("to_uid") || q.get("targetUid") || "";
+    if (direct) return String(direct);
 
     var path = String(location.pathname || "");
     var rel = getRelativePath();
 
     if (rel && path.indexOf(rel) === 0) {
       path = path.slice(rel.length) || "/";
+    }
+
+    var wk = path.match(/\/wukong\/([^\/?#]+)/i);
+    if (wk && wk[1]) {
+      try { return decodeURIComponent(wk[1]); } catch (_) { return wk[1] || ""; }
     }
 
     var match = path.match(/\/user\/([^\/?#]+)(?:\/chats(?:\/|$)|$)/i);
@@ -879,29 +824,36 @@
   function pickUserRecord(obj) {
     if (!obj || typeof obj !== "object") return null;
 
+    if (obj.data && typeof obj.data === "object") {
+      var fromData = pickUserRecord(obj.data);
+      if (fromData) return fromData;
+    }
+
+    if (obj.userData && typeof obj.userData === "object") return obj.userData;
     if (obj.user && typeof obj.user === "object") return obj.user;
     if (obj.targetUser && typeof obj.targetUser === "object") return obj.targetUser;
     if (obj.recipient && typeof obj.recipient === "object") return obj.recipient;
     if (obj.toUser && typeof obj.toUser === "object") return obj.toUser;
     if (obj.profile && typeof obj.profile === "object") return obj.profile;
-    if (obj.uid || obj.username || obj.userslug || obj.slug || obj.title || obj.displayname || obj.name) return obj;
+    if (Array.isArray(obj.users) && obj.users[0]) return obj.users[0];
+    if (obj.uid || obj.userId || obj.id || obj.username || obj.userslug || obj.slug || obj.title || obj.displayname || obj.name) return obj;
 
     return null;
   }
 
   function setPeerFromUser(u) {
-    u = cpPickUserRecord(u) || u;
     if (!u || typeof u !== "object") return false;
 
     var myUidStr = String(window.app && app.user ? app.user.uid : state.myUid);
     var uid = u.uid || u.userId || u.id;
     var username = u.username || u.displayname || u.name || u.title || u.fullname || u.userslug || u.slug || "";
     var userslug = u.userslug || u.slug || (username ? encodeURIComponent(String(username).toLowerCase().replace(/ /g, "-")) : "");
+    var picture = u.picture || u.uploadedpicture || u.uploadedPicture || u.pictureUrl || u.avatarUrl || u.avatar || "";
 
     if (uid && String(uid) !== myUidStr && String(uid) !== "0") state.peerUidCache = String(uid);
     if (username) state.peerUsernameCache = String(username);
     if (userslug) state.peerUserslugCache = String(userslug);
-    if (u.picture || u.uploadedpicture || u.avatar) state.peerPictureCache = u.picture || u.uploadedpicture || u.avatar;
+    if (picture) state.peerPictureCache = picture;
     if (u.icontext || u["icon:text"]) state.peerIconTextCache = u.icontext || u["icon:text"];
     if (u.iconbgColor || u["icon:bgColor"]) state.peerIconBgCache = u.iconbgColor || u["icon:bgColor"];
 
@@ -952,51 +904,41 @@
 
   async function hydratePeerFromRoute() {
     if (state.peerHydrating) return false;
-    if (state.peerUidCache && state.peerUsernameCache && state.peerPictureCache) return true;
+    if (state.peerUidCache && state.peerUsernameCache) return true;
 
-    var targetUid = cpGetTargetUid();
-    if (targetUid) {
-      state.peerUidCache = String(targetUid);
-      state.peerUsernameCache = state.peerUsernameCache || ("用户" + targetUid);
-      state.peerHydrating = true;
-      try {
-        var u = await cpFetchJSON(cpApiBase() + "/user/" + encodeURIComponent(targetUid));
-        var record = cpPickUserRecord(u) || u;
-        if (setPeerFromUser(record)) {
-          updateHeaderPeerInfo(null);
-          return true;
-        }
-      } catch (e) {
-        warn("hydrate-peer-api", e);
-      } finally {
-        state.peerHydrating = false;
-      }
-      updateHeaderPeerInfo(null);
-      return true;
-    }
-
-    var u2 = getPeerFromAjaxify();
-    if (setPeerFromUser(u2)) return true;
+    var u = getPeerFromAjaxify();
+    if (setPeerFromUser(u)) return true;
 
     var slug = getRoutePeerSlug();
     if (!slug) return false;
 
-    state.peerUserslugCache = state.peerUserslugCache || slug;
-    state.peerUsernameCache = state.peerUsernameCache || slug;
+    state.peerUidCache = state.peerUidCache || String(slug);
+    state.peerUsernameCache = state.peerUsernameCache || String(slug);
+    state.peerUserslugCache = state.peerUserslugCache || String(slug);
     updateHeaderPeerInfo(null);
 
     state.peerHydrating = true;
     try {
-      var url = getRelativePath() + "/api/user/" + encodeURIComponent(slug);
-      var res = await fetch(url, { credentials: "same-origin", headers: { accept: "application/json" } });
-      if (!res.ok) return false;
+      var endpoints = [
+        (cpPluginConfig().apiBase || "/api/wukong") + "/user/" + encodeURIComponent(slug),
+        getRelativePath() + "/api/user/" + encodeURIComponent(slug)
+      ];
 
-      var json = await res.json();
-      var record = cpPickUserRecord(json) || pickUserRecord(json) || json;
+      for (var i = 0; i < endpoints.length; i++) {
+        try {
+          var res = await fetch(endpoints[i], { credentials: "same-origin", headers: { accept: "application/json" } });
+          if (!res.ok) continue;
 
-      if (setPeerFromUser(record)) {
-        updateHeaderPeerInfo(null);
-        return true;
+          var json = await res.json();
+          var record = pickUserRecord(json) || json;
+
+          if (setPeerFromUser(record)) {
+            updateHeaderPeerInfo(null);
+            return true;
+          }
+        } catch (inner) {
+          warn("hydrate-peer-endpoint", inner);
+        }
       }
     } catch (e) {
       warn("hydrate-peer", e);
@@ -1010,9 +952,14 @@
   function getPeerUid() {
     if (state.peerUidCache) return state.peerUidCache;
 
-    var pageUid = cpGetTargetUid();
-    if (pageUid) {
-      state.peerUidCache = String(pageUid);
+    var page = window.__NBB_WUKONG_PAGE__ || {};
+    var cfg = cpPluginConfig() || {};
+    var direct = page.targetUid || cfg.targetUid || cfg.uid || "";
+
+    if (direct) {
+      state.peerUidCache = String(direct);
+      if (!state.peerUsernameCache) state.peerUsernameCache = String(direct);
+      if (!state.peerUserslugCache) state.peerUserslugCache = String(direct);
       return state.peerUidCache;
     }
 
@@ -1030,12 +977,12 @@
       return state.peerUidCache;
     }
 
-    if (!state.peerUsernameCache) {
-      var slug = getRoutePeerSlug();
-      if (slug) {
-        state.peerUsernameCache = slug;
-        state.peerUserslugCache = slug;
-      }
+    var slug = getRoutePeerSlug();
+    if (slug) {
+      state.peerUidCache = String(slug);
+      state.peerUsernameCache = state.peerUsernameCache || String(slug);
+      state.peerUserslugCache = state.peerUserslugCache || String(slug);
+      return state.peerUidCache;
     }
 
     return "";
@@ -1047,7 +994,7 @@
     var bg = "#72a5f2";
 
     if (uid === state.myUid && window.app && window.app.user) {
-      pic = app.user.picture || app.user.uploadedpicture || app.user.avatar;
+      pic = app.user.picture;
       if (app.user.icontext) text = app.user.icontext;
       if (app.user.iconbgColor) bg = app.user.iconbgColor;
     } else {
@@ -1068,14 +1015,14 @@
       }
 
       if (u) {
-        pic = u.picture || u.uploadedpicture || u.avatar;
+        pic = u.picture;
         if (u.icontext) text = u.icontext;
         if (u.iconbgColor) bg = u.iconbgColor;
       }
     }
 
     if (pic) {
-      return '<img class="avatar" src="' + escAttr(pic) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" />';
+      return '<img class="avatar" src="' + escAttr(pic) + '" style="width:100%;height:100%;border-radius:40%;object-fit:cover;" />';
     }
 
     if (fallbackHtml && fallbackHtml.indexOf("<img") > -1) return fallbackHtml;
@@ -1083,7 +1030,7 @@
     return (
       '<div class="avatar" style="background:' +
       escAttr(bg) +
-      ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;font-size:18px;font-weight:800;">' +
+      ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:40%;font-size:16px;">' +
       esc(text) +
       "</div>"
     );
@@ -1128,11 +1075,9 @@
       state.peerUsernameCache = name;
       userslug = userslug || encodeURIComponent(String(name).toLowerCase().replace(/ /g, "-"));
       state.peerUserslugCache = userslug;
-      pInfo.dataset.ready = "1";
       pInfo.innerHTML = '<a href="' + getRelativePath() + '/user/' + escAttr(userslug) + '/topics" title="访问主页">' + esc(name) + "</a>";
       if (avatar) avatar.innerHTML = avatarHtml || getAvatarHtml(String(uid || getPeerUid() || ""), name, null);
     } else {
-      pInfo.dataset.ready = "1";
       pInfo.textContent = cpT("chatRoom", "聊天室");
       if (avatar) avatar.innerHTML = getAvatarHtml("", "?", null);
     }
@@ -1310,145 +1255,198 @@
     if (window.__wkEngineBooted) return;
     window.__wkEngineBooted = true;
 
-    cpFetchJSON(cpApiBase() + "/token")
-      .catch(function () {
-        return cpFetchJSON("/bridge/token");
-      })
-      .then(function (res) {
-        if (!res || !res.token) return;
+    var apiBase = cpPluginConfig().apiBase || "/api/wukong";
 
-        state.myUid = String(res.wkUid || res.uid || (res.user && res.user.uid) || state.myUid || "");
-
-        var urls = [];
-        var cfgUrl = cpRaw(cpPluginConfig().wkSdkUrl);
-        if (cfgUrl) urls.push(cfgUrl);
-        urls.push("/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1");
-        urls.push("https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js");
-
-        cpLoadScriptSequential(urls, function () {
-          var wk = window.wk;
-          if (!wk || !wk.WKSDK) return;
-
-          wk.WKSDK.shared().config.uid = state.myUid;
-          wk.WKSDK.shared().config.token = String(res.token);
-          wk.WKSDK.shared().config.addr = cpRaw(res.wkws || res.wsAddr || res.addr || cpPluginConfig().wkWsUrl) || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/wkws/");
-
-          wk.WKSDK.shared().chatManager.addMessageListener(function (m) {
-            if (!state.mounted) return;
-
-            var payloadObj = extractWkPayload(m) || {};
-
-            if (m.contentType === 1006 || payloadObj.type === 1006) {
-              var targetId = payloadObj.client_msg_no || payloadObj.message_id || payloadObj.clientMsgNo;
-
-              var targetMsg = state.wkMessages.find(function (x) {
-                return x.id === targetId || (x.wkMsg && (x.wkMsg.clientMsgNo === targetId || x.wkMsg.messageID === targetId));
-              });
-
-              if (targetMsg) {
-                targetMsg.recalled = true;
-                targetMsg.text = "此消息已被撤回";
-                msgTouch(targetMsg);
-                incrementalRender("keep");
-              }
-
-              return;
-            }
-
-            var fromUid = String(m.fromUID || m.from_uid || "");
-            if (fromUid === state.myUid) return;
-
-            var currentPeerUid = getPeerUid();
-            if (cpGetChannelType() === 1 && (!currentPeerUid || fromUid !== currentPeerUid)) return;
-
-            var t = payloadObj.text || payloadObj.content || "";
-            if (!t) return;
-            if (isCallSignalText(t)) return;
-
-            var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
-            newMsg.serverText = t;
-
-            var incomingSeq = m.messageSeq || m.message_seq || 0;
-            if (incomingSeq > state.localMaxSeq) state.localMaxSeq = incomingSeq;
-
-            state.wkMessages.push(newMsg);
-            pruneWkMessages();
-            pruneAllMessagesInMemory();
-
-            state.renderVersion++;
-            state.mergedDirty = true;
-            state.msgIndexDirty = true;
-
-            schedulePersistChat(currentPeerUid || cpGetChannelId());
-
-            var wasAtBottom = isMainAtBottom();
-
-            if (state.cfg.autoTranslateLastMsg) {
-              setTimeout(function () {
-                executePeerTranslateOnly(newMsg);
-              }, 0);
-            }
-
-            if (wasAtBottom) {
-              state.unreadCount = 0;
-              updateUnreadBadge();
-              incrementalRender("bottom");
-              requestAnimationFrame(function () {
-                forceScrollToBottom();
-                setTimeout(markVisibleAsRead, 60);
-              });
-            } else {
-              state.unreadCount++;
-              updateUnreadBadge();
-              incrementalRender("keep");
-              if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
-            }
-          });
-
-          wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
-            if (status === 1 && state.mounted && state.initialLoadDone) {
-              var pUid = getPeerUid();
-              if ((pUid || cpGetChannelId()) && state.localMaxSeq > 0) fetchOfflineMessages(pUid || cpGetChannelId());
-            }
-          });
-
-          wk.WKSDK.shared().connectManager.connect();
-          state.wkReady = true;
-        }, function (e) {
-          warn("wk-sdk-load", e);
-          toast("悟空 SDK 加载失败");
+    function loadToken() {
+      return fetch(apiBase + "/token", {
+        credentials: "same-origin",
+        headers: { accept: "application/json" }
+      }).then(function (res) {
+        if (!res.ok) throw new Error("token http " + res.status);
+        return res.json();
+      }).catch(function () {
+        return fetch("/bridge/token", {
+          credentials: "same-origin",
+          headers: { accept: "application/json" }
+        }).then(function (res) {
+          if (!res.ok) throw new Error("bridge token http " + res.status);
+          return res.json();
         });
-      })
-      .catch(function (e) {
-        warn("wk-token", e);
-        toast("悟空登录失败");
       });
+    }
+
+    loadToken().then(function (res) {
+      if (!res) return;
+
+      var token = res.token || (res.data && res.data.token) || "";
+      var uid = res.uid || res.userId || (res.user && res.user.uid) || (res.data && (res.data.uid || res.data.userId)) || "";
+      var addr = res.addr || res.wsAddr || res.wkws || (res.data && (res.data.addr || res.data.wsAddr || res.data.wkws)) || "";
+
+      if (!token) {
+        warn("wk-token-empty", res);
+        return;
+      }
+
+      state.myUid = String(uid || state.myUid || (window.app && app.user ? app.user.uid : ""));
+      if (res.user || res.userData || (res.data && (res.data.user || res.data.userData))) {
+        var me = pickUserRecord(res.user || res.userData || res.data);
+        if (me && window.app && app.user) {
+          app.user.picture = app.user.picture || me.picture || me.uploadedpicture || me.avatarUrl || "";
+          app.user.username = app.user.username || me.username || me.displayname || "";
+          app.user.userslug = app.user.userslug || me.userslug || me.slug || "";
+        }
+      }
+
+      var s = document.createElement("script");
+      s.src = cpPluginConfig().wkSdkUrl || "https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js";
+      document.head.appendChild(s);
+
+      s.onload = function () {
+        var wk = window.wk;
+        if (!wk || !wk.WKSDK) return;
+
+        wk.WKSDK.shared().config.uid = state.myUid;
+        wk.WKSDK.shared().config.token = String(token);
+        wk.WKSDK.shared().config.addr = addr || cpPluginConfig().wkWsUrl || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/wkws/");
+
+        wk.WKSDK.shared().chatManager.addMessageListener(function (m) {
+          if (!state.mounted) return;
+
+          var payloadObj = extractWkPayload(m) || {};
+
+          if (m.contentType === 1006 || payloadObj.type === 1006) {
+            var targetId = payloadObj.client_msg_no || payloadObj.message_id || payloadObj.clientMsgNo;
+
+            var targetMsg = state.wkMessages.find(function (x) {
+              return x.id === targetId || (x.wkMsg && (x.wkMsg.clientMsgNo === targetId || x.wkMsg.messageID === targetId));
+            });
+
+            if (targetMsg) {
+              targetMsg.recalled = true;
+              targetMsg.text = "此消息已被撤回";
+              msgTouch(targetMsg);
+              incrementalRender("keep");
+            }
+
+            return;
+          }
+
+          var fromUid = String(m.fromUID || m.from_uid || "");
+          if (fromUid === state.myUid) return;
+
+          var currentPeerUid = getPeerUid();
+          if (!currentPeerUid || fromUid !== currentPeerUid) return;
+
+          var t = payloadObj.text || payloadObj.content || "";
+          if (!t) return;
+          if (isCallSignalText(t)) return;
+
+          var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
+          newMsg.serverText = t;
+
+          var incomingSeq = m.messageSeq || m.message_seq || 0;
+          if (incomingSeq > state.localMaxSeq) state.localMaxSeq = incomingSeq;
+
+          state.wkMessages.push(newMsg);
+          pruneWkMessages();
+          pruneAllMessagesInMemory();
+
+          state.renderVersion++;
+          state.mergedDirty = true;
+          state.msgIndexDirty = true;
+
+          schedulePersistChat(currentPeerUid);
+
+          var wasAtBottom = isMainAtBottom();
+
+          if (state.cfg.autoTranslateLastMsg) {
+            setTimeout(function () {
+              executePeerTranslateOnly(newMsg);
+            }, 0);
+          }
+
+          if (wasAtBottom) {
+            state.unreadCount = 0;
+            updateUnreadBadge();
+            incrementalRender("bottom");
+            requestAnimationFrame(function () {
+              forceScrollToBottom();
+              setTimeout(markVisibleAsRead, 60);
+            });
+          } else {
+            state.unreadCount++;
+            updateUnreadBadge();
+            incrementalRender("keep");
+            if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
+          }
+        });
+
+        wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
+          if (status === 1 && state.mounted && state.initialLoadDone) {
+            var pUid = getPeerUid();
+            if (pUid && state.localMaxSeq > 0) fetchOfflineMessages(pUid);
+          }
+        });
+
+        wk.WKSDK.shared().connectManager.connect();
+        state.wkReady = true;
+      };
+
+      s.onerror = function (e) {
+        warn("wk-sdk-load", e);
+      };
+    }).catch(function (e) {
+      warn("wk-token", e);
+    });
   }
 
   async function fetchWukongHistory(peerUid, startSeq, opts) {
-    peerUid = peerUid || cpGetChannelId();
     if (!peerUid || state.isPreloading || state.hasNoMoreHistory) return;
 
     opts = opts || {};
     var limit = opts.limit || 20;
+    var apiBase = cpPluginConfig().apiBase || "/api/wukong";
+    var channelId = (window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.channelId) || cpPluginConfig().channelId || peerUid;
+    var channelType = Number((window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.channelType) || cpPluginConfig().channelType || 1);
 
     state.isPreloading = true;
     if (byId("cp-top-spinner")) byId("cp-top-spinner").hidden = false;
 
     try {
-      var url = cpApiBase() + "/history?channel_id=" + encodeURIComponent(cpGetChannelId() || peerUid) + "&channel_type=" + encodeURIComponent(cpGetChannelType()) + "&limit=" + encodeURIComponent(limit);
-      if (startSeq && startSeq > 0) url += "&start_message_seq=" + encodeURIComponent(startSeq);
+      var urls = [];
 
-      var res = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
-      if (!res.ok) throw new Error("HTTP " + res.status);
+      var u1 = apiBase + "/history?channel_id=" + encodeURIComponent(channelId) + "&channel_type=" + encodeURIComponent(channelType) + "&limit=" + encodeURIComponent(limit);
+      if (startSeq && startSeq > 0) u1 += "&start_message_seq=" + encodeURIComponent(startSeq);
+      urls.push(u1);
 
-      var json = await res.json();
+      var u2 = "/bridge/get-history?login_uid=" + encodeURIComponent(state.myUid) + "&channel_id=" + encodeURIComponent(peerUid) + "&limit=" + encodeURIComponent(limit);
+      if (startSeq && startSeq > 0) u2 += "&start_message_seq=" + encodeURIComponent(startSeq);
+      urls.push(u2);
+
+      var json = null;
+      var ok = false;
+
+      for (var ui = 0; ui < urls.length; ui++) {
+        try {
+          var res = await fetch(urls[ui], { credentials: "same-origin", headers: { accept: "application/json" } });
+          if (!res.ok) continue;
+          json = await res.json();
+          ok = true;
+          break;
+        } catch (inner) {
+          warn("wk-history-endpoint", inner);
+        }
+      }
+
+      if (!ok) throw new Error("history api failed");
+
       var msgs = [];
 
       if (Array.isArray(json)) msgs = json;
       else if (json.data && Array.isArray(json.data)) msgs = json.data;
       else if (json.data && Array.isArray(json.data.messages)) msgs = json.data.messages;
       else if (Array.isArray(json.messages)) msgs = json.messages;
+      else if (json.response && Array.isArray(json.response.messages)) msgs = json.response.messages;
 
       if (msgs.length) {
         processWukongMessages(msgs, !!startSeq && !opts.isOfflineSync);
@@ -1465,45 +1463,22 @@
   }
 
   async function fetchOfflineMessages(peerUid) {
-    peerUid = peerUid || cpGetChannelId();
     if (!peerUid || !state.localMaxSeq) return;
 
     var startSeq = state.localMaxSeq + 1;
     var hasMore = true;
 
     while (hasMore) {
-      try {
-        var url = cpApiBase() + "/history?channel_id=" + encodeURIComponent(cpGetChannelId() || peerUid) + "&channel_type=" + encodeURIComponent(cpGetChannelType()) + "&limit=50&start_message_seq=" + encodeURIComponent(startSeq);
+      var before = state.wkMessages.length;
+      await fetchWukongHistory(peerUid, startSeq, { limit: 50, isOfflineSync: true });
+      var after = state.wkMessages.length;
 
-        var res = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
-        if (!res.ok) break;
-
-        var json = await res.json();
-        var msgs = [];
-
-        if (Array.isArray(json)) msgs = json;
-        else if (json.data && Array.isArray(json.data)) msgs = json.data;
-        else if (json.data && Array.isArray(json.data.messages)) msgs = json.data.messages;
-        else if (Array.isArray(json.messages)) msgs = json.messages;
-
-        if (msgs.length) {
-          processWukongMessages(msgs, false);
-
-          var batchMaxSeq = 0;
-
-          for (var i = 0; i < msgs.length; i++) {
-            var s = msgs[i].message_seq || msgs[i].messageSeq || 0;
-            if (s > batchMaxSeq) batchMaxSeq = s;
-          }
-
-          startSeq = batchMaxSeq + 1;
-          if (msgs.length < 50) hasMore = false;
-        } else {
-          hasMore = false;
-        }
-      } catch (e) {
-        warn("offline-sync", e);
+      if (after <= before) {
         hasMore = false;
+      } else {
+        var batchMaxSeq = state.localMaxSeq || 0;
+        startSeq = batchMaxSeq + 1;
+        if (after - before < 50) hasMore = false;
       }
     }
   }
@@ -1605,29 +1580,27 @@
 
     var peerUid = getPeerUid();
 
-    if (!cpIndependentMode()) {
-      try {
-        var nativeInput = document.querySelector('[component="chat/input"]');
-        var nativeBtn = document.querySelector('[component="chat/send"]');
+    try {
+      var nativeInput = document.querySelector('[component="chat/input"]');
+      var nativeBtn = document.querySelector('[component="chat/send"]');
 
-        if (nativeInput && nativeBtn) {
-          var setter =
-            Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set ||
-            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      if (nativeInput && nativeBtn) {
+        var setter =
+          Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set ||
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
 
-          if (setter) setter.call(nativeInput, text);
-          else nativeInput.value = text;
+        if (setter) setter.call(nativeInput, text);
+        else nativeInput.value = text;
 
-          nativeInput.dispatchEvent(new Event("input", { bubbles: true }));
-          nativeInput.dispatchEvent(new Event("change", { bubbles: true }));
+        nativeInput.dispatchEvent(new Event("input", { bubbles: true }));
+        nativeInput.dispatchEvent(new Event("change", { bubbles: true }));
 
-          setTimeout(function () {
-            nativeBtn.click();
-          }, 30);
-        }
-      } catch (e) {
-        warn("native-send", e);
+        setTimeout(function () {
+          nativeBtn.click();
+        }, 30);
       }
+    } catch (e) {
+      warn("native-send", e);
     }
 
     var wkMsgObj = null;
@@ -1635,7 +1608,7 @@
 
     if (peerUid && state.wkReady && window.wk) {
       try {
-        var channel = new window.wk.Channel(cpGetChannelId() || peerUid, cpGetChannelType());
+        var channel = new window.wk.Channel(peerUid, 1);
         var msgContent = new window.wk.MessageText(text);
 
         if (originalText) {
@@ -1703,7 +1676,7 @@
 
     if (input) {
       input.value = "";
-      input.style.height = "36px";
+      input.style.height = "42px";
     }
 
     updatePrimaryButton();
@@ -1728,8 +1701,12 @@
   }
 
   function boot() {
-    if (cpIndependentMode()) {
+    var cfg = cpPluginConfig() || {};
+    var isIndependent = !!(cfg.independent || document.getElementById("nodebb-wukong-root") || (window.__NBB_WUKONG_PAGE__ && (window.__NBB_WUKONG_PAGE__.targetUid || window.__NBB_WUKONG_PAGE__.tid)) || /\/wukong(?:\/|$)/i.test(location.pathname));
+
+    if (isIndependent) {
       if (!state.mounted) mount();
+      else scheduleSync();
       return;
     }
 
@@ -1754,15 +1731,14 @@
       updateHeaderPeerInfo(null);
     }
 
-    var loadKey = pUid || cpGetChannelId();
-    if (!loadKey || state.loadedPeerUid === loadKey) return;
+    if (!pUid || state.loadedPeerUid === pUid) return;
 
-    state.loadedPeerUid = loadKey;
+    state.loadedPeerUid = pUid;
 
-    await loadChatFromDB(loadKey);
-    await fetchWukongHistory(loadKey, 0, { limit: 20 });
+    await loadChatFromDB(pUid);
+    await fetchWukongHistory(pUid, 0, { limit: 20 });
 
-    if (state.localMaxSeq > 0) await fetchOfflineMessages(loadKey);
+    if (state.localMaxSeq > 0) await fetchOfflineMessages(pUid);
 
     state.initialLoadDone = true;
 
@@ -1796,7 +1772,7 @@
       })
     );
 
-    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.10 });
+    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.85 });
 
     state.peerUidCache = "";
     state.peerUsernameCache = "";
@@ -1952,19 +1928,33 @@
   function injectStyle() {
     if (byId("cp-chat-style")) return;
 
-    var href = cpRaw(cpPluginConfig().cssUrl) || "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=26";
-    var existing = document.querySelector('link[href*="wukong-chat.css"]');
-    if (existing) {
-      existing.id = existing.id || "cp-chat-style";
-      return;
-    }
+    var css = `
+      #cp-chat-root [hidden],
+      #cp-chat-root .cp-modal-mask[hidden],
+      #cp-chat-root .cp-context-overlay[hidden],
+      #cp-chat-root .cp-preview-mask[hidden],
+      #cp-chat-root .cp-media-pop[hidden],
+      #cp-chat-root #cp-settings-mask[hidden],
+      #cp-chat-root #cp-lang-mask[hidden],
+      #cp-chat-root #cp-wingman-panel[hidden],
+      #cp-chat-root #cp-quote-preview[hidden],
+      #cp-chat-root #cp-upload-progress-wrap[hidden],
+      #cp-chat-root #cp-rec-inline[hidden],
+      #cp-chat-root #cp-fab-badge[hidden],
+      #cp-chat-root #cp-top-spinner[hidden] {
+        display:none!important;
+        visibility:hidden!important;
+        opacity:0!important;
+        pointer-events:none!important;
+      }
+    `;
 
-    var link = document.createElement("link");
-    link.id = "cp-chat-style";
-    link.rel = "stylesheet";
-    link.href = href;
-    document.head.appendChild(link);
+    var st = document.createElement("style");
+    st.id = "cp-chat-style";
+    st.textContent = css;
+    document.head.appendChild(st);
   }
+
 
 
 
@@ -1987,10 +1977,7 @@
     if (byId('cp-header-back')) byId('cp-header-back').setAttribute('aria-label', cpT('back', '返回'));
     if (byId('cp-header-more')) byId('cp-header-more').setAttribute('aria-label', cpT('settings', '设置'));
     if (byId('cp-input')) byId('cp-input').setAttribute('placeholder', cpT('sendMessage', '发送消息...'));
-    var peerInfoEl = byId('cp-peer-info');
-    if (peerInfoEl && !peerInfoEl.dataset.ready && !peerInfoEl.textContent.trim()) {
-      peerInfoEl.textContent = cpT('loading', '加载中...');
-    }
+    setText('cp-peer-info', 'loading', '加载中...');
     var spinner = byId('cp-top-spinner');
     if (spinner) spinner.innerHTML = '<i class="fa fa-circle-o-notch"></i> ' + esc(cpT('loading', '加载中...'));
 
@@ -2058,7 +2045,7 @@
             <div class="cp-header-center" id="cp-peer-info">加载中...</div>
           </div>
           <div class="cp-header-actions">
-            <button id="cp-header-more" aria-label="设置" class="cp-more-btn">⋮</button>
+            <button id="cp-header-more" aria-label="设置"><span class="cp-more-dots">⋮</span></button>
           </div>
         </header>
 
@@ -2119,30 +2106,32 @@
             </div>
 
             <div id="cp-rec-inline" class="cp-rec-inline" hidden>
-              <button id="cp-rec-cancel" class="cp-rec-btn-icon">
-                <span class="cp-rec-label">取消</span>
+              <button id="cp-rec-cancel" class="cp-rec-btn-icon cp-rec-cancel" aria-label="取消录音">
+                ${ICON.close}
               </button>
-              <div class="cp-rec-vis">
-                <span class="cp-rec-dot"></span>
-                <div class="cp-rec-dash"></div>
+              <div class="cp-rec-panel">
+                <div class="cp-rec-topline">
+                  <span class="cp-rec-dot"></span>
+                  <span class="cp-rec-title">正在录音</span>
+                  <span id="cp-rec-time" class="cp-rec-time">0:00</span>
+                </div>
                 <div class="cp-rec-bars" id="cp-rec-bars"></div>
               </div>
-              <button id="cp-rec-pause" class="cp-rec-btn-icon">
-                <span class="cp-rec-label cp-rec-pause-label">暂停</span>
+              <button id="cp-rec-pause" class="cp-rec-btn-icon cp-rec-pause" aria-label="暂停录音">
+                ${ICON.pause}
               </button>
-              <span id="cp-rec-time" style="font-size:16px;color:#4b5563;font-family:sans-serif;font-weight:500;width:38px;text-align:center;">0:00</span>
-              <button id="cp-rec-send" class="cp-rec-btn-icon">
-                <span class="cp-rec-label">发送</span>
+              <button id="cp-rec-send" class="cp-rec-btn-icon cp-rec-send" aria-label="发送语音">
+                ${ICON.send}
               </button>
             </div>
           </div>
 
-          <div class="cp-media-pop" id="cp-media-pop" hidden >
-            <button id="cp-pick-camera" class="cp-media-pop-btn">
-              <span class="mi">${ICON.camera}</span><span>拍摄</span>
+          <div class="cp-media-pop" id="cp-media-pop" hidden>
+            <button id="cp-pick-camera" class="cp-media-pop-btn" type="button">
+              <span class="cp-menu-ico">${ICON.camera}</span><span class="cp-menu-label">拍摄</span>
             </button>
-            <button id="cp-pick-album" class="cp-media-pop-btn">
-              <span class="mi">${ICON.album}</span><span>相册图片/视频</span>
+            <button id="cp-pick-album" class="cp-media-pop-btn" type="button">
+              <span class="cp-menu-ico">${ICON.album}</span><span class="cp-menu-label">相册图片/视频</span>
             </button>
           </div>
         </footer>
@@ -2166,7 +2155,7 @@
             <div class="cp-settings-head">
               <h3>聊天设置</h3>
               <button type="button" class="cp-settings-x" id="cp-settings-close-x" aria-label="关闭">
-                <i class="fa fa-times"></i>
+                ×
               </button>
             </div>
 
@@ -2286,8 +2275,6 @@
     try { document.body.classList.remove("cp-chat-harmony-booting"); } catch (_) {}
     applyStaticTranslations();
 
-    var nbbRoot = document.getElementById("nodebb-wukong-root");
-    if (nbbRoot) nbbRoot.style.display = "none";
     byId("cp-media-btn").innerHTML = ICON.photo;
     byId("cp-primary-icon").innerHTML = ICON.mic;
 
@@ -2345,8 +2332,8 @@
 
     input.addEventListener("input", function () {
       clearWingmanPanel();
-      this.style.height = "36px";
-      this.style.height = Math.min(this.scrollHeight, 120) + "px";
+      this.style.height = "42px";
+      this.style.height = Math.min(this.scrollHeight, 118) + "px";
       updatePrimaryButton();
       updateFooterHeight();
     });
@@ -2355,14 +2342,14 @@
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handlePrimaryAction();
-        this.style.height = "36px";
+        this.style.height = "42px";
         updateFooterHeight();
       }
     });
 
     btnPrimary.addEventListener("click", function () {
       handlePrimaryAction();
-      input.style.height = "36px";
+      input.style.height = "42px";
       updateFooterHeight();
     });
 
@@ -3034,7 +3021,7 @@
 
         if (window.wk && window.wk.WKSDK.shared().chatManager.send) {
           try {
-            var channel = new window.wk.Channel(cpGetChannelId() || getPeerUid(), cpGetChannelType());
+            var channel = new window.wk.Channel(getPeerUid(), 1);
             var revokeContent = new window.wk.MessageText("撤回消息请求");
 
             revokeContent.encode = function () {
@@ -4624,100 +4611,116 @@
     }
   }
 
-  function pickUploadUrl(json) {
+  function extractUploadUrl(json) {
     if (!json) return "";
-    if (typeof json === "string") return json;
 
-    var candidates = [];
-    function add(v) {
-      if (v && typeof v === "string") candidates.push(v);
+    function pick(v) {
+      if (!v) return "";
+      if (typeof v === "string") return v;
+      if (typeof v !== "object") return "";
+      return v.url || v.path || v.src || v.location || v.file || v.filename || "";
     }
-    function scan(obj, depth) {
-      if (!obj || depth > 4) return;
-      if (typeof obj === "string") return add(obj);
-      if (Array.isArray(obj)) {
-        obj.forEach(function (x) { scan(x, depth + 1); });
-        return;
+
+    var candidates = [
+      pick(json),
+      pick(json.data),
+      pick(json.response),
+      pick(json.file),
+      pick(json.upload),
+      json.url,
+      json.path,
+      json.src
+    ];
+
+    var arrays = [
+      json.files,
+      json.images,
+      json.uploads,
+      json.data && json.data.files,
+      json.data && json.data.images,
+      json.data && json.data.uploads,
+      json.response && json.response.files,
+      json.response && json.response.images,
+      json.response && json.response.uploads
+    ];
+
+    for (var ai = 0; ai < arrays.length; ai++) {
+      var arr = arrays[ai];
+      if (Array.isArray(arr) && arr.length) {
+        candidates.push(pick(arr[0]));
       }
-      if (typeof obj !== "object") return;
-      ["url", "path", "src", "href", "location", "file", "image", "thumbnail"].forEach(function (k) {
-        add(obj[k]);
-      });
-      ["response", "data", "files", "images", "uploads", "file", "image", "result", "payload"].forEach(function (k) {
-        scan(obj[k], depth + 1);
-      });
     }
 
-    scan(json, 0);
+    var url = "";
 
-    var url = candidates.find(function (u) {
-      return /^(https?:\/\/|\/)/i.test(u) || /\/uploads\//i.test(u) || /\.(png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|ogg|wav)(\?|#|$)/i.test(u);
-    }) || candidates[0] || "";
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i]) {
+        url = String(candidates[i]);
+        break;
+      }
+    }
 
-    if (url && !/^https?:\/\//i.test(url) && url.charAt(0) !== "/") url = "/" + url;
+    if (!url) return "";
+
+    if (!/^https?:\/\//i.test(url) && url.charAt(0) !== "/") url = "/" + url;
+
     return url;
   }
 
-  function uploadOnce(file, endpoint, fieldName, onProgress) {
-    return new Promise(function (resolve, reject) {
-      var fd = new FormData();
-      fd.append(fieldName, file, file.name || "cp_" + Date.now());
+  function uploadToNodeBB(file, onProgress) {
+    function sendOnce(endpoint, fieldName) {
+      return new Promise(function (resolve, reject) {
+        var fd = new FormData();
+        fd.append(fieldName, file, file.name || "cp_" + Date.now());
 
-      var xhr = new XMLHttpRequest();
-      xhr.open("POST", endpoint);
-      xhr.withCredentials = true;
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", endpoint);
+        xhr.withCredentials = true;
 
-      if (window.config) xhr.setRequestHeader("x-csrf-token", config.csrf_token || config.csrfToken || "");
+        if (window.config) xhr.setRequestHeader("x-csrf-token", config.csrf_token || config.csrfToken || "");
 
-      xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-      };
+        xhr.upload.onprogress = function (e) {
+          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+        };
 
-      xhr.onload = function () {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            var json = JSON.parse(xhr.responseText || "{}");
-            var url = pickUploadUrl(json);
-            if (!url) throw new Error("upload url empty");
-            resolve(url);
-          } catch (err) {
-            reject(err);
+        xhr.onload = function () {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              var json = JSON.parse(xhr.responseText || "{}");
+              var url = extractUploadUrl(json);
+              if (!url) throw new Error("upload url empty: " + xhr.responseText.slice(0, 200));
+              resolve(url);
+            } catch (err) {
+              reject(err);
+            }
+          } else {
+            reject(new Error("upload failed: " + xhr.status + " " + xhr.responseText.slice(0, 200)));
           }
-        } else {
-          reject(new Error("upload failed: " + xhr.status + " " + endpoint));
-        }
-      };
+        };
 
-      xhr.onerror = function () {
-        reject(new Error("network error: " + endpoint));
-      };
+        xhr.onerror = function () {
+          reject(new Error("network error"));
+        };
 
-      xhr.send(fd);
-    });
-  }
-
-  async function uploadToNodeBB(file, onProgress) {
-    var rel = window.config && config.relative_path ? config.relative_path : "";
-    var endpoints = [
-      rel + cpApiBase() + "/upload",
-      rel + "/api/wukong/upload",
-      rel + "/api/post/upload"
-    ];
-    var fields = ["files[]", "file", "files"];
-    var lastErr = null;
-
-    for (var e = 0; e < endpoints.length; e++) {
-      for (var f = 0; f < fields.length; f++) {
-        try {
-          return await uploadOnce(file, endpoints[e], fields[f], onProgress);
-        } catch (err) {
-          lastErr = err;
-          warn("upload-try", err);
-        }
-      }
+        xhr.send(fd);
+      });
     }
 
-    throw lastErr || new Error("upload failed");
+    var rel = window.config && config.relative_path ? config.relative_path : "";
+    var apiBase = cpPluginConfig().apiBase || "/api/wukong";
+    var endpoints = [
+      { url: apiBase + "/upload", field: "file" },
+      { url: rel + "/api/post/upload", field: "files[]" }
+    ];
+
+    return endpoints.reduce(function (promise, ep) {
+      return promise.catch(function () {
+        return sendOnce(ep.url, ep.field);
+      });
+    }, Promise.reject(new Error("start upload"))).then(function (url) {
+      if (!url) throw new Error("upload url empty");
+      return url;
+    });
   }
 
   function readFile(file) {
@@ -5000,7 +5003,7 @@
           pBar.style.width = pct * 100 + "%";
         });
 
-        if (!url) continue;
+        if (!url) { toast("上传失败：没有返回文件地址"); continue; }
 
         if ((uploadFile.type || rawFile.type || "").indexOf("image/") === 0) {
           sendText("![](" + url + ")");
@@ -5086,8 +5089,14 @@
   }
 
   function toggleUIForRecording(isRec) {
-    byId("cp-toolbar-inputs").hidden = isRec;
-    byId("cp-rec-inline").hidden = !isRec;
+    var inputs = byId("cp-toolbar-inputs");
+    var rec = byId("cp-rec-inline");
+    var toolbar = byId("cp-toolbar");
+
+    if (inputs) inputs.hidden = isRec;
+    if (rec) rec.hidden = !isRec;
+    if (toolbar) toolbar.classList.toggle("is-recording", !!isRec);
+
     updateFooterHeight();
   }
 
@@ -5177,6 +5186,7 @@
               pBar.style.width = pct * 100 + "%";
             });
 
+            if (!url) throw new Error("voice upload url empty");
             sendText("[语音消息](" + url + ")");
           } catch (e) {
             warn("record-upload", e);
@@ -5190,8 +5200,7 @@
 
       toggleUIForRecording(true);
 
-      var pauseBtn = byId("cp-rec-pause");
-      if (pauseBtn) pauseBtn.innerHTML = '<span class="cp-rec-label cp-rec-pause-label">暂停</span>';
+      byId("cp-rec-pause").innerHTML = ICON.pause;
 
       state.rec.mediaRecorder.start(250);
 
@@ -5225,16 +5234,16 @@
       return;
     }
 
-    var pauseBtn = byId("cp-rec-pause");
+    var icon = byId("cp-rec-pause").querySelector("i");
 
     if (mr.state === "recording") {
       mr.pause();
       state.rec.paused = true;
-      if (pauseBtn) pauseBtn.innerHTML = '<span class="cp-rec-label cp-rec-pause-label">继续</span>';
+      icon.className = "fa fa-play-circle";
     } else if (mr.state === "paused") {
       mr.resume();
       state.rec.paused = false;
-      if (pauseBtn) pauseBtn.innerHTML = '<span class="cp-rec-label cp-rec-pause-label">暂停</span>';
+      icon.className = "fa fa-pause-circle";
     }
   }
 
