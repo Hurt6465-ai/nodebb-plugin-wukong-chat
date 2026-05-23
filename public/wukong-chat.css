@@ -1554,268 +1554,341 @@ body.cp-has-bg #cp-chat-root .cp-bg-mask {
   }
 }
 
-/* ===== Wukong mobile hotfix 2026-05-23 ===== */
-
-/* Keep the real chat shell over the old loading placeholder */
-#nodebb-wukong-root .nbb-wk-loading {
-  display: none !important;
-}
-
+/* ===== Wukong mobile v23 forced readable UI ===== */
 #cp-chat-root {
-  --cp-header-h: 64px !important;
-  --cp-footer-h: 118px !important;
-}
-
-/* Header: larger NodeBB avatar and username */
-#cp-chat-root .cp-header {
-  height: calc(66px + env(safe-area-inset-top)) !important;
-  padding: env(safe-area-inset-top) 12px 8px 10px !important;
-}
-
-#cp-chat-root .cp-header-back {
-  width: 42px !important;
-  height: 48px !important;
-  font-size: 38px !important;
-}
-
-#cp-chat-root .cp-peer-avatar {
-  width: 48px !important;
-  height: 48px !important;
-  border-radius: 50% !important;
-}
-
-#cp-chat-root .cp-peer-avatar .avatar,
-#cp-chat-root .cp-peer-avatar img {
-  border-radius: 50% !important;
+  --cp-header-h: 76px !important;
+  --cp-footer-h: 122px !important;
   font-size: 18px !important;
 }
 
-#cp-chat-root .cp-header-center {
+.cp-header {
+  height: calc(76px + env(safe-area-inset-top)) !important;
+  padding: env(safe-area-inset-top) 12px 9px 8px !important;
+}
+
+.cp-header-back {
+  width: 52px !important;
+  height: 54px !important;
+  font-size: 46px !important;
+}
+
+.cp-header-peer {
+  gap: 11px !important;
+}
+
+.cp-peer-avatar {
+  width: 54px !important;
+  height: 54px !important;
+  border-radius: 50% !important;
+}
+
+.cp-peer-avatar .avatar,
+.cp-peer-avatar img {
+  border-radius: 50% !important;
   font-size: 22px !important;
+}
+
+.cp-header-center {
+  font-size: 24px !important;
+  line-height: 1.2 !important;
   font-weight: 850 !important;
 }
 
-#cp-chat-root .cp-header-actions button {
-  width: 46px !important;
-  height: 46px !important;
-  font-size: 24px !important;
+.cp-header-actions,
+.cp-header-actions button {
+  width: 54px !important;
+  height: 54px !important;
+  font-size: 32px !important;
 }
 
-/* Main spacing must leave room for the fixed input */
-#cp-chat-root .cp-main {
-  top: calc(66px + env(safe-area-inset-top)) !important;
-  bottom: calc(118px + env(safe-area-inset-bottom)) !important;
-  padding: 14px 10px 28px !important;
+.cp-main {
+  top: calc(76px + env(safe-area-inset-top)) !important;
+  bottom: calc(var(--cp-footer-h) + env(safe-area-inset-bottom)) !important;
+  padding: 18px 12px 24px !important;
 }
 
-/* Bigger avatars and message bubbles */
-#cp-chat-root .cp-avatar-wrap {
-  width: 44px !important;
-  height: 44px !important;
+.cp-time-sep {
+  width: calc(100vw - 26px) !important;
+  margin: 16px auto 16px !important;
+  gap: 12px !important;
+}
+
+.cp-time-sep::before,
+.cp-time-sep::after {
+  min-width: 118px !important;
+}
+
+.cp-time-sep span {
+  font-size: 15px !important;
+}
+
+.cp-row {
+  gap: 10px !important;
+  padding: 6px 0 !important;
+}
+
+.cp-avatar-wrap {
+  width: 54px !important;
+  height: 54px !important;
   border-radius: 50% !important;
 }
 
-#cp-chat-root .cp-avatar-wrap .avatar,
-#cp-chat-root .cp-avatar-wrap img {
+.cp-avatar-wrap .avatar,
+.cp-avatar-wrap img {
   border-radius: 50% !important;
+  font-size: 20px !important;
 }
 
-#cp-chat-root .cp-bubble-wrap {
+.cp-bubble-wrap {
   max-width: 84vw !important;
 }
 
-#cp-chat-root .cp-bubble {
-  font-size: 18px !important;
-  line-height: 1.46 !important;
-  padding: 10px 13px 10px !important;
-  border-radius: 20px !important;
+.cp-bubble {
+  font-size: 20px !important;
+  line-height: 1.48 !important;
+  padding: 12px 15px 11px !important;
+  border-radius: 22px !important;
+  min-height: 44px !important;
 }
 
-#cp-chat-root .cp-row.has-tail .cp-bubble,
-#cp-chat-root .cp-row.other.has-tail .cp-bubble,
-#cp-chat-root .cp-row.mine.has-tail .cp-bubble {
-  border-radius: 20px !important;
+.cp-row.has-tail .cp-bubble,
+.cp-row.other.has-tail .cp-bubble,
+.cp-row.mine.has-tail .cp-bubble {
+  border-radius: 22px !important;
 }
 
-#cp-chat-root .cp-row.has-tail .cp-bubble::before,
-#cp-chat-root .cp-row.has-tail .cp-bubble::after,
-#cp-chat-root .cp-bubble::before,
-#cp-chat-root .cp-bubble::after {
-  display: none !important;
-  content: none !important;
+.cp-inline-time {
+  font-size: 13px !important;
+  margin: 16px 0 0 10px !important;
 }
 
-/* Date divider longer */
-#cp-chat-root .cp-time-sep {
-  width: calc(100vw - 24px) !important;
-  margin: 18px auto 14px !important;
+.cp-quick-trans {
+  width: 30px !important;
+  height: 30px !important;
+  right: -34px !important;
+  font-size: 16px !important;
 }
 
-#cp-chat-root .cp-time-sep::before,
-#cp-chat-root .cp-time-sep::after {
-  min-width: 110px !important;
-  max-width: none !important;
-}
-
-/* The input bar must always be visible on mobile */
-#cp-chat-root .cp-footer {
-  position: fixed !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  z-index: 2147483060 !important;
-  display: flex !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-  transform: none !important;
-  pointer-events: none !important;
-  padding: 0 10px max(10px, env(safe-area-inset-bottom)) !important;
-  background: transparent !important;
-}
-
-#cp-chat-root .cp-footer > * {
-  pointer-events: auto !important;
-}
-
-#cp-chat-root #cp-toolbar-inputs {
-  display: flex;
-  width: 100%;
-  align-items: flex-end;
-}
-
-#cp-chat-root #cp-toolbar-inputs[hidden] {
-  display: none !important;
-}
-
-#cp-chat-root .cp-toolbar {
-  min-height: 66px !important;
-  border-radius: 34px !important;
-  padding: 8px !important;
-  background: rgba(255,255,255,.90) !important;
-  border: 1px solid rgba(255,255,255,.82) !important;
-  box-shadow: 0 8px 28px rgba(15,23,42,.16) !important;
-}
-
-#cp-chat-root .cp-input-box textarea {
-  min-height: 46px !important;
-  max-height: 136px !important;
-  font-size: 19px !important;
-  line-height: 25px !important;
-  padding: 10px 8px !important;
-}
-
-#cp-chat-root .cp-input-box textarea::placeholder {
-  font-size: 19px !important;
-}
-
-#cp-chat-root .cp-tool-btn,
-#cp-chat-root .cp-primary-btn {
-  width: 50px !important;
-  height: 50px !important;
-  min-width: 50px !important;
-  font-size: 24px !important;
-}
-
-#cp-chat-root .cp-primary-btn.send {
-  background: var(--cp-primary) !important;
-  color: #fff !important;
-}
-
-/* Smaller translation pill, but keep language icon visible */
-#cp-chat-root .cp-translate-bar {
-  min-height: 24px !important;
-  padding: 3px 8px !important;
-  margin-bottom: 2px !important;
-  transform: scale(.92) !important;
-  transform-origin: center bottom !important;
-}
-
-#cp-chat-root .cp-toggle-ai-send {
-  min-width: 24px !important;
-  min-height: 24px !important;
-  padding: 3px 6px !important;
-}
-
-#cp-chat-root .cp-toggle-ai-send .fa-language {
-  font-family: "Font Awesome 6 Free", "FontAwesome", sans-serif !important;
+.cp-fa-language::before,
+#cp-chat-root .fa-language::before {
+  content: "\f1ab";
+  font-family: "Font Awesome 6 Free", "Font Awesome 5 Free", FontAwesome, sans-serif !important;
   font-weight: 900 !important;
-  font-size: 14px !important;
 }
 
-/* Fallback icons: show readable symbols if FontAwesome is unavailable */
-#cp-chat-root .cp-icon-wrap {
-  display: inline-grid !important;
-  place-items: center !important;
-  width: 1.35em !important;
-  height: 1.35em !important;
-  line-height: 1 !important;
-}
-
-#cp-chat-root .cp-icon-wrap > i {
-  display: none !important;
-}
-
-#cp-chat-root .cp-icon-fallback {
+.cp-plain-icon {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  font-weight: 800 !important;
+  width: 1em !important;
+  height: 1em !important;
   font-style: normal !important;
+  font-weight: 900 !important;
   line-height: 1 !important;
+  font-size: 1.15em !important;
 }
 
-/* Media picker */
-#cp-chat-root .cp-media-pop {
-  position: fixed !important;
-  left: 16px !important;
-  bottom: calc(88px + env(safe-area-inset-bottom)) !important;
-  z-index: 2147483065 !important;
+.cp-icon-more {
+  font-size: 1.35em !important;
 }
 
-#cp-chat-root .cp-media-pop button {
-  font-size: 17px !important;
+.cp-icon-photo {
+  font-size: 1.5em !important;
 }
 
-/* Recording row */
-#cp-chat-root .cp-rec-inline {
+.cp-icon-mic {
+  font-size: 1.25em !important;
+}
+
+.cp-icon-send {
+  font-size: 1.35em !important;
+}
+
+.cp-footer {
+  z-index: 2147483050 !important;
+  padding: 0 8px max(12px, env(safe-area-inset-bottom)) !important;
+  gap: 8px !important;
+}
+
+.cp-toolbar {
+  min-height: 72px !important;
+  padding: 8px !important;
+  border-radius: 38px !important;
+  background: rgba(255, 255, 255, .92) !important;
+}
+
+.cp-tool-btn,
+.cp-primary-btn {
+  width: 58px !important;
+  height: 58px !important;
+  min-width: 58px !important;
+  font-size: 28px !important;
+}
+
+.cp-primary-btn {
+  background: #38bdf8 !important;
+  color: #fff !important;
+  box-shadow: 0 4px 14px rgba(14, 165, 233, .30) !important;
+}
+
+.cp-primary-btn.send {
+  background: var(--cp-primary) !important;
+}
+
+.cp-input-box textarea {
   min-height: 54px !important;
+  max-height: 152px !important;
+  font-size: 21px !important;
+  line-height: 28px !important;
+  padding: 12px 8px !important;
 }
 
-#cp-chat-root #cp-rec-inline[hidden] {
+.cp-input-box textarea::placeholder {
+  font-size: 21px !important;
+}
+
+.cp-translate-bar {
+  min-height: 34px !important;
+  padding: 4px 10px !important;
+  gap: 6px !important;
+  font-size: 14px !important;
+}
+
+.cp-lang-btn,
+.cp-swap-btn,
+.cp-toggle-ai-send {
+  font-size: 14px !important;
+  min-height: 28px !important;
+}
+
+.cp-toggle-ai-send {
+  min-width: 34px !important;
+  min-height: 30px !important;
+  padding: 0 8px !important;
+  border-left: 0 !important;
+  background: rgba(59,130,246,.12) !important;
+  color: var(--cp-primary) !important;
+  justify-content: center !important;
+}
+
+.cp-toggle-ai-send::before {
   display: none !important;
 }
 
-/* Media sizes */
-#cp-chat-root .cp-media-thumb img,
-#cp-chat-root .cp-video-wrap {
-  width: min(72vw, 300px) !important;
+.cp-media-pop {
+  width: 238px !important;
+  bottom: 88px !important;
+  left: 10px !important;
+  border-radius: 20px !important;
+  padding: 10px !important;
+}
+
+.cp-media-pop button,
+.cp-media-pop-btn {
+  min-height: 58px !important;
+  padding: 14px 16px !important;
+  font-size: 18px !important;
+  line-height: 1.25 !important;
+  white-space: nowrap !important;
+}
+
+.cp-media-pop .mi {
+  min-width: 30px !important;
+  display: inline-flex !important;
+  justify-content: center !important;
+}
+
+.cp-rec-inline {
+  min-height: 64px !important;
+  width: 100% !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 4px 8px !important;
+  overflow: visible !important;
+}
+
+.cp-rec-btn-icon {
+  width: 52px !important;
+  height: 52px !important;
+  min-width: 52px !important;
+  border-radius: 50% !important;
+  background: rgba(15,23,42,.06) !important;
+  padding: 0 !important;
+}
+
+#cp-rec-send {
+  background: #0ea5e9 !important;
+  color: #fff !important;
+}
+
+#cp-rec-cancel {
+  background: rgba(239, 68, 68, .12) !important;
+  color: #ef4444 !important;
+}
+
+#cp-rec-pause {
+  background: rgba(14, 165, 233, .14) !important;
+  color: #0ea5e9 !important;
+}
+
+.cp-rec-vis {
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+}
+
+.cp-rec-time,
+#cp-rec-time {
+  width: 52px !important;
+  min-width: 52px !important;
+  font-size: 18px !important;
+  font-weight: 800 !important;
+}
+
+.cp-rec-bars {
+  width: 42px !important;
+  height: 28px !important;
+}
+
+.cp-rec-bars i {
+  width: 4px !important;
+}
+
+.cp-media-thumb img,
+.cp-video-wrap {
+  width: min(74vw, 320px) !important;
   max-height: 52vh !important;
-  border-radius: 16px !important;
+  border-radius: 18px !important;
 }
 
-/* Reduce white fog on image background */
-body.cp-has-bg #cp-chat-root .cp-bg-mask {
-  background: rgba(241,245,249,.08) !important;
-}
-
+/* Keep input from being covered by mobile browser viewport changes. */
 @media (max-width: 480px) {
   #cp-chat-root {
-    --cp-header-h: 66px !important;
-    --cp-footer-h: 118px !important;
+    --cp-header-h: 76px !important;
+    --cp-footer-h: 124px !important;
   }
 
-  #cp-chat-root .cp-bubble {
-    font-size: 18.5px !important;
+  .cp-bubble {
+    font-size: 20.5px !important;
   }
 
-  #cp-chat-root .cp-toolbar {
-    min-height: 68px !important;
+  .cp-header-center {
+    font-size: 24px !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .cp-bubble {
+    font-size: 19px !important;
   }
 
-  #cp-chat-root .cp-tool-btn,
-  #cp-chat-root .cp-primary-btn {
-    width: 52px !important;
-    height: 52px !important;
-    min-width: 52px !important;
+  .cp-input-box textarea {
+    font-size: 20px !important;
+  }
+
+  .cp-tool-btn,
+  .cp-primary-btn {
+    width: 54px !important;
+    height: 54px !important;
+    min-width: 54px !important;
   }
 }
