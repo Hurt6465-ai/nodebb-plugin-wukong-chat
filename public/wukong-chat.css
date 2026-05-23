@@ -3087,9 +3087,96 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
 
 
 /* =========================================================
-   Wukong Chat v36 targeted fixes
+   Wukong Chat v37 safe UI rollback fixes
+   v37 intentionally does NOT touch message sending/rendering core.
    ========================================================= */
 
+/* Upload progress higher, centered, visible above messages. */
+#cp-chat-root .cp-progress-wrap,
+#cp-chat-root #cp-upload-progress-wrap {
+  position: fixed !important;
+  left: 50% !important;
+  top: 28% !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(58vw, 240px) !important;
+  height: 8px !important;
+  border-radius: 999px !important;
+  overflow: hidden !important;
+  z-index: 2147483950 !important;
+  background: rgba(15,23,42,.18) !important;
+  box-shadow: 0 10px 28px rgba(0,0,0,.20) !important;
+  pointer-events: none !important;
+  backdrop-filter: blur(6px) !important;
+  -webkit-backdrop-filter: blur(6px) !important;
+}
+
+#cp-chat-root .cp-progress-bar,
+#cp-chat-root #cp-upload-progress-bar {
+  height: 100% !important;
+  min-width: 4px !important;
+  border-radius: inherit !important;
+  background: linear-gradient(90deg, #60a5fa, #2563eb) !important;
+}
+
+/* Settings modal: one backdrop only, no double-layer bottom blur. */
+#cp-chat-root .cp-modal-mask {
+  background: rgba(15, 23, 42, .42) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#cp-chat-root .cp-modal {
+  background: rgba(255,255,255,.96) !important;
+  box-shadow: 0 20px 48px rgba(15,23,42,.24) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body.cp-modal-open #cp-chat-root .cp-footer {
+  filter: none !important;
+  opacity: .18 !important;
+  pointer-events: none !important;
+}
+
+body.cp-modal-open #cp-chat-root .cp-main {
+  filter: none !important;
+}
+
+/* Floating footer: let messages show through instead of a solid backing panel. */
+#cp-chat-root .cp-footer {
+  background: transparent !important;
+  background-image: none !important;
+  pointer-events: none !important;
+}
+
+#cp-chat-root .cp-footer > * {
+  pointer-events: auto !important;
+}
+
+#cp-chat-root .cp-translate-bar {
+  background: rgba(255,255,255,.74) !important;
+  border: 1px solid rgba(255,255,255,.68) !important;
+  box-shadow: 0 5px 18px rgba(15,23,42,.12) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+#cp-chat-root .cp-toolbar {
+  background: rgba(255,255,255,.78) !important;
+  border: 1px solid rgba(255,255,255,.70) !important;
+  box-shadow: 0 6px 22px rgba(15,23,42,.13) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+}
+
+#cp-chat-root .cp-main {
+  bottom: calc(var(--cp-footer-h) + env(safe-area-inset-bottom) - 12px) !important;
+  padding-bottom: calc(var(--cp-footer-h) + 8px) !important;
+}
+
+/* Translation send button: dot style from your snippet + icon fallback. */
 #cp-chat-root .cp-toggle-ai-send {
   position: relative !important;
   border: none !important;
@@ -3104,8 +3191,8 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
   justify-content: center !important;
   margin-left: 4px !important;
   border-left: 1px solid #e5e7eb !important;
-  min-width: 36px !important;
-  width: 36px !important;
+  min-width: 38px !important;
+  width: 38px !important;
   height: 30px !important;
   overflow: visible !important;
 }
@@ -3120,7 +3207,6 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
   height: 5px !important;
   border-radius: 50% !important;
   background: #9ca3af !important;
-  box-shadow: none !important;
 }
 
 #cp-chat-root .cp-toggle-ai-send.active {
@@ -3133,6 +3219,7 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
 }
 
 #cp-chat-root .cp-toggle-ai-send i.fa-language {
+  display: inline-block !important;
   font-size: 14px !important;
   line-height: 1 !important;
   color: rgb(177, 151, 252) !important;
@@ -3147,51 +3234,7 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
   font-weight: 700 !important;
 }
 
-#cp-chat-root .cp-footer {
-  background: transparent !important;
-  background-image: none !important;
-  pointer-events: none !important;
-}
-
-#cp-chat-root .cp-footer > * {
-  pointer-events: auto !important;
-}
-
-#cp-chat-root .cp-translate-bar {
-  background: rgba(255,255,255,.72) !important;
-  border: 1px solid rgba(255,255,255,.64) !important;
-  backdrop-filter: blur(12px) !important;
-  -webkit-backdrop-filter: blur(12px) !important;
-}
-
-#cp-chat-root .cp-toolbar {
-  background: rgba(255,255,255,.76) !important;
-  border: 1px solid rgba(255,255,255,.68) !important;
-  backdrop-filter: blur(14px) !important;
-  -webkit-backdrop-filter: blur(14px) !important;
-}
-
-#cp-chat-root .cp-main {
-  bottom: calc(var(--cp-footer-h) + env(safe-area-inset-bottom) - 16px) !important;
-  padding-bottom: calc(var(--cp-footer-h) + 8px) !important;
-}
-
-#cp-chat-root .cp-progress-wrap,
-#cp-chat-root #cp-upload-progress-wrap {
-  position: fixed !important;
-  left: 50% !important;
-  top: 38% !important;
-  right: auto !important;
-  bottom: auto !important;
-  transform: translate(-50%, -50%) !important;
-  width: min(62vw, 260px) !important;
-  height: 9px !important;
-  z-index: 2147483950 !important;
-  background: rgba(15,23,42,.18) !important;
-  box-shadow: 0 10px 28px rgba(0,0,0,.20) !important;
-  pointer-events: none !important;
-}
-
+/* Avatar must stay circular, never oval. */
 #cp-chat-root .cp-avatar-wrap,
 #cp-chat-root .cp-peer-avatar {
   aspect-ratio: 1 / 1 !important;
@@ -3215,6 +3258,7 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
   aspect-ratio: 1 / 1 !important;
 }
 
+/* Back-to-bottom arrow: thicker down arrow. */
 #cp-chat-root .cp-fab-v {
   font-size: 22px !important;
   font-weight: 900 !important;
@@ -3222,6 +3266,7 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
   transform: translateY(-1px) !important;
 }
 
+/* Translation result can be tapped to fold. */
 #cp-chat-root .cp-translation-text {
   cursor: pointer !important;
   user-select: none !important;
@@ -3233,6 +3278,7 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
   color: rgba(100,116,139,.65) !important;
 }
 
+/* Long-press menu: text only. */
 #cp-chat-root .cp-menu-item i,
 #cp-chat-root .cp-menu-item svg {
   display: none !important;
