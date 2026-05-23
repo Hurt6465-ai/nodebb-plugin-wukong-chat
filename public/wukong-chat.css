@@ -3728,3 +3728,226 @@ body.cp-modal-open #cp-chat-root .cp-main {
   margin-right: auto !important;
   margin-left: 0 !important;
 }
+
+
+/* =========================================================
+   Wukong Chat v41: identity fixes + white frosted glass + virtual window
+   ========================================================= */
+
+/* Translate panel button exactly as requested: no extra background frame. */
+#cp-chat-root .cp-toggle-ai-send {
+  position: relative !important;
+  border: none !important;
+  background: transparent !important;
+  color: #9ca3af !important;
+  font-size: 14px !important;
+  cursor: pointer !important;
+  padding: 4px 4px 4px 14px !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  margin-left: 4px !important;
+  border-left: 1px solid #e5e7eb !important;
+  width: auto !important;
+  min-width: 36px !important;
+  height: 30px !important;
+  box-shadow: none !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 4px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: 5px !important;
+  height: 5px !important;
+  border-radius: 50% !important;
+  background: #9ca3af !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send.active {
+  color: var(--cp-primary) !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send.active::before {
+  background: #22c55e !important;
+  box-shadow: 0 0 4px #22c55e !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send i.fa-language {
+  display: inline-block !important;
+  font-size: 14px !important;
+  line-height: 1 !important;
+  color: rgb(177, 151, 252) !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send .cp-trans-fallback {
+  display: inline-block !important;
+  margin-left: 1px !important;
+  font-size: 10px !important;
+  line-height: 1 !important;
+  color: rgb(177, 151, 252) !important;
+  font-weight: 800 !important;
+}
+
+/* Peer quick-translate button uses 文A style. */
+#cp-chat-root .cp-trans-wa {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 1px !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  color: rgb(177, 151, 252) !important;
+  line-height: 1 !important;
+}
+
+#cp-chat-root .cp-trans-wa i {
+  font-size: 12px !important;
+}
+
+#cp-chat-root .cp-trans-wa b {
+  font-size: 10px !important;
+  font-weight: 900 !important;
+}
+
+/* White frosted glass: clear white, not transparent and not grey panel. */
+#cp-chat-root .cp-footer {
+  background: transparent !important;
+  background-image: none !important;
+  pointer-events: none !important;
+}
+
+#cp-chat-root .cp-footer > * {
+  pointer-events: auto !important;
+}
+
+#cp-chat-root .cp-translate-bar {
+  background: rgba(255,255,255,.92) !important;
+  border: 1px solid rgba(255,255,255,.92) !important;
+  box-shadow: 0 8px 26px rgba(15,23,42,.14) !important;
+  backdrop-filter: blur(22px) saturate(1.55) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.55) !important;
+}
+
+#cp-chat-root .cp-toolbar {
+  background: rgba(255,255,255,.94) !important;
+  border: 1px solid rgba(255,255,255,.92) !important;
+  box-shadow: 0 10px 30px rgba(15,23,42,.15) !important;
+  backdrop-filter: blur(24px) saturate(1.55) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.55) !important;
+}
+
+/* Back-to-bottom button: compact downward send-style arrow. */
+#cp-chat-root .cp-fab-v {
+  font-size: 20px !important;
+  font-weight: 900 !important;
+  line-height: .9 !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Higher upload progress. */
+#cp-chat-root .cp-progress-wrap,
+#cp-chat-root #cp-upload-progress-wrap {
+  position: fixed !important;
+  left: 50% !important;
+  top: calc(env(safe-area-inset-top) + 78px) !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translate(-50%, 0) !important;
+  width: min(52vw, 210px) !important;
+  height: 8px !important;
+  border-radius: 999px !important;
+  overflow: hidden !important;
+  z-index: 2147483950 !important;
+  background: rgba(15,23,42,.18) !important;
+  box-shadow: 0 10px 28px rgba(0,0,0,.20) !important;
+}
+
+/* Thumbnail size smaller and avoid black-only video thumb. */
+#cp-chat-root .cp-media-thumb img,
+#cp-chat-root .cp-video-wrap {
+  width: min(54vw, 220px) !important;
+  max-height: 32vh !important;
+  border-radius: 13px !important;
+}
+
+#cp-chat-root .cp-video-wrap {
+  background-color: #e5e7eb !important;
+  background-size: cover !important;
+  background-position: center !important;
+}
+
+#cp-chat-root .cp-video-wrap.has-poster {
+  background-color: #111827 !important;
+}
+
+/* Keep tails disabled. */
+#cp-chat-root .cp-row.has-tail .cp-bubble::after,
+#cp-chat-root .cp-bubble::after,
+#cp-chat-root .cp-bubble::before {
+  display: none !important;
+  content: none !important;
+}
+
+#cp-chat-root .cp-row.mine .cp-bubble,
+#cp-chat-root .cp-row.other .cp-bubble {
+  border-radius: 18px !important;
+}
+
+/* Avatar must stay circular. */
+#cp-chat-root .cp-avatar-wrap,
+#cp-chat-root .cp-peer-avatar {
+  aspect-ratio: 1 / 1 !important;
+  flex: 0 0 auto !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+}
+
+#cp-chat-root .cp-avatar-wrap .avatar,
+#cp-chat-root .cp-avatar-wrap img,
+#cp-chat-root .cp-peer-avatar .avatar,
+#cp-chat-root .cp-peer-avatar img {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  border-radius: 50% !important;
+  object-fit: cover !important;
+  aspect-ratio: 1 / 1 !important;
+}
+
+/* Message side protection. */
+#cp-chat-root .cp-row.mine {
+  justify-content: flex-end !important;
+}
+
+#cp-chat-root .cp-row.mine .cp-bubble-wrap {
+  margin-left: auto !important;
+  margin-right: 0 !important;
+}
+
+#cp-chat-root .cp-row.other {
+  justify-content: flex-start !important;
+}
+
+#cp-chat-root .cp-row.other .cp-bubble-wrap {
+  margin-right: auto !important;
+  margin-left: 0 !important;
+}
+
+/* Virtual scrolling spacers. */
+#cp-chat-root .cp-virtual-spacer {
+  width: 100% !important;
+  min-height: 0 !important;
+  flex: none !important;
+  pointer-events: none !important;
+}
+
+#cp-chat-root .cp-lazy-media[data-observed="1"],
+#cp-chat-root .cp-lazy-audio[data-observed="1"] {
+  contain: content;
+}
