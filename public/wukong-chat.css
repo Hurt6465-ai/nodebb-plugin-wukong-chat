@@ -3288,3 +3288,116 @@ body.cp-modal-open #cp-chat-root .cp-main {
 #cp-chat-root .cp-media-pop * {
   pointer-events: auto !important;
 }
+
+
+/* =========================================================
+   Wukong Chat v38 TangSengDaoDao-inspired message grouping
+   - Enable bubble tails again.
+   - Group continuous messages as first/middle/last/single.
+   - Does not change input box layout.
+   ========================================================= */
+
+/* Allow messages to overlap a little around the tail without clipping. */
+#cp-chat-root .cp-row,
+#cp-chat-root .cp-bubble-wrap {
+  overflow: visible !important;
+}
+
+#cp-chat-root .cp-bubble {
+  position: relative !important;
+}
+
+/* Override earlier "No bubble tails" rule. */
+#cp-chat-root .cp-row.has-tail .cp-bubble::after {
+  content: "" !important;
+  display: block !important;
+  position: absolute !important;
+  bottom: 0px !important;
+  width: 12px !important;
+  height: 18px !important;
+  pointer-events: none !important;
+  z-index: -1 !important;
+}
+
+/* Mine tail */
+#cp-chat-root .cp-row.mine.has-tail .cp-bubble::after {
+  right: -6px !important;
+  background: var(--cp-mine) !important;
+  border-bottom-left-radius: 14px !important;
+  clip-path: polygon(0 0, 100% 100%, 0 100%) !important;
+}
+
+/* Peer tail */
+#cp-chat-root .cp-row.other.has-tail .cp-bubble::after {
+  left: -6px !important;
+  background: var(--cp-other) !important;
+  border-bottom-right-radius: 14px !important;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%) !important;
+}
+
+/* Continuous message grouping, borrowed from TangSengDaoDao's first/middle/last/single idea. */
+#cp-chat-root .cp-row.mine.single .cp-bubble,
+#cp-chat-root .cp-row.mine.last .cp-bubble {
+  border-radius: 18px 18px 4px 18px !important;
+}
+
+#cp-chat-root .cp-row.mine.first .cp-bubble {
+  border-radius: 18px 18px 8px 18px !important;
+}
+
+#cp-chat-root .cp-row.mine.middle .cp-bubble {
+  border-radius: 18px 8px 8px 18px !important;
+}
+
+#cp-chat-root .cp-row.other.single .cp-bubble,
+#cp-chat-root .cp-row.other.last .cp-bubble {
+  border-radius: 18px 18px 18px 4px !important;
+}
+
+#cp-chat-root .cp-row.other.first .cp-bubble {
+  border-radius: 18px 18px 18px 8px !important;
+}
+
+#cp-chat-root .cp-row.other.middle .cp-bubble {
+  border-radius: 8px 18px 18px 8px !important;
+}
+
+/* Do not add tails to media or recalled bubbles. */
+#cp-chat-root .cp-bubble.media-shell::after,
+#cp-chat-root .cp-bubble.recalled::after,
+#cp-chat-root .cp-row.has-tail .cp-bubble.media-shell::after,
+#cp-chat-root .cp-row.has-tail .cp-bubble.recalled::after {
+  display: none !important;
+  content: none !important;
+}
+
+/* Keep avatar circular and stable on low-end Android WebViews. */
+#cp-chat-root .cp-avatar-wrap,
+#cp-chat-root .cp-peer-avatar {
+  aspect-ratio: 1 / 1 !important;
+  flex: 0 0 auto !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+}
+
+#cp-chat-root .cp-avatar-wrap .avatar,
+#cp-chat-root .cp-avatar-wrap img,
+#cp-chat-root .cp-peer-avatar .avatar,
+#cp-chat-root .cp-peer-avatar img {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 50% !important;
+  object-fit: cover !important;
+}
+
+/* Upload progress higher, not covering the input area. */
+#cp-chat-root .cp-progress-wrap,
+#cp-chat-root #cp-upload-progress-wrap {
+  top: 24% !important;
+}
+
+/* v38 performance: browser can isolate lazy cells a bit more safely. */
+#cp-chat-root .cp-lazy-media[data-observed="1"],
+#cp-chat-root .cp-lazy-audio[data-observed="1"] {
+  contain: content;
+}
