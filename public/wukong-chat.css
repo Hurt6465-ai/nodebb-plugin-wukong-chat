@@ -3084,3 +3084,15 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
 #cp-chat-root .cp-row.other .cp-bubble-wrap {
   margin-right: auto !important;
 }
+
+
+/* v35 performance/compression: keep visual unchanged; only lightweight containment. */
+#cp-chat-root .cp-progress-wrap,
+#cp-chat-root #cp-upload-progress-wrap {
+  will-change: transform !important;
+}
+
+#cp-chat-root .cp-lazy-media[data-observed="1"],
+#cp-chat-root .cp-lazy-audio[data-observed="1"] {
+  contain: content;
+}
