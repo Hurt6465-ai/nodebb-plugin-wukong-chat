@@ -22,9 +22,56 @@
   function cpPluginConfig() {
     return (window.CPChatHarmony && window.CPChatHarmony.config) || {};
   }
+  function cpKeyToSnake(key) {
+    return String(key || "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+      .replace(/[\s\-]+/g, "_")
+      .toLowerCase();
+  }
+
   function cpT(key, fallback) {
     var lang = (window.CPChatHarmony && window.CPChatHarmony.i18n) || {};
-    return lang[key] || fallback || key;
+    var snake = cpKeyToSnake(key);
+    return lang[key] || lang[snake] || fallback || key;
+  }
+
+  function cpPickLocale() {
+    var raw =
+      (window.app && app.user && (app.user.language || app.user.locale)) ||
+      (navigator.languages && navigator.languages[0]) ||
+      navigator.language ||
+      "zh-CN";
+    raw = String(raw || "zh-CN");
+    if (/^zh/i.test(raw)) return "zh-CN";
+    if (/^(my|my-MM|burmese)/i.test(raw)) return "my";
+    if (/^en/i.test(raw)) return "en-US";
+    return "zh-CN";
+  }
+
+  async function cpLoadI18n() {
+    var cfg = cpPluginConfig();
+    var base = String(cfg.i18nBase || "").replace(/\/+$/, "");
+    if (!base || (window.CPChatHarmony && window.CPChatHarmony.i18nLoaded)) return;
+
+    var locale = cpPickLocale();
+    var urls = [base + "/" + locale + ".json"];
+    if (locale !== "zh-CN") urls.push(base + "/zh-CN.json");
+
+    for (var i = 0; i < urls.length; i++) {
+      try {
+        var res = await fetch(urls[i] + "?v=30", {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" }
+        });
+        if (!res.ok) continue;
+        var json = await res.json();
+        window.CPChatHarmony.i18n = Object.assign({}, window.CPChatHarmony.i18n || {}, json || {});
+        window.CPChatHarmony.i18nLoaded = true;
+        return;
+      } catch (e) {
+        warn("load-i18n", e);
+      }
+    }
   }
   function cpLog() {
     if (cpPluginConfig().debug && window.console && console.log) {
@@ -34,7 +81,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v29";
+  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v30";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -197,7 +244,7 @@
     album: cpSvgIcon("image"),
     trash: cpSvgIcon("trash"),
     close: cpSvgIcon("close"),
-    ai: '<span class="cp-ai-glyph"><i class="fa-solid fa-language fa fa-language"></i><span class="cp-ai-fallback">译</span></span>'
+    ai: '<span class="cp-mini-trans-icon">文</span>'
   };
 
 
@@ -953,7 +1000,31 @@
     return null;
   }
 
+
+  async function hydratePeerFromWukongApi() {
+    var cfg = cpPluginConfig();
+    var uid = String((cfg && cfg.targetUid) || (window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.targetUid) || "").trim();
+    if (!/^\d+$/.test(uid)) return false;
+    try {
+      var res = await fetch((cfg.apiBase || "/api/wukong") + "/user/" + encodeURIComponent(uid), {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" }
+      });
+      if (!res.ok) return false;
+      var json = await res.json();
+      var record = pickUserRecord(json) || json;
+      if (setPeerFromUser(record)) {
+        updateHeaderPeerInfo(null);
+        return true;
+      }
+    } catch (e) {
+      warn("hydrate-peer-wukong-api", e);
+    }
+    return false;
+  }
+
   async function hydratePeerFromRoute() {
+    if (await hydratePeerFromWukongApi()) return true;
     if (state.peerHydrating) return false;
     if (state.peerUidCache && state.peerUsernameCache) return true;
 
@@ -1802,6 +1873,7 @@
   }
 
   async function mount() {
+    await cpLoadI18n();
     state.cfg = normalizeConfig(
       loadJSON(KEY_CFG, {
         autoTranslateLastMsg: false,
@@ -2114,7 +2186,7 @@
         </main>
 
         <button id="cp-fab-bottom" class="cp-fab-bottom" title="回到底部">
-          <i class="fa fa-angle-down"></i>
+          <span class="cp-fab-v">∨</span>
           <span id="cp-fab-badge" class="cp-fab-badge" hidden>0</span>
         </button>
 
@@ -4769,15 +4841,13 @@
     var rel = window.config && config.relative_path ? config.relative_path : "";
     var apiBase = cpPluginConfig().apiBase || "/api/wukong";
     var endpoints = [
-      { url: apiBase + "/upload", field: "file" },
       { url: apiBase + "/upload", field: "files[]" },
-      { url: rel + "/api/post/upload", field: "files[]" },
-      { url: rel + "/api/post/upload", field: "file" }
+      { url: apiBase + "/upload", field: "file" }
     ];
 
     return endpoints.reduce(function (promise, ep) {
       return promise.catch(function () {
-        return sendOnce(ep.url, ep.field);
+        return sendOnce(ep.url, ep.field).catch(function (err) { warn("upload-endpoint " + ep.url + " " + ep.field, err); throw err; });
       });
     }, Promise.reject(new Error("start upload"))).then(function (url) {
       if (!url) throw new Error("upload url empty");
