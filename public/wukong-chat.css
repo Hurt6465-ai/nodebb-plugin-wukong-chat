@@ -1683,3 +1683,210 @@ body.cp-shell-on {
   .cp-primary-btn { width:40px!important; height:40px!important; }
   .cp-quick-trans { right:-22px!important; }
 }
+
+/* ===== critical visibility fix =====
+   Some mobile browsers let author CSS display:flex override the hidden attribute.
+   Without this, the settings/lang/preview masks stay visible and make the page look black. */
+#cp-chat-root [hidden],
+#cp-chat-root .cp-modal-mask[hidden],
+#cp-chat-root .cp-context-overlay[hidden],
+#cp-chat-root .cp-preview-mask[hidden],
+#cp-chat-root .cp-media-pop[hidden],
+#cp-chat-root #cp-wingman-panel[hidden],
+#cp-chat-root #cp-quote-preview[hidden],
+#cp-chat-root #cp-upload-progress-wrap[hidden],
+#cp-chat-root #cp-rec-inline[hidden],
+#cp-chat-root #cp-fab-badge[hidden],
+#cp-chat-root #cp-top-spinner[hidden] {
+  display:none!important;
+  visibility:hidden!important;
+  opacity:0!important;
+  pointer-events:none!important;
+}
+
+/* ===== Wukong mobile v4 corrections =====
+   - modal opens with .show, hidden really hides
+   - keep input visible
+   - larger mobile UI
+   - longer date divider
+   - restore original bubble colors
+*/
+#cp-chat-root .cp-modal-mask {
+  display:none!important;
+}
+#cp-chat-root .cp-modal-mask.show,
+#cp-chat-root .cp-modal-mask.is-open,
+#cp-chat-root .cp-modal-mask:not([hidden]) {
+  display:flex!important;
+  visibility:visible!important;
+  opacity:1!important;
+  pointer-events:auto!important;
+}
+#cp-chat-root .cp-modal-mask[hidden],
+#cp-chat-root .cp-modal-mask[hidden].show,
+#cp-chat-root .cp-modal-mask[hidden].is-open {
+  display:none!important;
+  visibility:hidden!important;
+  opacity:0!important;
+  pointer-events:none!important;
+}
+
+#cp-chat-root {
+  --cp-other:#ffffff;
+  --cp-mine:#e0c3fc;
+  --cp-primary:#3b82f6;
+}
+
+.cp-footer {
+  z-index:90!important;
+  background:transparent!important;
+  padding:0 10px max(10px,env(safe-area-inset-bottom))!important;
+}
+.cp-toolbar {
+  min-height:64px!important;
+  border-radius:34px!important;
+  padding:8px!important;
+  background:rgba(255,255,255,.62)!important;
+  border:1px solid rgba(255,255,255,.40)!important;
+  -webkit-backdrop-filter:blur(12px)!important;
+  backdrop-filter:blur(12px)!important;
+  box-shadow:0 8px 24px rgba(15,23,42,.14)!important;
+}
+.cp-input-box textarea {
+  min-height:44px!important;
+  font-size:18px!important;
+  line-height:24px!important;
+  padding:10px 8px!important;
+  color:#111827!important;
+}
+.cp-input-box textarea::placeholder {
+  color:rgba(17,24,39,.46)!important;
+}
+.cp-tool-btn,
+.cp-primary-btn {
+  width:48px!important;
+  height:48px!important;
+  min-width:48px!important;
+  font-size:22px!important;
+}
+.cp-icon {
+  width:1.35em!important;
+  height:1.35em!important;
+}
+.cp-main {
+  bottom:calc(var(--cp-footer-h) + env(safe-area-inset-bottom) + 8px)!important;
+  padding-bottom:30px!important;
+}
+
+.cp-time-sep {
+  margin:18px 6px 14px!important;
+  gap:12px!important;
+}
+.cp-time-sep::before,
+.cp-time-sep::after {
+  flex:1 1 auto!important;
+  max-width:none!important;
+  min-width:86px!important;
+  height:1px!important;
+  background:linear-gradient(to right,transparent,rgba(75,85,99,.48))!important;
+}
+.cp-time-sep::after {
+  background:linear-gradient(to left,transparent,rgba(75,85,99,.48))!important;
+}
+.cp-time-sep span {
+  font-size:13px!important;
+  font-weight:800!important;
+  color:#475569!important;
+}
+
+.cp-bubble-wrap {
+  max-width:min(86%,620px)!important;
+}
+.cp-bubble {
+  border-radius:20px!important;
+  font-size:18px!important;
+  line-height:1.43!important;
+  padding:9px 13px 10px!important;
+  box-shadow:0 1px 2px rgba(15,23,42,.08)!important;
+}
+.cp-row.mine .cp-bubble {
+  background:var(--cp-mine)!important;
+  color:#111827!important;
+}
+.cp-row.other .cp-bubble {
+  background:var(--cp-other)!important;
+  color:#111827!important;
+  -webkit-backdrop-filter:none!important;
+  backdrop-filter:none!important;
+}
+.cp-row.has-tail .cp-bubble,
+.cp-row.other.has-tail .cp-bubble,
+.cp-row.mine.has-tail .cp-bubble {
+  border-radius:20px!important;
+}
+.cp-row.has-tail .cp-bubble::before,
+.cp-row.has-tail .cp-bubble::after,
+.cp-bubble::before,
+.cp-bubble::after {
+  display:none!important;
+  content:none!important;
+}
+.cp-inline-time,
+.cp-media-time,
+.cp-voice-time {
+  font-size:12px!important;
+}
+.cp-row.mine .cp-inline-time,
+.cp-row.mine .cp-voice-time {
+  color:rgba(17,24,39,.58)!important;
+}
+.cp-quick-trans {
+  right:-22px!important;
+  width:20px!important;
+  height:20px!important;
+  font-size:10px!important;
+}
+.cp-header-center {
+  font-size:21px!important;
+}
+.cp-peer-avatar {
+  width:44px!important;
+  height:44px!important;
+}
+.cp-avatar-wrap {
+  width:40px!important;
+  height:40px!important;
+}
+
+@media (max-width:480px) {
+  .cp-main {
+    padding-left:8px!important;
+    padding-right:8px!important;
+  }
+  .cp-bubble-wrap {
+    max-width:88%!important;
+  }
+  .cp-bubble {
+    font-size:18px!important;
+    padding:9px 13px 10px!important;
+  }
+  .cp-toolbar {
+    min-height:64px!important;
+    border-radius:34px!important;
+    padding:8px!important;
+  }
+  .cp-input-box textarea {
+    min-height:44px!important;
+    font-size:18px!important;
+  }
+  .cp-tool-btn,
+  .cp-primary-btn {
+    width:48px!important;
+    height:48px!important;
+    min-width:48px!important;
+  }
+  .cp-time-sep::before,
+  .cp-time-sep::after {
+    min-width:96px!important;
+  }
+}
