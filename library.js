@@ -607,6 +607,12 @@ function cleanupPresence() {
 }
 
 function registerPageRoutes(router, middleware) {
+  async function renderWukongConversationsPage(req, res) {
+    res.render('wukong-conversations', {
+      title: '悟空会话',
+    });
+  }
+
   async function renderWukongPage(req, res) {
     const targetUid = req.params && req.params.uid ? String(req.params.uid) : String(req.query.uid || '');
     const tid = String(req.query.tid || '');
@@ -623,6 +629,8 @@ function registerPageRoutes(router, middleware) {
   }
 
   router.get('/wukong', middleware.ensureLoggedIn, asyncHandler(renderWukongPage));
+  router.get('/wukong/conversations', middleware.ensureLoggedIn, asyncHandler(renderWukongConversationsPage));
+  router.get('/wukong/conversation', middleware.ensureLoggedIn, asyncHandler(renderWukongConversationsPage));
   router.get('/wukong/:uid', middleware.ensureLoggedIn, asyncHandler(renderWukongPage));
 }
 
@@ -653,7 +661,7 @@ function registerApiRoutes(router, middleware) {
     res.json({
       ok: true,
       uid: current && current.uid,
-      pageRoutes: ['/wukong', '/wukong/:uid'],
+      pageRoutes: ['/wukong', '/wukong/conversations', '/wukong/conversation', '/wukong/:uid'],
       apiBase: api,
     });
   }));
@@ -1182,10 +1190,10 @@ plugin.onUserCreate = async function onUserCreate(data) {
 plugin.addNavigation = async function addNavigation(header) {
   header = header || [];
   header.push({
-    route: '/wukong',
-    title: '悟空聊天',
+    route: '/wukong/conversations',
+    title: '悟空会话',
     iconClass: 'fa-comments',
-    text: '悟空聊天',
+    text: '悟空会话',
   });
   return header;
 };
@@ -1199,7 +1207,7 @@ plugin.init = async function init(params) {
   registerApiRoutes(router, middleware);
   startWukongMediaCleanupTimer();
 
-  console.log('[wukong-chat] routes registered: /wukong, /wukong/:uid, /api/wukong/healthz');
+  console.log('[wukong-chat] routes registered: /wukong, /wukong/conversations, /wukong/conversation, /wukong/:uid, /api/wukong/healthz');
 };
 
 module.exports = plugin;
