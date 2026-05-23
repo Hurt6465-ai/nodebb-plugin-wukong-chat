@@ -17,12 +17,13 @@
     }
   }
 
+
   function cpRaw(v) {
     if (v === undefined || v === null) return "";
-    var x = String(v).trim();
-    if (!x || x === "undefined" || x === "null") return "";
-    if (/^\{[^}]+\}$/.test(x)) return "";
-    return x;
+    var s = String(v).trim();
+    if (!s || s === "undefined" || s === "null") return "";
+    if (/^\{[^}]+\}$/.test(s)) return "";
+    return s;
   }
 
   function cpDigits(v) {
@@ -31,21 +32,43 @@
 
   function cpIndependentMode() {
     var cfg = cpPluginConfig();
-    return !!(cfg.independent || window.__NBB_WUKONG_PAGE__ || document.getElementById("nodebb-wukong-root"));
+    if (cfg && cfg.independent) return true;
+    if (document.getElementById("nodebb-wukong-root")) return true;
+    var path = String(location.pathname || "");
+    var rel = (window.config && window.config.relative_path) || "";
+    if (rel && path.indexOf(rel) === 0) path = path.slice(rel.length) || "/";
+    return /^\/wukong(?:\/|$)/i.test(path);
   }
 
   function cpPageConfig() {
     var root = document.getElementById("nodebb-wukong-root");
     var cfg = window.__NBB_WUKONG_PAGE__ || {};
     var q = new URLSearchParams(location.search || "");
-    var mUser = String(location.pathname || "").match(/\/wukong\/(\d+)/i);
-    var targetUid = cpDigits(root && root.getAttribute("data-target-uid")) || cpDigits(cfg.targetUid) || cpDigits(mUser && mUser[1]) || cpDigits(q.get("uid"));
-    var tid = cpDigits(root && root.getAttribute("data-tid")) || cpDigits(cfg.tid) || cpDigits(q.get("tid"));
-    var channelId = cpRaw(root && root.getAttribute("data-channel-id")) || cpRaw(cfg.channelId) || cpRaw(q.get("channel_id"));
-    var channelType = Number(cpRaw(root && root.getAttribute("data-channel-type")) || cpRaw(cfg.channelType) || cpRaw(q.get("channel_type")) || 0);
-    if (tid && !channelId) channelId = "nbb_topic_" + tid;
-    if (!channelId && targetUid) channelId = targetUid;
-    if ([1,2].indexOf(channelType) === -1) channelType = tid || String(channelId).indexOf("nbb_topic_") === 0 ? 2 : 1;
+    var path = String(location.pathname || "");
+    var rel = (window.config && window.config.relative_path) || "";
+    if (rel && path.indexOf(rel) === 0) path = path.slice(rel.length) || "/";
+    var mUser = path.match(/\/wukong\/(\d+)/i);
+    var targetUid =
+      cpDigits(root && root.getAttribute("data-target-uid")) ||
+      cpDigits(cfg.targetUid) ||
+      cpDigits(mUser && mUser[1]) ||
+      cpDigits(q.get("uid"));
+    var tid =
+      cpDigits(root && root.getAttribute("data-tid")) ||
+      cpDigits(cfg.tid) ||
+      cpDigits(q.get("tid"));
+    var channelId =
+      cpRaw(root && root.getAttribute("data-channel-id")) ||
+      cpRaw(cfg.channelId) ||
+      cpRaw(q.get("channel_id")) ||
+      (tid ? ("nbb_topic_" + tid) : targetUid);
+    var channelType = Number(
+      cpRaw(root && root.getAttribute("data-channel-type")) ||
+      cpRaw(cfg.channelType) ||
+      cpRaw(q.get("channel_type")) ||
+      (tid ? 2 : 1)
+    );
+    if (![1, 2].includes(channelType)) channelType = tid || String(channelId).indexOf("nbb_topic_") === 0 ? 2 : 1;
     return { targetUid: targetUid, tid: tid, channelId: channelId, channelType: channelType };
   }
 
@@ -60,17 +83,54 @@
 
   function cpGetChannelId() {
     var c = cpPageConfig();
-    return c.channelId || c.targetUid || "";
+    return cpRaw(c.channelId || c.targetUid || "");
   }
 
   function cpGetChannelType() {
     return Number(cpPageConfig().channelType || 1) || 1;
   }
 
-  async function cpFetchJSON(url, opts) {
-    var res = await fetch(url, Object.assign({ credentials: "include", headers: { accept: "application/json" } }, opts || {}));
-    if (!res.ok) throw new Error("HTTP " + res.status + " " + url);
-    return await res.json();
+  function cpPickUserRecord(obj) {
+    if (!obj || typeof obj !== "object") return null;
+    if (obj.user && typeof obj.user === "object") return cpPickUserRecord(obj.user);
+    if (obj.userData && typeof obj.userData === "object") return cpPickUserRecord(obj.userData);
+    if (obj.data && typeof obj.data === "object") return cpPickUserRecord(obj.data);
+    if (obj.targetUser && typeof obj.targetUser === "object") return cpPickUserRecord(obj.targetUser);
+    if (obj.recipient && typeof obj.recipient === "object") return cpPickUserRecord(obj.recipient);
+    if (Array.isArray(obj.users) && obj.users[0]) return cpPickUserRecord(obj.users[0]);
+    if (obj.uid || obj.username || obj.userslug || obj.displayname || obj.name || obj.picture || obj.uploadedpicture) return obj;
+    return null;
+  }
+
+  function cpNormalizeUploadUrl(url) {
+    url = cpRaw(url);
+    if (!url) return "";
+    if (/^https?:\/\//i.test(url)) return url;
+    if (url.charAt(0) === "/") return url;
+    return "/" + url;
+  }
+
+  function cpCollectUploadUrls(obj, out) {
+    out = out || [];
+    if (!obj) return out;
+    if (typeof obj === "string") {
+      var s = cpNormalizeUploadUrl(obj);
+      if (s && (s.indexOf("/") === 0 || /^https?:\/\//i.test(s))) out.push(s);
+      return out;
+    }
+    if (Array.isArray(obj)) {
+      obj.forEach(function (x) { cpCollectUploadUrls(x, out); });
+      return out;
+    }
+    if (typeof obj === "object") {
+      ["url", "path", "src", "location", "href"].forEach(function (k) {
+        if (obj[k]) cpCollectUploadUrls(obj[k], out);
+      });
+      ["file", "files", "image", "images", "upload", "uploads", "response", "data", "body", "result"].forEach(function (k) {
+        if (obj[k]) cpCollectUploadUrls(obj[k], out);
+      });
+    }
+    return out;
   }
 
   function cpLoadScriptSequential(urls, onload, onerror) {
@@ -83,83 +143,43 @@
         return;
       }
       var url = urls[idx++];
-      var old = document.querySelector('script[src="' + url.replace(/"/g, '\\"') + '"]');
-      if (old) {
-        old.addEventListener("load", function () { if (window.wk && window.wk.WKSDK) onload(); else tryNext(); }, { once: true });
-        old.addEventListener("error", tryNext, { once: true });
+      var existing = document.querySelector('script[src="' + url.replace(/"/g, '\\"') + '"]');
+      if (existing) {
+        existing.addEventListener("load", function () {
+          if (window.wk && window.wk.WKSDK) onload();
+          else tryNext();
+        }, { once: true });
+        existing.addEventListener("error", tryNext, { once: true });
         return;
       }
       var s = document.createElement("script");
       s.src = url;
       s.async = true;
-      s.onload = function () { if (window.wk && window.wk.WKSDK) onload(); else tryNext(); };
+      s.onload = function () {
+        if (window.wk && window.wk.WKSDK) onload();
+        else tryNext();
+      };
       s.onerror = tryNext;
       document.head.appendChild(s);
     };
     tryNext();
   }
 
-  function cpNormalizeUserPayload(json, fallbackUid) {
-    var u = json || {};
-    if (u.user && typeof u.user === "object") u = u.user;
-    else if (u.data && u.data.user && typeof u.data.user === "object") u = u.data.user;
-    else if (u.data && typeof u.data === "object") u = u.data;
-    else if (u.userData && typeof u.userData === "object") u = u.userData;
-    else if (Array.isArray(u.users) && u.users[0]) u = u.users[0];
-    var uid = cpDigits(u.uid || u.userId || u.id || fallbackUid);
-    var username = cpRaw(u.displayname) || cpRaw(u.username) || cpRaw(u.fullname) || cpRaw(u.name) || cpRaw(u.userslug) || (uid ? ("用户" + uid) : "用户");
-    var userslug = cpRaw(u.userslug) || cpRaw(u.slug) || (username ? encodeURIComponent(String(username).toLowerCase().replace(/\s+/g, "-")) : uid);
-    var picture = cpRaw(u.picture) || cpRaw(u.uploadedpicture) || cpRaw(u.avatar) || cpRaw(u.image);
-    return { uid: uid, username: username, displayname: cpRaw(u.displayname) || username, userslug: userslug, picture: picture, icontext: cpRaw(u.icontext) || cpRaw(u["icon:text"]) || String(username || "?").charAt(0).toUpperCase(), iconbgColor: cpRaw(u.iconbgColor) || cpRaw(u["icon:bgColor"]) || "#72a5f2" };
-  }
-
-  async function cpFetchNodeBBUser(uid) {
-    uid = cpDigits(uid);
-    if (!uid) return null;
-    var urls = [cpApiBase() + "/user/" + encodeURIComponent(uid), getRelativePath() + "/api/user/uid/" + encodeURIComponent(uid), getRelativePath() + "/api/user/" + encodeURIComponent(uid)];
-    for (var i = 0; i < urls.length; i++) {
-      try {
-        var u = await cpFetchJSON(urls[i]);
-        var n = cpNormalizeUserPayload(u, uid);
-        if (n && (n.username || n.picture || n.uid)) return n;
-      } catch (e) { warn("fetch-nodebb-user", urls[i] + " " + (e && e.message || e)); }
+  async function cpFetchJSON(url, opts) {
+    var res = await fetch(url, Object.assign({
+      credentials: "include",
+      headers: { accept: "application/json" }
+    }, opts || {}));
+    var text = await res.text();
+    var data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
+    if (!res.ok) {
+      var err = new Error((data && (data.error || data.message)) || ("HTTP " + res.status));
+      err.status = res.status;
+      err.data = data;
+      throw err;
     }
-    return cpNormalizeUserPayload({ uid: uid, username: "用户" + uid }, uid);
-  }
-
-
-  async function cpEnsureMe() {
-    if (state.myUid) return state.myUid;
-    try {
-      var me = await cpFetchJSON(cpApiBase() + "/me").catch(function () { return cpFetchJSON(cpApiBase() + "/token"); });
-      var user = cpNormalizeUserPayload(me.user || me, me.wkUid || me.uid);
-      if (user && user.uid) {
-        state.myUid = String(user.uid);
-        try {
-          window.app = window.app || {};
-          app.user = Object.assign({}, app.user || {}, user);
-        } catch (_) {}
-      }
-    } catch (e) {
-      warn("ensure-me", e);
-    }
-    return state.myUid;
-  }
-
-  function cpPickUploadUrl(json) {
-    var out = "";
-    function scan(x) {
-      if (!x || out) return;
-      if (typeof x === "string") { if (/^(https?:)?\/\//i.test(x) || /^\//.test(x) || /^uploads\//i.test(x)) out = x; return; }
-      if (Array.isArray(x)) { for (var i = 0; i < x.length; i++) scan(x[i]); return; }
-      if (typeof x === "object") {
-        ["url", "path", "src", "href", "location", "pathname"].forEach(function (k) { if (!out && x[k]) scan(x[k]); });
-        ["files", "images", "uploads", "response", "data", "file"].forEach(function (k) { if (!out && x[k]) scan(x[k]); });
-      }
-    }
-    scan(json);
-    if (out && !/^(https?:)?\/\//i.test(out) && out.charAt(0) !== "/") out = "/" + out.replace(/^\/+/, "");
-    return out;
+    return data;
   }
 
   if (cpPluginConfig().enabled === false) return;
@@ -297,17 +317,17 @@
     '}';
 
   var ICON = {
-    play: '<span class="cp-ui-icon">▶</span>',
-    pause: '<span class="cp-ui-icon">Ⅱ</span>',
-    mic: '<span class="cp-ui-icon cp-mic-glyph">🎙</span>',
-    send: '<span class="cp-ui-icon cp-send-glyph">↑</span>',
-    photo: '<span class="cp-ui-icon cp-plus-glyph">＋</span>',
-    quote: '<span class="cp-ui-icon">↩</span>',
-    recall: '<span class="cp-ui-icon">↶</span>',
-    trans: '<i class="fa-solid fa-language fa fa-language cp-language-fa" aria-hidden="true"></i><span class="cp-language-fallback">译</span>',
-    camera: '<span class="cp-ui-icon">📷</span>',
-    album: '<span class="cp-ui-icon">🖼</span>',
-    ai: '<i class="fa-solid fa-language fa fa-language cp-language-fa" aria-hidden="true"></i><span class="cp-language-fallback">译</span>'
+    play: '<span class="cp-svg cp-svg-play" aria-hidden="true">▶</span>',
+    pause: '<span class="cp-svg cp-svg-pause" aria-hidden="true">Ⅱ</span>',
+    mic: '<span class="cp-svg cp-svg-mic" aria-hidden="true">🎙</span>',
+    send: '<span class="cp-svg cp-svg-send" aria-hidden="true">↑</span>',
+    photo: '<span class="cp-svg cp-svg-plus" aria-hidden="true">＋</span>',
+    quote: '<span class="cp-svg cp-svg-quote" aria-hidden="true">↩</span>',
+    recall: '<span class="cp-svg cp-svg-recall" aria-hidden="true">↶</span>',
+    trans: '<i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i><span class="cp-icon-fallback">译</span>',
+    camera: '<span class="cp-svg cp-svg-camera" aria-hidden="true">📷</span>',
+    album: '<span class="cp-svg cp-svg-album" aria-hidden="true">🖼</span>',
+    ai: '<i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i><span class="cp-icon-fallback">译</span>'
   };
 
   var waveHeights = [5, 8, 12, 16, 10, 7, 14, 9, 13, 6, 11, 15];
@@ -898,8 +918,8 @@
   }
 
   function getRoutePeerSlug() {
-    var pageUid = cpGetTargetUid();
-    if (pageUid) return pageUid;
+    if (cpIndependentMode()) return cpGetTargetUid();
+
     var path = String(location.pathname || "");
     var rel = getRelativePath();
 
@@ -931,19 +951,20 @@
   }
 
   function setPeerFromUser(u) {
+    u = cpPickUserRecord(u) || u;
     if (!u || typeof u !== "object") return false;
 
     var myUidStr = String(window.app && app.user ? app.user.uid : state.myUid);
     var uid = u.uid || u.userId || u.id;
-    var username = u.username || u.displayname || u.name || u.title || u.fullname || u.userslug || u.slug || "";
+    var username = u.displayname || u.fullname || u.username || u.name || u.title || u.userslug || u.slug || "";
     var userslug = u.userslug || u.slug || (username ? encodeURIComponent(String(username).toLowerCase().replace(/ /g, "-")) : "");
 
     if (uid && String(uid) !== myUidStr && String(uid) !== "0") state.peerUidCache = String(uid);
     if (username) state.peerUsernameCache = String(username);
     if (userslug) state.peerUserslugCache = String(userslug);
-    if (u.picture) state.peerPictureCache = u.picture;
-    if (u.icontext) state.peerIconTextCache = u.icontext;
-    if (u.iconbgColor) state.peerIconBgCache = u.iconbgColor;
+    if (u.picture || u.uploadedpicture) state.peerPictureCache = u.picture || u.uploadedpicture;
+    if (u.icontext || u["icon:text"]) state.peerIconTextCache = u.icontext || u["icon:text"];
+    if (u.iconbgColor || u["icon:bgColor"]) state.peerIconBgCache = u.iconbgColor || u["icon:bgColor"];
 
     return !!(state.peerUidCache || state.peerUsernameCache || state.peerUserslugCache);
   }
@@ -992,27 +1013,28 @@
 
   async function hydratePeerFromRoute() {
     if (state.peerHydrating) return false;
-    if (state.peerUidCache && state.peerUsernameCache && state.peerUsernameCache !== state.peerUidCache && !/^用户\d+$/.test(state.peerUsernameCache)) return true;
+    if (state.peerUidCache && state.peerUsernameCache) return true;
 
     var targetUid = cpGetTargetUid();
     if (targetUid) {
       state.peerUidCache = String(targetUid);
-      if (!state.peerUsernameCache) state.peerUsernameCache = "用户" + targetUid;
-      updateHeaderPeerInfo(null);
+      state.peerUsernameCache = state.peerUsernameCache || "";
       state.peerHydrating = true;
       try {
-        var nbUser = await cpFetchNodeBBUser(targetUid);
-        if (nbUser && setPeerFromUser(nbUser)) {
+        var uApi = await cpFetchJSON(cpApiBase() + "/user/" + encodeURIComponent(targetUid));
+        var rec = cpPickUserRecord(uApi) || uApi;
+        if (setPeerFromUser(rec)) {
           updateHeaderPeerInfo(null);
           return true;
         }
       } catch (e) {
-        warn("hydrate-peer-wukong", e);
+        warn("hydrate-peer-wukong-api", e);
       } finally {
         state.peerHydrating = false;
       }
+      if (!state.peerUsernameCache) state.peerUsernameCache = "用户" + targetUid;
       updateHeaderPeerInfo(null);
-      return true;
+      return !!state.peerUidCache;
     }
 
     var u = getPeerFromAjaxify();
@@ -1030,8 +1052,12 @@
       var url = getRelativePath() + "/api/user/" + encodeURIComponent(slug);
       var res = await fetch(url, { credentials: "same-origin", headers: { accept: "application/json" } });
       if (!res.ok) return false;
+
       var json = await res.json();
-      var record = cpNormalizeUserPayload(json, slug);
+      var record = pickUserRecord(json) || json;
+      if (json && json.userData) record = json.userData;
+      if (json && json.users && json.users[0]) record = json.users[0];
+
       if (setPeerFromUser(record)) {
         updateHeaderPeerInfo(null);
         return true;
@@ -1068,33 +1094,77 @@
       return state.peerUidCache;
     }
 
+    if (!state.peerUsernameCache) {
+      var slug = getRoutePeerSlug();
+      if (slug) {
+        state.peerUsernameCache = slug;
+        state.peerUserslugCache = slug;
+      }
+    }
+
     return "";
   }
 
   function getAvatarHtml(uid, username, fallbackHtml) {
-    uid = String(uid || "");
-    username = String(username || "用户");
     var pic = "";
-    var text = username.charAt(0).toUpperCase() || "?";
+    var text = String(username || "?").charAt(0).toUpperCase();
     var bg = "#72a5f2";
 
     if (uid === state.myUid && window.app && window.app.user) {
-      pic = app.user.picture || app.user.uploadedpicture || "";
-      if (app.user.icontext) text = app.user.icontext;
-      if (app.user.iconbgColor) bg = app.user.iconbgColor;
-    } else if (uid && state.peerUidCache && String(uid) === String(state.peerUidCache)) {
-      pic = state.peerPictureCache || "";
-      text = state.peerIconTextCache || text;
-      bg = state.peerIconBgCache || bg;
-    }
+      pic = app.user.picture || app.user.uploadedpicture || state.myPictureCache || "";
+      if (app.user.icontext || app.user["icon:text"]) text = app.user.icontext || app.user["icon:text"];
+      if (app.user.iconbgColor || app.user["icon:bgColor"]) bg = app.user.iconbgColor || app.user["icon:bgColor"];
+    } else if (uid === state.myUid) {
+      pic = state.myPictureCache || "";
+      if (state.myIconTextCache) text = state.myIconTextCache;
+      if (state.myIconBgCache) bg = state.myIconBgCache;
+    } else {
+      var u = null;
 
-    if (!pic && fallbackHtml && fallbackHtml.indexOf("<img") > -1) return fallbackHtml;
+      if (uid && window.ajaxify && ajaxify.data && ajaxify.data.users) {
+        u = ajaxify.data.users.find(function (x) {
+          return String(x.uid) === String(uid);
+        });
+      }
+
+      if (!u && String(uid || "") === String(state.peerUidCache || "")) {
+        u = {
+          picture: state.peerPictureCache,
+          uploadedpicture: state.peerPictureCache,
+          icontext: state.peerIconTextCache,
+          iconbgColor: state.peerIconBgCache
+        };
+      }
+
+      if (!u && state.peerUsernameCache && String(username || "") === String(state.peerUsernameCache)) {
+        u = {
+          picture: state.peerPictureCache,
+          uploadedpicture: state.peerPictureCache,
+          icontext: state.peerIconTextCache,
+          iconbgColor: state.peerIconBgCache
+        };
+      }
+
+      if (u) {
+        pic = u.picture || u.uploadedpicture || "";
+        if (u.icontext || u["icon:text"]) text = u.icontext || u["icon:text"];
+        if (u.iconbgColor || u["icon:bgColor"]) bg = u.iconbgColor || u["icon:bgColor"];
+      }
+    }
 
     if (pic) {
-      return '<img class="avatar" src="' + escAttr(pic) + '" alt="" />';
+      return '<img class="avatar" src="' + escAttr(pic) + '" />';
     }
 
-    return '<div class="avatar cp-avatar-fallback" style="background:' + escAttr(bg) + ';">' + esc(text) + "</div>";
+    if (fallbackHtml && fallbackHtml.indexOf("<img") > -1) return fallbackHtml;
+
+    return (
+      '<div class="avatar" style="background:' +
+      escAttr(bg) +
+      ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;font-size:22px;font-weight:800;">' +
+      esc(text) +
+      "</div>"
+    );
   }
 
   function updateHeaderPeerInfo(peerMsg) {
@@ -1102,7 +1172,7 @@
     if (!pInfo) return;
 
     var avatar = byId("cp-peer-avatar");
-    var ajaxUser = getPeerFromAjaxify();
+    var ajaxUser = cpIndependentMode() ? null : getPeerFromAjaxify();
     var name = state.peerUsernameCache || "";
     var userslug = state.peerUserslugCache || "";
     var uid = state.peerUidCache || cpGetTargetUid() || "";
@@ -1118,23 +1188,32 @@
 
     if (ajaxUser) {
       setPeerFromUser(ajaxUser);
-      name = state.peerUsernameCache || name;
-      userslug = state.peerUserslugCache || userslug;
-      uid = state.peerUidCache || uid;
+      name = name || ajaxUser.username || ajaxUser.displayname || ajaxUser.name || ajaxUser.title || ajaxUser.fullname || ajaxUser.userslug || ajaxUser.slug || "";
+      userslug = userslug || ajaxUser.userslug || ajaxUser.slug || "";
+      uid = uid || ajaxUser.uid || ajaxUser.userId || ajaxUser.id || "";
+      avatarHtml = avatarHtml || getAvatarHtml(String(uid || ""), name, null);
+    }
+
+    if (!name) {
+      var routeSlug = getRoutePeerSlug();
+      if (routeSlug && !/^\d+$/.test(routeSlug)) {
+        name = routeSlug;
+        userslug = userslug || routeSlug;
+      }
     }
 
     if (!name && uid) name = "用户" + uid;
-    if (!userslug && name) userslug = encodeURIComponent(String(name).toLowerCase().replace(/\s+/g, "-"));
 
-    state.peerUsernameCache = name || state.peerUsernameCache || "聊天室";
-    state.peerUserslugCache = userslug || state.peerUserslugCache || "";
-    state.peerUidCache = uid || state.peerUidCache || "";
-
-    pInfo.dataset.ready = "1";
-    if (userslug) pInfo.innerHTML = '<a href="' + getRelativePath() + '/user/' + escAttr(userslug) + '/topics" title="访问主页">' + esc(name || "聊天室") + "</a>";
-    else pInfo.textContent = name || "聊天室";
-
-    if (avatar) avatar.innerHTML = avatarHtml || getAvatarHtml(String(uid || getPeerUid() || ""), name || "用户", null);
+    if (name) {
+      state.peerUsernameCache = name;
+      userslug = userslug || encodeURIComponent(String(name).toLowerCase().replace(/ /g, "-"));
+      state.peerUserslugCache = userslug;
+      pInfo.innerHTML = '<a href="' + getRelativePath() + '/user/' + escAttr(userslug || uid) + '/topics" title="访问主页">' + esc(name) + "</a>";
+      if (avatar) avatar.innerHTML = avatarHtml || getAvatarHtml(String(uid || getPeerUid() || ""), name, null);
+    } else {
+      pInfo.textContent = cpT("chatRoom", "聊天室");
+      if (avatar) avatar.innerHTML = getAvatarHtml("", "?", null);
+    }
   }
 
   function extractWkPayload(m) {
@@ -1218,8 +1297,8 @@
     });
 
     var username = isMine
-      ? (window.app && app.user ? (app.user.displayname || app.user.username || "我") : "我")
-      : (state.peerUsernameCache || (peerMsg ? peerMsg.username : "") || (uid ? "用户" + uid : "用户"));
+      ? ((window.app && app.user ? (app.user.username || app.user.displayname) : "") || state.myUsernameCache || "我")
+      : (state.peerUsernameCache || (peerMsg ? peerMsg.username : "") || ("用户" + uid));
     var userslug = isMine
       ? (window.app && app.user ? app.user.userslug || "" : "")
       : (state.peerUserslugCache || (peerMsg ? peerMsg.userslug : ""));
@@ -1241,7 +1320,7 @@
       mediaUrl = match[1];
       text = "[视频]";
       displayHtml = "";
-    } else if ((match = text.match(/^\[语音消息\]\((.+?)\)$/))) {
+    } else if ((match = text.match(/^\[语音消息\]\((.+?)\)$/)) || (match = text.match(/^\[语音\]\((.+?)\)$/))) {
       type = "voice";
       audioUrl = match[1];
       text = "[语音]";
@@ -1283,8 +1362,10 @@
         getAudioDuration(obj.audioUrl, function (sec) {
           obj.durationStr = formatDuration(sec);
           msgTouch(obj);
+
           var durEl = byId("dur_" + obj.id);
           if (durEl) durEl.innerText = obj.durationStr;
+
           incrementalRender("keep");
         });
       }
@@ -1312,22 +1393,25 @@
     window.__wkEngineBooted = true;
 
     cpFetchJSON(cpApiBase() + "/token")
-      .catch(function () { return cpFetchJSON("/bridge/token"); })
+      .catch(function () {
+        return cpFetchJSON("/bridge/token");
+      })
       .then(function (res) {
         if (!res || !res.token) return;
 
         state.myUid = String(res.wkUid || res.uid || (res.user && res.user.uid) || "");
         if (res.user) {
-          try {
-            window.app = window.app || {};
-            app.user = Object.assign({}, app.user || {}, cpNormalizeUserPayload(res.user, state.myUid));
-          } catch (_) {}
+          state.myUsernameCache = res.user.username || res.user.displayname || "";
+          state.myPictureCache = res.user.picture || res.user.uploadedpicture || "";
+          state.myIconTextCache = res.user.icontext || res.user["icon:text"] || "";
+          state.myIconBgCache = res.user.iconbgColor || res.user["icon:bgColor"] || "";
         }
 
         var urls = [];
         var cfgUrl = cpRaw(cpPluginConfig().wkSdkUrl);
         if (cfgUrl) urls.push(cfgUrl);
         urls.push("/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1");
+        urls.push("/plugins/nodebb-plugin-cp-wukong-inject/static/vendor/wukongimjssdk.umd.js?v=1");
         urls.push("https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js");
 
         cpLoadScriptSequential(urls, function () {
@@ -1340,29 +1424,42 @@
 
           wk.WKSDK.shared().chatManager.addMessageListener(function (m) {
             if (!state.mounted) return;
+
             var payloadObj = extractWkPayload(m) || {};
 
             if (m.contentType === 1006 || payloadObj.type === 1006) {
               var targetId = payloadObj.client_msg_no || payloadObj.message_id || payloadObj.clientMsgNo;
+
               var targetMsg = state.wkMessages.find(function (x) {
                 return x.id === targetId || (x.wkMsg && (x.wkMsg.clientMsgNo === targetId || x.wkMsg.messageID === targetId));
               });
+
               if (targetMsg) {
                 targetMsg.recalled = true;
                 targetMsg.text = "此消息已被撤回";
                 msgTouch(targetMsg);
                 incrementalRender("keep");
               }
+
               return;
             }
 
             var fromUid = String(m.fromUID || m.from_uid || "");
             if (fromUid === state.myUid) return;
+
+            var channelId = cpGetChannelId();
+            var channelType = cpGetChannelType();
             var currentPeerUid = getPeerUid();
-            if (cpGetChannelType() === 1 && (!currentPeerUid || fromUid !== currentPeerUid)) return;
+            if (channelType === 1 && (!currentPeerUid || fromUid !== currentPeerUid)) return;
+            if (channelType === 2) {
+              var mChannelId = String(m.channelID || m.channel_id || (m.channel && m.channel.channelID) || "");
+              if (mChannelId && channelId && mChannelId !== channelId) return;
+            }
 
             var t = payloadObj.text || payloadObj.content || "";
-            if (!t || isCallSignalText(t)) return;
+            if (!t) return;
+
+            if (isCallSignalText(t)) return;
 
             var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
             newMsg.serverText = t;
@@ -1373,18 +1470,29 @@
             state.wkMessages.push(newMsg);
             pruneWkMessages();
             pruneAllMessagesInMemory();
+
             state.renderVersion++;
             state.mergedDirty = true;
             state.msgIndexDirty = true;
-            schedulePersistChat(currentPeerUid || cpGetChannelId());
+
+            schedulePersistChat(currentPeerUid || channelId);
 
             var wasAtBottom = isMainAtBottom();
-            if (state.cfg.autoTranslateLastMsg) setTimeout(function () { executePeerTranslateOnly(newMsg); }, 0);
+
+            if (state.cfg.autoTranslateLastMsg) {
+              setTimeout(function () {
+                executePeerTranslateOnly(newMsg);
+              }, 0);
+            }
+
             if (wasAtBottom) {
               state.unreadCount = 0;
               updateUnreadBadge();
               incrementalRender("bottom");
-              requestAnimationFrame(function () { forceScrollToBottom(); setTimeout(markVisibleAsRead, 60); });
+              requestAnimationFrame(function () {
+                forceScrollToBottom();
+                setTimeout(markVisibleAsRead, 60);
+              });
             } else {
               state.unreadCount++;
               updateUnreadBadge();
@@ -1395,7 +1503,7 @@
 
           wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
             if (status === 1 && state.mounted && state.initialLoadDone) {
-              var pUid = getPeerUid();
+              var pUid = getPeerUid() || cpGetChannelId();
               if (pUid && state.localMaxSeq > 0) fetchOfflineMessages(pUid);
             }
           });
@@ -1424,14 +1532,15 @@
     if (byId("cp-top-spinner")) byId("cp-top-spinner").hidden = false;
 
     try {
-      var cid = cpGetChannelId() || peerUid;
-      var url = cpApiBase() + "/history?channel_id=" + encodeURIComponent(cid) + "&channel_type=" + encodeURIComponent(cpGetChannelType()) + "&limit=" + encodeURIComponent(limit);
+      var url = cpApiBase() + "/history?channel_id=" + encodeURIComponent(cpGetChannelId() || peerUid) + "&channel_type=" + encodeURIComponent(cpGetChannelType()) + "&limit=" + encodeURIComponent(limit);
       if (startSeq && startSeq > 0) url += "&start_message_seq=" + encodeURIComponent(startSeq);
 
       var res = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
       if (!res.ok) throw new Error("HTTP " + res.status);
+
       var json = await res.json();
       var msgs = [];
+
       if (Array.isArray(json)) msgs = json;
       else if (json.data && Array.isArray(json.data)) msgs = json.data;
       else if (json.data && Array.isArray(json.data.messages)) msgs = json.data.messages;
@@ -1460,12 +1569,14 @@
 
     while (hasMore) {
       try {
-        var cid = cpGetChannelId() || peerUid;
-        var url = cpApiBase() + "/history?channel_id=" + encodeURIComponent(cid) + "&channel_type=" + encodeURIComponent(cpGetChannelType()) + "&limit=50&start_message_seq=" + encodeURIComponent(startSeq);
+        var url = cpApiBase() + "/history?channel_id=" + encodeURIComponent(cpGetChannelId() || peerUid) + "&channel_type=" + encodeURIComponent(cpGetChannelType()) + "&limit=50&start_message_seq=" + encodeURIComponent(startSeq);
+
         var res = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
         if (!res.ok) break;
+
         var json = await res.json();
         var msgs = [];
+
         if (Array.isArray(json)) msgs = json;
         else if (json.data && Array.isArray(json.data)) msgs = json.data;
         else if (json.data && Array.isArray(json.data.messages)) msgs = json.data.messages;
@@ -1473,11 +1584,14 @@
 
         if (msgs.length) {
           processWukongMessages(msgs, false);
+
           var batchMaxSeq = 0;
+
           for (var i = 0; i < msgs.length; i++) {
             var s = msgs[i].message_seq || msgs[i].messageSeq || 0;
             if (s > batchMaxSeq) batchMaxSeq = s;
           }
+
           startSeq = batchMaxSeq + 1;
           if (msgs.length < 50) hasMore = false;
         } else {
@@ -1498,7 +1612,7 @@
       var m = msgs[i];
       var payloadObj = extractWkPayload(m) || {};
       var fromUid = String(m.from_uid || m.fromUID);
-      var isMine = fromUid === state.myUid;
+      var isMine = fromUid === String(state.myUid || (window.app && app.user ? app.user.uid : ""));
       var serverT = payloadObj.text || payloadObj.content || "";
 
       // 历史/离线消息里的通话信令不显示
@@ -1579,43 +1693,46 @@
   }
 
   function sendText(text, originalText) {
-    // 防止误把通话信令当普通消息发送并插入本地气泡
     if (isCallSignalText(text) || isCallSignalText(originalText)) {
       sendCallSignalText(text || originalText);
       return;
     }
 
     var peerUid = getPeerUid();
+    var channelId = cpIndependentMode() ? (cpGetChannelId() || peerUid) : peerUid;
+    var channelType = cpIndependentMode() ? cpGetChannelType() : 1;
 
-    try {
-      var nativeInput = document.querySelector('[component="chat/input"]');
-      var nativeBtn = document.querySelector('[component="chat/send"]');
+    if (!cpIndependentMode()) {
+      try {
+        var nativeInput = document.querySelector('[component="chat/input"]');
+        var nativeBtn = document.querySelector('[component="chat/send"]');
 
-      if (nativeInput && nativeBtn) {
-        var setter =
-          Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set ||
-          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        if (nativeInput && nativeBtn) {
+          var setter =
+            Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set ||
+            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
 
-        if (setter) setter.call(nativeInput, text);
-        else nativeInput.value = text;
+          if (setter) setter.call(nativeInput, text);
+          else nativeInput.value = text;
 
-        nativeInput.dispatchEvent(new Event("input", { bubbles: true }));
-        nativeInput.dispatchEvent(new Event("change", { bubbles: true }));
+          nativeInput.dispatchEvent(new Event("input", { bubbles: true }));
+          nativeInput.dispatchEvent(new Event("change", { bubbles: true }));
 
-        setTimeout(function () {
-          nativeBtn.click();
-        }, 30);
+          setTimeout(function () {
+            nativeBtn.click();
+          }, 30);
+        }
+      } catch (e) {
+        warn("native-send", e);
       }
-    } catch (e) {
-      warn("native-send", e);
     }
 
     var wkMsgObj = null;
     var displayText = originalText || text;
 
-    if (peerUid && state.wkReady && window.wk) {
+    if (channelId && state.wkReady && window.wk) {
       try {
-        var channel = new window.wk.Channel(cpGetChannelId() || peerUid, cpGetChannelType());
+        var channel = new window.wk.Channel(String(channelId), Number(channelType || 1));
         var msgContent = new window.wk.MessageText(text);
 
         if (originalText) {
@@ -1643,7 +1760,10 @@
         wkMsgObj = window.wk.WKSDK.shared().chatManager.send(msgContent, channel);
       } catch (e) {
         warn("wk-send", e);
+        toast("悟空发送失败");
       }
+    } else if (cpIndependentMode()) {
+      toast("悟空连接未就绪");
     }
 
     var newMsg = createMessageObj(displayText, true, state.myUid, wkMsgObj, {
@@ -1670,12 +1790,11 @@
     state.mergedDirty = true;
     state.msgIndexDirty = true;
 
-    schedulePersistChat(peerUid);
+    schedulePersistChat(peerUid || channelId);
 
     state.unreadCount = 0;
     updateUnreadBadge();
 
-    // 修复：自己发的消息一定滚到底部
     incrementalRender("bottom");
     requestAnimationFrame(forceScrollToBottom);
 
@@ -1683,7 +1802,7 @@
 
     if (input) {
       input.value = "";
-      input.style.height = "36px";
+      input.style.height = "54px";
     }
 
     updatePrimaryButton();
@@ -1726,7 +1845,6 @@
   }
 
   async function ensurePeerLoaded() {
-    await cpEnsureMe();
     var pUid = getPeerUid();
 
     if (!pUid) {
@@ -1776,7 +1894,7 @@
       })
     );
 
-    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.12 });
+    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.85 });
 
     state.peerUidCache = "";
     state.peerUsernameCache = "";
@@ -1826,10 +1944,9 @@
     updateHeaderPeerInfo(null);
     initLazyObserver();
 
-    if (!cpIndependentMode()) {
-      setTimeout(mountNativeObserver, 300);
-      scheduleSync();
-    }
+    setTimeout(mountNativeObserver, 300);
+
+    scheduleSync();
     initWukong();
 
     state.mounted = true;
@@ -1931,1325 +2048,19 @@
   }
 
   function injectStyle() {
-    if (byId("cp-chat-style")) return;
-
-    var css = `
-      body.cp-shell-on[component="chat/main-wrapper"],
-      body.cp-shell-on .chats-full,
-      body.cp-shell-on .chat-modal,
-      body.cp-shell-on[component="chat/nav-wrapper"] {
-        position:absolute!important;
-        top:-9999px!important;
-        left:-9999px!important;
-        opacity:0!important;
-        pointer-events:none!important;
-        z-index:-1!important;
-      }
-
-      #cp-chat-root {
-        position:fixed;
-        inset:0;
-        z-index:2147483000;
-        --cp-other:#fff;
-        --cp-mine:#e0c3fc;
-        --cp-bg:#f1f5f9;
-        --cp-text:#1f2937;
-        --cp-primary:#3b82f6;
-        --cp-danger:#ef4444;
-        --cp-footer-h:118px;
-        font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
-        color:var(--cp-text);
-        overflow:hidden;
-        background:var(--cp-bg);
-        -webkit-user-select:none!important;
-        user-select:none!important;
-        -webkit-touch-callout:none!important;
-        touch-action:manipulation;
-      }
-
-      #cp-chat-root *,
-      #cp-chat-root *::before,
-      #cp-chat-root *::after {
-        box-sizing:border-box;
-        -webkit-user-select:none!important;
-        user-select:none!important;
-        -webkit-touch-callout:none!important;
-      }
-
-      #cp-chat-root textarea,
-      #cp-chat-root input,
-      #cp-chat-root select {
-        -webkit-user-select:text!important;
-        user-select:text!important;
-        -webkit-touch-callout:default!important;
-      }
-
-      #cp-chat-root *::-webkit-scrollbar { display:none!important; }
-
-      .cp-bg {
-        position:absolute;
-        inset:0;
-        background-size:cover;
-        background-position:center;
-        z-index:0;
-        pointer-events:none;
-      }
-
-      .cp-bg-mask {
-        position:absolute;
-        inset:0;
-        background:rgba(241,245,249,var(--bg-op,.85));
-        z-index:1;
-        pointer-events:none;
-      }
-
-      .cp-header {
-        position:absolute;
-        left:0;
-        right:0;
-        top:0;
-        z-index:20;
-        height:calc(52px + env(safe-area-inset-top));
-        padding:env(safe-area-inset-top) 12px 7px 10px;
-        display:flex;
-        align-items:flex-end;
-        justify-content:flex-start;
-        gap:8px;
-        border-bottom:1px solid rgba(255,255,255,.35);
-        background:rgba(255,255,255,.72);
-        backdrop-filter:blur(10px);
-        box-shadow:0 1px 3px rgba(0,0,0,.02);
-      }
-
-      .cp-header-back {
-        width:32px;
-        height:36px;
-        border:none;
-        background:transparent;
-        color:#111827;
-        font-size:30px;
-        line-height:1;
-        display:grid;
-        place-items:center;
-        cursor:pointer;
-        flex-shrink:0;
-      }
-
-      .cp-header-peer {
-        min-width:0;
-        flex:1;
-        display:flex;
-        align-items:center;
-        gap:9px;
-        padding-bottom:2px;
-      }
-
-      .cp-peer-avatar {
-        width:36px;
-        height:36px;
-        border-radius:40%;
-        overflow:hidden;
-        flex-shrink:0;
-        box-shadow:0 1px 4px rgba(0,0,0,.10);
-        background:#cbd5e1;
-      }
-
-      .cp-peer-avatar .avatar,
-      .cp-peer-avatar img {
-        width:100%!important;
-        height:100%!important;
-        border-radius:40%!important;
-        object-fit:cover;
-      }
-
-      .cp-header-center {
-        flex:1;
-        min-width:0;
-        font-size:18px;
-        text-align:left;
-        font-weight:800;
-        color:#111827;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-      }
-
-      .cp-header-center a {
-        color:inherit;
-        text-decoration:none;
-      }
-
-      .cp-header-actions {
-        width:42px;
-        flex-shrink:0;
-        display:flex;
-        justify-content:center;
-        align-items:center;
-        padding-right:6px;
-        padding-bottom:3px;
-      }
-
-      .cp-header-actions button {
-        width:34px;
-        height:34px;
-        border:none;
-        border-radius:50%;
-        background:transparent!important;
-        box-shadow:none!important;
-        display:grid;
-        place-items:center;
-        font-size:18px;
-        color:#4b5563;
-        cursor:pointer;
-        padding:0;
-      }
-
-      .cp-main {
-        position:absolute;
-        left:0;
-        right:0;
-        top:calc(52px + env(safe-area-inset-top));
-        bottom:calc(var(--cp-footer-h) + env(safe-area-inset-bottom));
-        z-index:10;
-        overflow-y:auto;
-        overflow-x:hidden;
-        padding:10px 8px 20px;
-        scroll-behavior:auto;
-        -webkit-overflow-scrolling:touch;
-        overscroll-behavior:contain;
-      }
-
-      .cp-skeleton-spinner {
-        text-align:center;
-        font-size:13px;
-        color:#9ca3af;
-        padding:12px 0;
-        height:40px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        gap:8px;
-      }
-
-      .cp-skeleton-spinner i { animation:fa-spin 1s infinite linear; }
-
-      .cp-fab-bottom {
-        position:absolute;
-        right:16px;
-        bottom:calc(var(--cp-footer-h) + 20px);
-        width:38px;
-        height:38px;
-        border-radius:50%;
-        border:1px solid rgba(0,0,0,.05);
-        background:rgba(255,255,255,.9);
-        backdrop-filter:blur(5px);
-        box-shadow:0 4px 12px rgba(0,0,0,.15);
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-size:20px;
-        color:var(--cp-primary);
-        cursor:pointer;
-        opacity:0;
-        pointer-events:none;
-        transform:translateY(20px);
-        transition:all .25s cubic-bezier(.2,.8,.2,1);
-        z-index:35;
-      }
-
-      .cp-fab-bottom.show {
-        opacity:1;
-        pointer-events:auto;
-        transform:translateY(0);
-      }
-
-      .cp-fab-badge {
-        position:absolute;
-        top:-4px;
-        right:-4px;
-        background:#ef4444;
-        color:#fff;
-        font-size:10px;
-        font-family:sans-serif;
-        font-weight:bold;
-        padding:2px 5px;
-        border-radius:10px;
-        box-shadow:0 1px 2px rgba(0,0,0,.2);
-      }
-
-      .cp-time-sep {
-        display:flex;
-        justify-content:center;
-        margin:16px 0 10px;
-        pointer-events:none;
-      }
-
-      .cp-time-sep span {
-        background:transparent!important;
-        color:#94a3b8;
-        font-size:11px;
-        font-weight:600;
-        padding:2px 4px;
-        border-radius:0;
-        backdrop-filter:none!important;
-        box-shadow:none!important;
-      }
-
-      .cp-row {
-        display:flex;
-        align-items:flex-end;
-        gap:8px;
-        padding:2px 0;
-        position:relative;
-      }
-
-      .cp-row.mine { justify-content:flex-end; }
-      .cp-row.mine .cp-avatar-wrap { display:none; }
-
-      .cp-avatar-wrap {
-        display:block;
-        flex-shrink:0;
-        width:40px;
-        height:40px;
-        cursor:pointer;
-        border-radius:40%;
-        overflow:hidden;
-        visibility:hidden;
-        z-index:8;
-        position:relative!important;
-        transform:translateZ(0);
-      }
-
-      .cp-row.is-last .cp-avatar-wrap { visibility:visible; }
-
-      .cp-bubble-wrap {
-        max-width:78%;
-        min-width:40px;
-        position:relative!important;
-        z-index:1!important;
-        overflow:visible;
-      }
-
-      .cp-bubble {
-        position:relative!important;
-        padding:6px 10px 8px;
-        font-size:15.5px;
-        line-height:1.45;
-        word-break:break-word;
-        cursor:default;
-        border-radius:15px 15px 13px 15px;
-        z-index:1!important;
-      }
-
-      .cp-row.other .cp-bubble {
-        background:var(--cp-other);
-        color:#000;
-      }
-
-      .cp-row.mine .cp-bubble {
-        background:var(--cp-mine);
-        color:#111;
-      }
-
-      .cp-row.other.has-tail .cp-bubble { border-bottom-left-radius:0; }
-      .cp-row.mine.has-tail .cp-bubble { border-bottom-right-radius:4px; }
-
-      .cp-row.other.has-tail .cp-bubble::before {
-        content:"";
-        position:absolute;
-        bottom:2px;
-        left:-8px;
-        width:20px;
-        height:10px;
-        background:var(--cp-other);
-        border-bottom-right-radius:16px 14px;
-        z-index:0!important;
-        pointer-events:none!important;
-      }
-
-      .cp-row.other.has-tail .cp-bubble::after {
-        content:"";
-        position:absolute;
-        bottom:2px;
-        left:-12px;
-        width:12px;
-        height:20px;
-        background:var(--cp-bg);
-        border-bottom-right-radius:10px;
-        z-index:0!important;
-        pointer-events:none!important;
-      }
-
-      .cp-row.mine.has-tail .cp-bubble::before {
-        content:"";
-        position:absolute;
-        bottom:2px;
-        right:-12px;
-        width:28px;
-        height:19px;
-        background:var(--cp-mine);
-        border-bottom-left-radius:18px 18px;
-        z-index:0!important;
-        pointer-events:none!important;
-      }
-
-      .cp-row.mine.has-tail .cp-bubble::after {
-        content:"";
-        position:absolute;
-        bottom:2px;
-        right:-12px;
-        width:12px;
-        height:20px;
-        background:var(--cp-bg);
-        border-bottom-left-radius:10px;
-        z-index:0!important;
-        pointer-events:none!important;
-      }
-
-      body.cp-has-bg .cp-row.has-tail .cp-bubble::before,
-      body.cp-has-bg .cp-row.has-tail .cp-bubble::after { display:none!important; }
-
-      body.cp-has-bg .cp-row.other.has-tail .cp-bubble {
-        border-bottom-left-radius:18px!important;
-      }
-
-      body.cp-has-bg .cp-row.mine.has-tail .cp-bubble {
-        border-bottom-right-radius:18px!important;
-      }
-
-      .cp-bubble.recalled {
-        opacity:.72;
-        background:#e5e7eb!important;
-        border-radius:8px!important;
-      }
-
-      .cp-bubble.recalled::before,
-      .cp-bubble.recalled::after { display:none!important; }
-
-      .cp-bubble.media-shell {
-        padding:0;
-        background:transparent!important;
-        box-shadow:none;
-        border-radius:8px!important;
-        overflow:hidden;
-      }
-
-      .cp-bubble.media-shell::before,
-      .cp-bubble.media-shell::after { display:none!important; }
-
-      .cp-quote-card {
-        display:flex;
-        background:rgba(59,130,246,.08);
-        border-radius:8px;
-        margin-bottom:6px;
-        overflow:hidden;
-        pointer-events:none;
-      }
-
-      .cp-row.mine .cp-quote-card { background:rgba(0,0,0,.06); }
-
-      .cp-quote-bar {
-        width:3px;
-        min-width:3px;
-        background:var(--cp-primary);
-        border-radius:3px 0 0 3px;
-        flex-shrink:0;
-      }
-
-      .cp-row.mine .cp-quote-bar { background:rgba(0,0,0,.35); }
-
-      .cp-quote-body {
-        padding:5px 10px;
-        min-width:0;
-        overflow:hidden;
-      }
-
-      .cp-quote-name {
-        font-size:12px;
-        font-weight:600;
-        color:var(--cp-primary);
-        line-height:1.3;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-      }
-
-      .cp-row.mine .cp-quote-name { color:rgba(0,0,0,.55); }
-
-      .cp-quote-text {
-        font-size:13px;
-        color:rgba(0,0,0,.55);
-        line-height:1.35;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-        max-width:220px;
-      }
-
-      .cp-inline-time {
-        float:right;
-        margin:12px 0 0 8px;
-        font-size:10px;
-        opacity:.45;
-        font-variant-numeric:tabular-nums;
-        line-height:1.45;
-        pointer-events:none;
-      }
-
-      .cp-text {
-        white-space:pre-wrap;
-        pointer-events:none;
-      }
-
-      .cp-text a { pointer-events:auto; }
-
-      .cp-text img.emoji {
-        width:1.25em;
-        height:1.25em;
-        vertical-align:-.2em;
-        display:inline-block;
-      }
-
-      .cp-translation-wrap {
-        clear:both;
-        margin-top:6px;
-        padding-top:6px;
-        border-top:1px dashed rgba(0,0,0,.1);
-      }
-
-      .cp-translation-text {
-        font-size:13.5px;
-        white-space:pre-wrap;
-        opacity:.95;
-        color:#374151;
-      }
-
-      .cp-translation-text.is-error {
-        color:#ef4444;
-        cursor:pointer;
-        pointer-events:auto;
-      }
-
-      .cp-quick-trans {
-        position:absolute;
-        right:-34px;
-        top:50%;
-        transform:translateY(-50%);
-        width:28px;
-        height:28px;
-        background:rgba(255,255,255,.98);
-        border-radius:999px;
-        box-shadow:0 2px 8px rgba(0,0,0,.12);
-        display:grid;
-        place-items:center;
-        cursor:pointer;
-        border:1px solid rgba(0,0,0,.04);
-        z-index:14;
-        transition:transform .18s,box-shadow .18s;
-        pointer-events:auto;
-        touch-action:manipulation;
-        -webkit-tap-highlight-color:transparent;
-      }
-
-      .cp-quick-trans:active { transform:translateY(-50%) scale(.92); }
-
-      .cp-media-time {
-        position:absolute;
-        right:6px;
-        bottom:6px;
-        font-size:10px;
-        color:#fff;
-        background:rgba(0,0,0,.5);
-        border-radius:8px;
-        padding:2px 6px;
-        z-index:2;
-        font-variant-numeric:tabular-nums;
-      }
-
-      .cp-media-thumb {
-        display:block;
-        border:0;
-        padding:0;
-        margin:0;
-        background:transparent;
-        cursor:pointer;
-        pointer-events:auto;
-      }
-
-      .cp-media-thumb img {
-        display:block;
-        width:200px;
-        max-height:280px;
-        border-radius:8px;
-        object-fit:cover;
-        object-position:top;
-      }
-
-      .cp-video-wrap {
-        width:200px;
-        max-height:280px;
-        border-radius:8px;
-        overflow:hidden;
-        position:relative;
-        background:#e2e8f0;
-      }
-
-      .cp-video-wrap video {
-        width:100%;
-        height:100%;
-        object-fit:cover;
-        object-position:top;
-        display:block;
-      }
-
-      .cp-video-wrap::after {
-        content:"\\f01d";
-        font-family:FontAwesome;
-        position:absolute;
-        left:50%;
-        top:50%;
-        transform:translate(-50%,-50%);
-        font-size:32px;
-        color:rgba(255,255,255,.8);
-        pointer-events:none;
-        text-shadow:0 2px 4px rgba(0,0,0,.3);
-      }
-
-      .cp-video-mark {
-        position:absolute;
-        right:6px;
-        bottom:6px;
-        font-size:10px;
-        color:#fff;
-        background:rgba(0,0,0,.6);
-        border-radius:8px;
-        padding:2px 6px;
-        z-index:2;
-      }
-
-      .cp-voice {
-        display:flex;
-        align-items:center;
-        gap:6px;
-        min-width:100px;
-        border:0;
-        background:transparent;
-        cursor:pointer;
-        pointer-events:auto;
-        padding:0;
-        color:inherit;
-      }
-
-      .cp-play-circle {
-        width:28px;
-        height:28px;
-        border-radius:50%;
-        display:grid;
-        place-items:center;
-        box-shadow:0 1px 3px rgba(0,0,0,.1);
-        flex-shrink:0;
-        font-size:12px;
-        background:#f1f5f9;
-        color:var(--cp-primary);
-      }
-
-      .cp-wave {
-        display:flex;
-        align-items:center;
-        gap:2px;
-        height:14px;
-        flex:1;
-        opacity:.6;
-      }
-
-      .cp-wave i {
-        width:2px;
-        border-radius:2px;
-        background:currentColor;
-      }
-
-      .cp-voice.playing .cp-wave i {
-        animation:cp-wave-pulse .6s ease-in-out infinite alternate;
-        opacity:1;
-      }
-
-      .cp-voice-info-col {
-        display:flex;
-        flex-direction:column;
-        align-items:flex-end;
-        line-height:1;
-        margin-left:2px;
-      }
-
-      .cp-voice-dur {
-        font-size:13px;
-        font-weight:bold;
-      }
-
-      .cp-voice-time {
-        font-size:9px;
-        opacity:.45;
-        margin-top:3px;
-        font-variant-numeric:tabular-nums;
-      }
-
-      @keyframes cp-wave-pulse {
-        from { transform:scaleY(.4); }
-        to { transform:scaleY(1.5); }
-      }
-
-      @keyframes cp-rec-bar-pulse {
-        from { transform:scaleY(.5); }
-        to { transform:scaleY(1.6); }
-      }
-
-      .cp-lazy-loading {
-        animation:cp-pulse 1.5s infinite;
-        background:rgba(0,0,0,.05);
-        width:180px;
-        height:180px;
-        border-radius:8px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        flex-shrink:0;
-      }
-
-      @keyframes cp-pulse {
-        0% { opacity:.6; }
-        50% { opacity:1; }
-        100% { opacity:.6; }
-      }
-
-      .cp-context-overlay {
-        position:fixed;
-        inset:0;
-        z-index:2147483004;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        padding:20px;
-        background:rgba(15,23,42,.32);
-        backdrop-filter:blur(1px);
-      }
-
-      .cp-context-menu {
-        z-index:2147483005;
-        background:#fff;
-        border-radius:18px;
-        box-shadow:0 8px 30px rgba(0,0,0,.18);
-        padding:6px;
-        width:auto;
-        min-width:166px;
-        max-width:210px;
-        animation:cp-menu-pop-center .16s cubic-bezier(.2,.8,.2,1);
-      }
-
-      @keyframes cp-menu-pop-center {
-        from { transform:scale(.92); opacity:0; }
-        to { transform:scale(1); opacity:1; }
-      }
-
-      .cp-menu-item {
-        padding:12px 14px;
-        font-size:15px;
-        color:#374151;
-        cursor:pointer;
-        border-radius:10px;
-        display:flex;
-        align-items:center;
-        gap:10px;
-        white-space:nowrap;
-      }
-
-      .cp-menu-item:active { background:#e5e7eb; }
-      .cp-menu-item.danger { color:#ef4444; }
-
-      .cp-footer {
-        position:absolute;
-        left:0;
-        right:0;
-        bottom:0;
-        z-index:30;
-        padding:0 12px max(12px,env(safe-area-inset-bottom));
-        background:linear-gradient(to top,rgba(255,255,255,.96),rgba(255,255,255,.80),transparent);
-        display:flex;
-        flex-direction:column;
-        gap:6px;
-      }
-
-      .cp-translate-bar {
-        max-width:100%;
-        margin:2px 4px 0;
-        display:inline-flex;
-        align-items:center;
-        gap:4px;
-        padding:2px 8px;
-        border:1px solid rgba(255,255,255,.6);
-        border-radius:20px;
-        background:rgba(255,255,255,.88);
-        backdrop-filter:blur(8px);
-        box-shadow:0 1px 6px rgba(0,0,0,.04);
-      }
-
-      .cp-lang-btn {
-        background:transparent;
-        border:none;
-        font-size:12px;
-        font-weight:700;
-        color:#374151;
-        cursor:pointer;
-        padding:2px 6px;
-        border-radius:12px;
-        white-space:nowrap;
-      }
-
-      .cp-swap-btn {
-        border:none;
-        background:transparent;
-        color:#9ca3af;
-        font-size:13px;
-        cursor:pointer;
-        padding:0 4px;
-      }
-
-      .cp-toggle-ai-send {
-        position:relative;
-        border:none;
-        background:transparent;
-        color:#9ca3af;
-        font-size:14px;
-        cursor:pointer;
-        padding:4px 4px 4px 14px;
-        border-radius:50%;
-        display:flex;
-        align-items:center;
-        margin-left:4px;
-        border-left:1px solid #e5e7eb;
-      }
-
-      .cp-toggle-ai-send::before {
-        content:"";
-        position:absolute;
-        left:4px;
-        top:50%;
-        transform:translateY(-50%);
-        width:5px;
-        height:5px;
-        border-radius:50%;
-        background:#9ca3af;
-      }
-
-      .cp-toggle-ai-send.active { color:var(--cp-primary); }
-
-      .cp-toggle-ai-send.active::before {
-        background:#22c55e;
-        box-shadow:0 0 4px #22c55e;
-      }
-
-      .cp-wingman-panel {
-        margin:0 4px;
-        padding:7px 9px;
-        border:1px solid rgba(99,102,241,.16);
-        border-radius:16px;
-        background:rgba(255,255,255,.92);
-        backdrop-filter:blur(6px);
-        box-shadow:0 3px 12px rgba(0,0,0,.05);
-      }
-
-      .cp-wingman-analysis {
-        font-size:12.5px;
-        color:#475569;
-        margin-bottom:7px;
-        line-height:1.4;
-        display:flex;
-        align-items:center;
-        gap:6px;
-      }
-
-      .cp-thinking-dot {
-        width:6px;
-        height:6px;
-        border-radius:50%;
-        background:#6366f1;
-        animation:cp-thinking 1s infinite alternate;
-        display:inline-block;
-        flex-shrink:0;
-      }
-
-      @keyframes cp-thinking {
-        from { opacity:.25; transform:scale(.8); }
-        to { opacity:1; transform:scale(1.25); }
-      }
-
-      .cp-smart-replies-bar {
-        display:flex;
-        gap:8px;
-        overflow-x:auto;
-        padding:1px 0;
-        scroll-behavior:smooth;
-        -webkit-overflow-scrolling:touch;
-        scrollbar-width:none;
-        background:transparent;
-        max-width:100%;
-      }
-
-      .cp-smart-replies-bar::-webkit-scrollbar { display:none; }
-
-      .cp-sr-pill {
-        flex-shrink:0;
-        background:#e0e7ff;
-        color:#4338ca;
-        padding:7px 12px;
-        border-radius:16px;
-        font-size:13px;
-        font-weight:600;
-        cursor:pointer;
-        border:1px solid rgba(0,0,0,.05);
-        white-space:normal;
-        line-height:1.35;
-        box-shadow:0 2px 4px rgba(0,0,0,.05);
-        max-width:min(72vw,260px);
-        overflow:visible;
-        text-overflow:clip;
-      }
-
-      .cp-sr-pill {
-        display:-webkit-box;
-        -webkit-line-clamp:2;
-        -webkit-box-orient:vertical;
-        overflow:hidden;
-      }
-
-      .cp-sr-pill:active { background:#c7d2fe; }
-
-      .cp-sr-pill em {
-        font-style:normal;
-        opacity:.72;
-        font-weight:500;
-        margin-left:4px;
-        font-size:11px;
-      }
-
-      .cp-quote-preview {
-        display:flex;
-        align-items:center;
-        gap:8px;
-        background:rgba(255,255,255,.92);
-        backdrop-filter:blur(6px);
-        border-radius:12px;
-        padding:6px 10px;
-        margin:0 4px 4px;
-        border:1px solid rgba(0,0,0,.06);
-        font-size:13px;
-        color:#4b5563;
-      }
-
-      .cp-quote-preview-bar {
-        width:3px;
-        min-height:28px;
-        background:var(--cp-primary);
-        border-radius:3px;
-        flex-shrink:0;
-      }
-
-      .cp-quote-preview-body {
-        flex:1;
-        min-width:0;
-        overflow:hidden;
-      }
-
-      .cp-quote-preview-name {
-        font-size:11px;
-        font-weight:700;
-        color:var(--cp-primary);
-      }
-
-      .cp-quote-preview-text {
-        font-size:12px;
-        color:#6b7280;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-      }
-
-      .cp-quote-preview-close {
-        border:none;
-        background:none;
-        font-size:16px;
-        color:#9ca3af;
-        cursor:pointer;
-        padding:0 4px;
-        flex-shrink:0;
-      }
-
-      .cp-toolbar {
-        position:relative;
-        max-width:100%;
-        margin:0;
-        display:flex;
-        align-items:flex-end;
-        padding:6px;
-        border:1px solid rgba(0,0,0,.08);
-        border-radius:28px;
-        background:rgba(255,255,255,.95);
-        box-shadow:0 4px 15px rgba(0,0,0,.06);
-        min-height:50px;
-      }
-
-      .cp-progress-wrap {
-        position:absolute;
-        left:16px;
-        right:16px;
-        top:-5px;
-        height:4px;
-        background:rgba(0,0,0,.06);
-        border-radius:4px;
-        overflow:hidden;
-        pointer-events:none;
-      }
-
-      .cp-progress-bar {
-        height:100%;
-        width:0%;
-        background:var(--cp-primary);
-        transition:width .1s linear;
-      }
-
-      .cp-tool-btn {
-        width:36px;
-        height:36px;
-        border:none;
-        background:transparent;
-        color:#6b7280;
-        cursor:pointer;
-        display:grid;
-        place-items:center;
-        flex-shrink:0;
-        border-radius:50%;
-        margin-bottom:2px;
-      }
-
-      .cp-input-box {
-        flex:1;
-        min-width:0;
-        display:flex;
-        align-items:center;
-      }
-
-      .cp-input-box textarea {
-        width:100%;
-        min-height:36px;
-        max-height:120px;
-        border:none;
-        padding:8px 4px;
-        margin:2px 0;
-        font-size:15px;
-        outline:none;
-        background:transparent;
-        color:#1f2937;
-        resize:none;
-        overflow-y:auto;
-        font-family:inherit;
-        line-height:20px;
-      }
-
-      .cp-primary-btn {
-        width:38px;
-        height:38px;
-        border:none;
-        border-radius:50%;
-        color:#6b7280;
-        cursor:pointer;
-        display:grid;
-        place-items:center;
-        background:transparent;
-        flex-shrink:0;
-        margin-bottom:1px;
-      }
-
-      .cp-primary-btn.send {
-        background:var(--cp-primary);
-        color:#fff;
-        box-shadow:0 2px 8px rgba(37,99,235,.3);
-      }
-
-      .cp-modal-mask {
-        position:absolute;
-        inset:0;
-        z-index:50;
-        background:rgba(0,0,0,.4);
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        backdrop-filter:blur(2px);
-        padding:20px;
-      }
-
-      .cp-modal {
-        width:100%;
-        max-width:420px;
-        max-height:86vh;
-        overflow-y:auto;
-        border-radius:22px;
-        background:#fff;
-        box-shadow:0 10px 40px rgba(0,0,0,.2);
-      }
-
-      .cp-lang-grid {
-        display:grid;
-        grid-template-columns:1fr 1fr;
-        gap:10px;
-        margin-top:14px;
-      }
-
-      .cp-lang-item {
-        display:flex;
-        align-items:center;
-        gap:10px;
-        padding:11px 14px;
-        border-radius:14px;
-        background:#f8fafc;
-        border:1px solid #e2e8f0;
-        cursor:pointer;
-        font-size:15px;
-        color:#334155;
-      }
-
-      .cp-settings-head {
-        position:sticky;
-        top:0;
-        z-index:2;
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        padding:13px 14px;
-        background:rgba(255,255,255,.98);
-        border-bottom:1px solid #eef2f7;
-      }
-
-      .cp-settings-head h3 {
-        margin:0;
-        font-size:17px;
-        font-weight:800;
-      }
-
-      .cp-settings-x {
-        width:32px;
-        height:32px;
-        border:none;
-        border-radius:50%;
-        background:#f1f5f9;
-        color:#64748b;
-        cursor:pointer;
-      }
-
-      .cp-settings-body {
-        padding:12px 14px 16px;
-        max-height:calc(86vh - 60px);
-        overflow-y:auto;
-      }
-
-      .cp-settings-section {
-        margin-bottom:12px;
-        padding:11px;
-        border:1px solid #e2e8f0;
-        border-radius:16px;
-        background:#f8fafc;
-      }
-
-      .cp-settings-section-title {
-        font-size:13px;
-        font-weight:800;
-        color:#334155;
-        margin-bottom:9px;
-      }
-
-      .cp-provider-tabs {
-        display:grid;
-        grid-template-columns:1fr 1fr;
-        gap:8px;
-      }
-
-      .cp-provider-tab {
-        border:1px solid #dbe4ef;
-        border-radius:14px;
-        padding:10px 8px;
-        background:#fff;
-        color:#475569;
-        font-size:14px;
-        font-weight:800;
-        cursor:pointer;
-      }
-
-      .cp-provider-tab.active {
-        color:#fff;
-        border-color:var(--cp-primary);
-        background:linear-gradient(135deg,#3b82f6,#6366f1);
-        box-shadow:0 6px 16px rgba(59,130,246,.22);
-      }
-
-      .cp-ai-pane {
-        display:none;
-        margin-top:8px;
-      }
-
-      .cp-ai-pane.show { display:block; }
-
-      .cp-setting-row {
-        display:flex;
-        gap:9px;
-        align-items:center;
-      }
-
-      .cp-setting-row > * { flex:1; }
-
-      .cp-setting-field {
-        display:block;
-        margin-top:8px;
-      }
-
-      .cp-setting-field span {
-        display:block;
-        font-size:12px;
-        color:#64748b;
-        margin-bottom:5px;
-      }
-
-      .cp-setting-field input,
-      .cp-setting-field select {
-        width:100%;
-        box-sizing:border-box;
-        padding:9px 10px;
-        border:1px solid #dbe4ef;
-        border-radius:12px;
-        background:#fff;
-        color:#111827;
-        outline:none;
-        font-family:inherit;
-      }
-
-      .cp-setting-toggle {
-        display:flex;
-        justify-content:space-between;
-        align-items:center;
-        gap:10px;
-        background:#fff;
-        border:1px solid #e2e8f0;
-        padding:10px;
-        border-radius:14px;
-        font-size:13px;
-        cursor:pointer;
-      }
-
-      .cp-setting-toggle input {
-        width:18px;
-        height:18px;
-        accent-color:var(--cp-primary);
-      }
-
-      .cp-settings-actions {
-        display:flex;
-        gap:10px;
-        position:sticky;
-        bottom:0;
-        padding-top:8px;
-        background:linear-gradient(to top,#fff 70%,rgba(255,255,255,0));
-      }
-
-      .cp-settings-actions button {
-        flex:1;
-        padding:11px;
-        border-radius:14px;
-        font-weight:800;
-        font-size:15px;
-        cursor:pointer;
-      }
-
-      .cp-settings-secondary {
-        background:#f1f5f9;
-        color:#475569;
-        border:1px solid #cbd5e1;
-      }
-
-      .cp-settings-primary {
-        background:var(--cp-primary);
-        color:#fff;
-        border:none;
-      }
-
-      .cp-rec-inline {
-        display:flex;
-        align-items:center;
-        gap:6px;
-        flex:1;
-        padding:2px 4px;
-        background:transparent;
-        width:100%;
-      }
-
-      .cp-rec-btn-icon {
-        background:none;
-        border:none;
-        padding:4px 8px;
-        cursor:pointer;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-      }
-
-      .cp-rec-vis {
-        flex:1;
-        display:flex;
-        align-items:center;
-        gap:4px;
-        min-width:0;
-      }
-
-      .cp-rec-dot {
-        width:8px;
-        height:8px;
-        background:#ef4444;
-        border-radius:50%;
-        flex-shrink:0;
-        animation:cp-rec-blink 1.5s infinite;
-      }
-
-      .cp-rec-dash {
-        flex:1;
-        height:2px;
-        border-bottom:3px dotted #9ca3af;
-        margin:0 4px;
-        opacity:.8;
-      }
-
-      .cp-rec-bars {
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        gap:3px;
-        height:20px;
-        width:28px;
-        margin-right:4px;
-      }
-
-      .cp-rec-bars i {
-        width:3px;
-        border-radius:2px;
-        background:#9ca3af;
-        animation:cp-rec-bar-pulse .7s ease-in-out infinite alternate;
-      }
-
-      @keyframes cp-rec-blink {
-        0%,100% { opacity:1; }
-        50% { opacity:.3; }
-      }
-    `;
-
-    var st = document.createElement("style");
-    st.id = "cp-chat-style";
-    st.textContent = css;
-    document.head.appendChild(st);
+    var href = cpRaw(cpPluginConfig().cssUrl) || "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=25";
+    var old = byId("cp-chat-style");
+    if (old && old.tagName && old.tagName.toLowerCase() === "style") old.remove();
+
+    var link = document.querySelector('link[data-cp-chat-style="1"]');
+    if (!link) {
+      link = document.createElement("link");
+      link.id = "cp-chat-style";
+      link.rel = "stylesheet";
+      link.setAttribute("data-cp-chat-style", "1");
+      document.head.appendChild(link);
+    }
+    if (link.getAttribute("href") !== href) link.setAttribute("href", href);
   }
 
 
@@ -3273,8 +2084,7 @@
     if (byId('cp-header-back')) byId('cp-header-back').setAttribute('aria-label', cpT('back', '返回'));
     if (byId('cp-header-more')) byId('cp-header-more').setAttribute('aria-label', cpT('settings', '设置'));
     if (byId('cp-input')) byId('cp-input').setAttribute('placeholder', cpT('sendMessage', '发送消息...'));
-    var peerInfoEl = byId('cp-peer-info');
-    if (peerInfoEl && !peerInfoEl.dataset.ready && !peerInfoEl.textContent.trim()) peerInfoEl.textContent = cpT('loading', '加载中...');
+    setText('cp-peer-info', 'loading', '加载中...');
     var spinner = byId('cp-top-spinner');
     if (spinner) spinner.innerHTML = '<i class="fa fa-circle-o-notch"></i> ' + esc(cpT('loading', '加载中...'));
 
@@ -3342,7 +2152,7 @@
             <div class="cp-header-center" id="cp-peer-info">加载中...</div>
           </div>
           <div class="cp-header-actions">
-            <button id="cp-header-more" aria-label="设置"><span class="cp-more-dots">⋮</span></button>
+            <button id="cp-header-more" aria-label="设置" type="button"><span class="cp-more-dot">⋮</span></button>
           </div>
         </header>
 
@@ -3369,7 +2179,7 @@
               <button class="cp-lang-btn" id="cp-src-lang-btn">🇨🇳 中文</button>
               <button class="cp-swap-btn" id="cp-lang-swap">⇄</button>
               <button class="cp-lang-btn" id="cp-tgt-lang-btn">🇲🇲 မြန်မာစာ</button>
-              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送">译</button>
+              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><i class="fa-solid fa-language fa fa-language"></i><span class="cp-icon-fallback">译</span></button>
             </div>
           </div>
 
@@ -3404,7 +2214,7 @@
 
             <div id="cp-rec-inline" class="cp-rec-inline" hidden>
               <button id="cp-rec-cancel" class="cp-rec-btn-icon">
-                <i class="fa fa-trash-o" style="font-size:20px;color:#6b7280;"></i>
+                <span class="cp-rec-cancel-icon">×</span>
               </button>
               <div class="cp-rec-vis">
                 <span class="cp-rec-dot"></span>
@@ -3412,20 +2222,20 @@
                 <div class="cp-rec-bars" id="cp-rec-bars"></div>
               </div>
               <button id="cp-rec-pause" class="cp-rec-btn-icon">
-                <i class="fa fa-pause-circle" style="font-size:22px;color:#0ea5e9;"></i>
+                <span class="cp-rec-pause-icon">Ⅱ</span>
               </button>
               <span id="cp-rec-time" style="font-size:16px;color:#4b5563;font-family:sans-serif;font-weight:500;width:38px;text-align:center;">0:00</span>
               <button id="cp-rec-send" class="cp-rec-btn-icon">
-                <i class="fa fa-paper-plane" style="font-size:20px;color:#0ea5e9;"></i>
+                <span class="cp-rec-send-icon">↑</span>
               </button>
             </div>
           </div>
 
-          <div class="cp-media-pop" id="cp-media-pop" hidden style="position:absolute;bottom:70px;left:20px;background:#fff;border-radius:16px;padding:8px;box-shadow:0 5px 20px rgba(0,0,0,.15);z-index:40">
-            <button id="cp-pick-camera" style="width:100%;background:none;border:none;padding:12px;text-align:left;display:flex;gap:12px;font-size:15px">
+          <div class="cp-media-pop" id="cp-media-pop" hidden >
+            <button id="cp-pick-camera" class="cp-media-pop-btn">
               <span class="mi">${ICON.camera}</span><span>拍摄</span>
             </button>
-            <button id="cp-pick-album" style="width:100%;background:none;border:none;padding:12px;text-align:left;display:flex;gap:12px;font-size:15px">
+            <button id="cp-pick-album" class="cp-media-pop-btn">
               <span class="mi">${ICON.album}</span><span>相册图片/视频</span>
             </button>
           </div>
@@ -3566,10 +2376,6 @@
       </div>
     `;
 
-    var oldPageRoot = document.getElementById("nodebb-wukong-root");
-    if (oldPageRoot) oldPageRoot.style.display = "none";
-    var oldPageRoot = document.getElementById("nodebb-wukong-root");
-    if (oldPageRoot) oldPageRoot.style.display = "none";
     document.body.insertAdjacentHTML("beforeend", html);
     try { document.body.classList.remove("cp-chat-harmony-booting"); } catch (_) {}
     applyStaticTranslations();
@@ -3631,7 +2437,7 @@
 
     input.addEventListener("input", function () {
       clearWingmanPanel();
-      this.style.height = "36px";
+      this.style.height = "54px";
       this.style.height = Math.min(this.scrollHeight, 120) + "px";
       updatePrimaryButton();
       updateFooterHeight();
@@ -3641,14 +2447,14 @@
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handlePrimaryAction();
-        this.style.height = "36px";
+        this.style.height = "54px";
         updateFooterHeight();
       }
     });
 
     btnPrimary.addEventListener("click", function () {
       handlePrimaryAction();
-      input.style.height = "36px";
+      input.style.height = "54px";
       updateFooterHeight();
     });
 
@@ -3689,16 +2495,16 @@
 
     byId("cp-src-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "source";
-      byId("cp-lang-mask").hidden = false; byId("cp-lang-mask").removeAttribute("hidden"); byId("cp-lang-mask").classList.add("is-open");
+      byId("cp-lang-mask").hidden = false;
     });
 
     byId("cp-tgt-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "target";
-      byId("cp-lang-mask").hidden = false; byId("cp-lang-mask").removeAttribute("hidden"); byId("cp-lang-mask").classList.add("is-open");
+      byId("cp-lang-mask").hidden = false;
     });
 
     byId("cp-lang-close").addEventListener("click", function () {
-      byId("cp-lang-mask").hidden = true; byId("cp-lang-mask").setAttribute("hidden", ""); byId("cp-lang-mask").classList.remove("is-open");
+      byId("cp-lang-mask").hidden = true;
     });
 
     byId("cp-lang-grid").addEventListener("click", function (e) {
@@ -3712,7 +2518,7 @@
 
       syncTranslateBar();
       saveJSON(KEY_CFG, state.cfg);
-      byId("cp-lang-mask").hidden = true; byId("cp-lang-mask").setAttribute("hidden", ""); byId("cp-lang-mask").classList.remove("is-open");
+      byId("cp-lang-mask").hidden = true;
       clearWingmanPanel();
     });
 
@@ -3956,28 +2762,21 @@
   }
 
   function openSettings() {
-    var mask = byId("cp-settings-mask");
-    if (!mask) return;
-    mask.hidden = false;
-    mask.removeAttribute("hidden");
-    mask.classList.add("is-open");
-    if (!state.settingsOpen) {
-      state.settingsOpen = true;
-      try { history.pushState({ cpSettings: true }, "", location.href); } catch (_) {}
-    }
+    byId("cp-settings-mask").hidden = false;
+    state.settingsOpen = true;
+    history.pushState({ cpSettings: true }, "", location.href);
   }
 
   function closeSettings(fromPopState) {
-    var mask = byId("cp-settings-mask");
-    var wasOpen = !!state.settingsOpen;
+    if (!state.settingsOpen) return;
+
     state.settingsOpen = false;
-    if (mask) {
-      mask.hidden = true;
-      mask.setAttribute("hidden", "");
-      mask.classList.remove("is-open", "show", "active");
-    }
-    if (wasOpen && !fromPopState) {
-      try { history.back(); } catch (_) {}
+    byId("cp-settings-mask").hidden = true;
+
+    if (!fromPopState) {
+      try {
+        history.back();
+      } catch (_) {}
     }
   }
 
@@ -4081,7 +2880,7 @@
     setValue("cp-relationship-stage", state.cfg.relationshipStage || "刚认识");
     setValue("cp-communication-style", state.cfg.communicationStyle || "自然直接，偶尔幽默");
 
-    var op = state.bg.opacity !== undefined ? state.bg.opacity : 0.12;
+    var op = state.bg.opacity !== undefined ? state.bg.opacity : 0.85;
     setValue("cp-bg-opacity", op);
 
     var bgOpVal = byId("cp-bg-op-val");
@@ -4132,7 +2931,7 @@
     state.cfg.ai.model = value("cp-ai-model", state.cfg.ai.model || "gpt-4o-mini").trim() || "gpt-4o-mini";
     state.cfg.ai.temperature = 0.2;
 
-    state.bg.opacity = parseFloat(value("cp-bg-opacity", state.bg.opacity !== undefined ? state.bg.opacity : 0.12));
+    state.bg.opacity = parseFloat(value("cp-bg-opacity", state.bg.opacity !== undefined ? state.bg.opacity : 0.85));
 
     saveJSON(KEY_CFG, state.cfg);
     saveJSON(KEY_BG, state.bg);
@@ -5918,38 +4717,74 @@
   }
 
   function uploadToNodeBB(file, onProgress) {
-    return new Promise(function (resolve, reject) {
-      var fd = new FormData();
-      var filename = file && file.name ? file.name : "wukong_" + Date.now();
-      fd.append("files[]", file, filename);
+    function postOnce(url, fieldName) {
+      return new Promise(function (resolve, reject) {
+        var fd = new FormData();
+        fd.append(fieldName || "files[]", file, file.name || "cp_" + Date.now());
 
-      var xhr = new XMLHttpRequest();
-      xhr.open("POST", (window.config && config.relative_path ? config.relative_path : "") + cpApiBase() + "/upload");
-      xhr.withCredentials = true;
-      xhr.setRequestHeader("Accept", "application/json");
-      if (window.config) xhr.setRequestHeader("x-csrf-token", config.csrf_token || config.csrfToken || "");
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", url);
+        xhr.withCredentials = true;
 
-      xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-      };
+        if (window.config) xhr.setRequestHeader("x-csrf-token", config.csrf_token || config.csrfToken || "");
 
-      xhr.onload = function () {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            var json = JSON.parse(xhr.responseText || "null");
-            var url = cpPickUploadUrl(json);
-            if (!url) throw new Error("upload url empty");
-            resolve(url);
-          } catch (err) {
-            reject(err);
+        xhr.upload.onprogress = function (e) {
+          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+        };
+
+        xhr.onload = function () {
+          var body = xhr.responseText || "";
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              var json = body ? JSON.parse(body) : {};
+              var urls = cpCollectUploadUrls(json, []);
+              var url = urls[0] || "";
+              if (!url) throw new Error("upload url empty: " + body.slice(0, 180));
+              resolve(cpNormalizeUploadUrl(url));
+            } catch (err) {
+              reject(err);
+            }
+          } else {
+            var message = "upload failed: HTTP " + xhr.status;
+            try {
+              var j = JSON.parse(body);
+              if (j && (j.error || j.message)) message += " " + (j.error || j.message);
+              if (j && j.install) message += " (" + j.install + ")";
+            } catch (_) {
+              if (body) message += " " + body.slice(0, 160);
+            }
+            reject(new Error(message));
           }
-        } else {
-          reject(new Error("upload failed: " + xhr.status + " " + (xhr.responseText || "")));
-        }
-      };
+        };
 
-      xhr.onerror = function () { reject(new Error("network error")); };
-      xhr.send(fd);
+        xhr.onerror = function () {
+          reject(new Error("network error"));
+        };
+
+        xhr.send(fd);
+      });
+    }
+
+    var rel = window.config && config.relative_path ? config.relative_path : "";
+    var endpoints = cpIndependentMode()
+      ? [
+          { url: cpApiBase() + "/upload", field: "files[]" },
+          { url: rel + "/api/post/upload", field: "files[]" }
+        ]
+      : [
+          { url: rel + "/api/post/upload", field: "files[]" },
+          { url: cpApiBase() + "/upload", field: "files[]" }
+        ];
+
+    var lastErr = null;
+    return endpoints.reduce(function (p, ep) {
+      return p.catch(function (err) {
+        if (err) lastErr = err;
+        return postOnce(ep.url, ep.field);
+      });
+    }, Promise.reject()).catch(function (err) {
+      lastErr = err || lastErr;
+      throw lastErr || new Error("upload failed");
     });
   }
 
@@ -6314,7 +5149,7 @@
     }
 
     if (bgMask) {
-      bgMask.style.setProperty("--bg-op", state.bg && state.bg.opacity !== undefined ? state.bg.opacity : 0.12);
+      bgMask.style.setProperty("--bg-op", state.bg && state.bg.opacity !== undefined ? state.bg.opacity : 0.85);
     }
   }
 
@@ -6423,8 +5258,8 @@
 
       toggleUIForRecording(true);
 
-      var icon = byId("cp-rec-pause").querySelector("i");
-      icon.className = "fa fa-pause-circle";
+      var icon = byId("cp-rec-pause");
+      if (icon) icon.innerHTML = '<span class="cp-rec-pause-icon">Ⅱ</span>';
 
       state.rec.mediaRecorder.start(250);
 
@@ -6458,16 +5293,16 @@
       return;
     }
 
-    var icon = byId("cp-rec-pause").querySelector("i");
+    var btn = byId("cp-rec-pause");
 
     if (mr.state === "recording") {
       mr.pause();
       state.rec.paused = true;
-      icon.className = "fa fa-play-circle";
+      if (btn) btn.innerHTML = '<span class="cp-rec-pause-icon">▶</span>';
     } else if (mr.state === "paused") {
       mr.resume();
       state.rec.paused = false;
-      icon.className = "fa fa-pause-circle";
+      if (btn) btn.innerHTML = '<span class="cp-rec-pause-icon">Ⅱ</span>';
     }
   }
 
