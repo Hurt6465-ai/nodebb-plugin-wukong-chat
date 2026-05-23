@@ -1,5 +1,5 @@
-<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=3">
-<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.css?v=3">
+<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=4">
+<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.css?v=4">
 
 <div id="nodebb-wukong-conversations-root" class="wkconv-root" data-wkconv-root="1">
   <div class="wkconv-loading">正在加载消息...</div>
@@ -18,13 +18,14 @@
   window.NBBWukongConversations = window.NBBWukongConversations || {};
   window.NBBWukongConversations.config = Object.assign({}, window.NBBWukongConversations.config || {}, {
     apiBase: "/api/wukong",
+    bridgeBase: "/bridge",
     chatBase: "/wukong",
-    wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1",
+    topicBase: "/topic",
     i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
-    syncIntervalConnected: 45000,
-    syncIntervalFallback: 30000,
-    maxConversations: 500
+    syncInterval: 8000,
+    maxConversations: 500,
+    openTopicPage: true
   });
 })();
 </script>
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=3"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=4"></script>
