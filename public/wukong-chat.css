@@ -3291,87 +3291,227 @@ body.cp-modal-open #cp-chat-root .cp-main {
 
 
 /* =========================================================
-   Wukong Chat v38 TangSengDaoDao-inspired message grouping
-   - Enable bubble tails again.
-   - Group continuous messages as first/middle/last/single.
-   - Does not change input box layout.
+   Wukong Chat v39 stability polish
+   - Remove ugly v38 tail shape completely.
+   - Keep input/translate as frosted glass, not transparent.
+   - Smaller media thumbnails.
+   - Higher upload progress.
+   - Stronger self-message direction and circular avatars.
    ========================================================= */
 
-/* Allow messages to overlap a little around the tail without clipping. */
-#cp-chat-root .cp-row,
-#cp-chat-root .cp-bubble-wrap {
-  overflow: visible !important;
-}
-
-#cp-chat-root .cp-bubble {
-  position: relative !important;
-}
-
-/* Override earlier "No bubble tails" rule. */
-#cp-chat-root .cp-row.has-tail .cp-bubble::after {
-  content: "" !important;
-  display: block !important;
-  position: absolute !important;
-  bottom: 0px !important;
-  width: 12px !important;
-  height: 18px !important;
-  pointer-events: none !important;
-  z-index: -1 !important;
-}
-
-/* Mine tail */
-#cp-chat-root .cp-row.mine.has-tail .cp-bubble::after {
-  right: -6px !important;
-  background: var(--cp-mine) !important;
-  border-bottom-left-radius: 14px !important;
-  clip-path: polygon(0 0, 100% 100%, 0 100%) !important;
-}
-
-/* Peer tail */
-#cp-chat-root .cp-row.other.has-tail .cp-bubble::after {
-  left: -6px !important;
-  background: var(--cp-other) !important;
-  border-bottom-right-radius: 14px !important;
-  clip-path: polygon(100% 0, 100% 100%, 0 100%) !important;
-}
-
-/* Continuous message grouping, borrowed from TangSengDaoDao's first/middle/last/single idea. */
-#cp-chat-root .cp-row.mine.single .cp-bubble,
-#cp-chat-root .cp-row.mine.last .cp-bubble {
-  border-radius: 18px 18px 4px 18px !important;
-}
-
-#cp-chat-root .cp-row.mine.first .cp-bubble {
-  border-radius: 18px 18px 8px 18px !important;
-}
-
-#cp-chat-root .cp-row.mine.middle .cp-bubble {
-  border-radius: 18px 8px 8px 18px !important;
-}
-
-#cp-chat-root .cp-row.other.single .cp-bubble,
-#cp-chat-root .cp-row.other.last .cp-bubble {
-  border-radius: 18px 18px 18px 4px !important;
-}
-
-#cp-chat-root .cp-row.other.first .cp-bubble {
-  border-radius: 18px 18px 18px 8px !important;
-}
-
-#cp-chat-root .cp-row.other.middle .cp-bubble {
-  border-radius: 8px 18px 18px 8px !important;
-}
-
-/* Do not add tails to media or recalled bubbles. */
-#cp-chat-root .cp-bubble.media-shell::after,
-#cp-chat-root .cp-bubble.recalled::after,
-#cp-chat-root .cp-row.has-tail .cp-bubble.media-shell::after,
-#cp-chat-root .cp-row.has-tail .cp-bubble.recalled::after {
+/* No bubble tails. The v38 pseudo tail was visually wrong, so v39 disables all tails. */
+#cp-chat-root .cp-row.has-tail .cp-bubble::after,
+#cp-chat-root .cp-bubble::after,
+#cp-chat-root .cp-bubble::before {
   display: none !important;
   content: none !important;
 }
 
-/* Keep avatar circular and stable on low-end Android WebViews. */
+/* Reset grouped radii to clean symmetric mobile bubbles. */
+#cp-chat-root .cp-row.mine .cp-bubble,
+#cp-chat-root .cp-row.other .cp-bubble,
+#cp-chat-root .cp-row.single .cp-bubble,
+#cp-chat-root .cp-row.first .cp-bubble,
+#cp-chat-root .cp-row.middle .cp-bubble,
+#cp-chat-root .cp-row.last .cp-bubble {
+  border-radius: 18px !important;
+}
+
+/* Messages must stay on the correct side. CSS protection in case old rows cache stale classes. */
+#cp-chat-root .cp-row.mine {
+  justify-content: flex-end !important;
+}
+
+#cp-chat-root .cp-row.mine .cp-bubble-wrap {
+  margin-left: auto !important;
+  margin-right: 0 !important;
+}
+
+#cp-chat-root .cp-row.other {
+  justify-content: flex-start !important;
+}
+
+#cp-chat-root .cp-row.other .cp-bubble-wrap {
+  margin-right: auto !important;
+  margin-left: 0 !important;
+}
+
+/* Frosted glass footer. No solid panel, no fully transparent controls. */
+#cp-chat-root .cp-footer {
+  background: transparent !important;
+  background-image: none !important;
+  pointer-events: none !important;
+}
+
+#cp-chat-root .cp-footer > * {
+  pointer-events: auto !important;
+}
+
+#cp-chat-root .cp-translate-bar {
+  background: rgba(255, 255, 255, .82) !important;
+  border: 1px solid rgba(255, 255, 255, .72) !important;
+  box-shadow: 0 6px 22px rgba(15, 23, 42, .13) !important;
+  backdrop-filter: blur(18px) saturate(1.35) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(1.35) !important;
+}
+
+#cp-chat-root .cp-toolbar {
+  background: rgba(255, 255, 255, .84) !important;
+  border: 1px solid rgba(255, 255, 255, .74) !important;
+  box-shadow: 0 8px 26px rgba(15, 23, 42, .14) !important;
+  backdrop-filter: blur(20px) saturate(1.35) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(1.35) !important;
+}
+
+#cp-chat-root .cp-main {
+  bottom: calc(var(--cp-footer-h) + env(safe-area-inset-bottom) - 8px) !important;
+  padding-bottom: calc(var(--cp-footer-h) + 12px) !important;
+}
+
+/* Upload progress: higher center, not sitting on input box. */
+#cp-chat-root .cp-progress-wrap,
+#cp-chat-root #cp-upload-progress-wrap {
+  position: fixed !important;
+  left: 50% !important;
+  top: 16% !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(54vw, 220px) !important;
+  height: 8px !important;
+  border-radius: 999px !important;
+  overflow: hidden !important;
+  z-index: 2147483950 !important;
+  background: rgba(15, 23, 42, .18) !important;
+  box-shadow: 0 10px 28px rgba(0,0,0,.20) !important;
+  pointer-events: none !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+#cp-chat-root .cp-progress-bar,
+#cp-chat-root #cp-upload-progress-bar {
+  height: 100% !important;
+  min-width: 4px !important;
+  border-radius: inherit !important;
+  background: linear-gradient(90deg, #60a5fa, #2563eb) !important;
+}
+
+/* Smaller image/video thumbnails. */
+#cp-chat-root .cp-media-thumb img,
+#cp-chat-root .cp-video-wrap {
+  width: min(56vw, 230px) !important;
+  max-height: 34vh !important;
+  border-radius: 13px !important;
+}
+
+#cp-chat-root .cp-bubble.media-shell {
+  border-radius: 13px !important;
+  overflow: hidden !important;
+}
+
+/* Prevent media bubbles from showing outer border/frame. */
+#cp-chat-root .cp-bubble.media-shell,
+#cp-chat-root .cp-bubble.media-shell .cp-media-thumb,
+#cp-chat-root .cp-bubble.media-shell .cp-video-wrap,
+#cp-chat-root .cp-bubble.media-shell img,
+#cp-chat-root .cp-bubble.media-shell video {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Settings modal: one clean backdrop only. */
+#cp-chat-root .cp-modal-mask {
+  background: rgba(15, 23, 42, .42) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#cp-chat-root .cp-modal {
+  background: rgba(255,255,255,.96) !important;
+  box-shadow: 0 20px 48px rgba(15,23,42,.24) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body.cp-modal-open #cp-chat-root .cp-footer {
+  filter: none !important;
+  opacity: .18 !important;
+  pointer-events: none !important;
+}
+
+body.cp-modal-open #cp-chat-root .cp-main {
+  filter: none !important;
+}
+
+/* Translation send button dot style + visible icon. */
+#cp-chat-root .cp-toggle-ai-send {
+  position: relative !important;
+  border: none !important;
+  background: transparent !important;
+  color: #9ca3af !important;
+  font-size: 14px !important;
+  cursor: pointer !important;
+  padding: 4px 4px 4px 14px !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-left: 4px !important;
+  border-left: 1px solid #e5e7eb !important;
+  min-width: 38px !important;
+  width: 38px !important;
+  height: 30px !important;
+  overflow: visible !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 4px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: 5px !important;
+  height: 5px !important;
+  border-radius: 50% !important;
+  background: #9ca3af !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send.active {
+  color: var(--cp-primary) !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send.active::before {
+  background: #22c55e !important;
+  box-shadow: 0 0 4px #22c55e !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send i.fa-language {
+  display: inline-block !important;
+  font-size: 14px !important;
+  line-height: 1 !important;
+  color: rgb(177, 151, 252) !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send .cp-trans-fallback {
+  display: inline-block !important;
+  margin-left: 1px !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  color: rgb(177, 151, 252) !important;
+  font-weight: 700 !important;
+}
+
+/* Back-to-bottom: short solid arrow. */
+#cp-chat-root .cp-fab-v {
+  font-size: 17px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Avatar must remain circular, never oval. */
 #cp-chat-root .cp-avatar-wrap,
 #cp-chat-root .cp-peer-avatar {
   aspect-ratio: 1 / 1 !important;
@@ -3386,18 +3526,11 @@ body.cp-modal-open #cp-chat-root .cp-main {
 #cp-chat-root .cp-peer-avatar img {
   width: 100% !important;
   height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
   border-radius: 50% !important;
   object-fit: cover !important;
-}
-
-/* Upload progress higher, not covering the input area. */
-#cp-chat-root .cp-progress-wrap,
-#cp-chat-root #cp-upload-progress-wrap {
-  top: 24% !important;
-}
-
-/* v38 performance: browser can isolate lazy cells a bit more safely. */
-#cp-chat-root .cp-lazy-media[data-observed="1"],
-#cp-chat-root .cp-lazy-audio[data-observed="1"] {
-  contain: content;
+  aspect-ratio: 1 / 1 !important;
 }
