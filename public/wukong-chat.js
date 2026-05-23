@@ -23,6 +23,15 @@
     return (window.CPChatHarmony && window.CPChatHarmony.config) || {};
   }
 
+  function getSelfUid() {
+    return String(
+      state.myUid ||
+      (window.app && window.app.user && window.app.user.uid) ||
+      (window.ajaxify && ajaxify.data && ajaxify.data.loggedInUser && ajaxify.data.loggedInUser.uid) ||
+      ""
+    ).trim();
+  }
+
   function cpSameUid(a, b) {
     a = String(a == null ? "" : a).trim();
     b = String(b == null ? "" : b).trim();
@@ -115,7 +124,7 @@
 
     for (var i = 0; i < urls.length; i++) {
       try {
-        var res = await fetch(urls[i] + "?v=38", {
+        var res = await fetch(urls[i] + "?v=39", {
           credentials: "same-origin",
           headers: { Accept: "application/json" }
         });
@@ -137,7 +146,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v38";
+  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v39";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -199,29 +208,10 @@
 
   var IMAGE_CONFIG = {
     maxSide: 1440,
-    maxSizeMB: 0.25,
-    quality: 0.60,
+    maxSizeMB: 0.45,
+    quality: 0.6,
     minCompressBytes: 120 * 1024,
-    useWebp: true,
-    qualities: [0.60, 0.55, 0.50, 0.45]
-  };
-
-  var IMAGE_COMPRESS_SOCIAL = {
-    maxSide: 1080,
-    maxSizeMB: 0.09,
-    quality: 0.58,
-    minCompressBytes: 70 * 1024,
-    useWebp: true,
-    qualities: [0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22]
-  };
-
-  var AVATAR_COMPRESS_CONFIG = {
-    maxSide: 512,
-    maxSizeMB: 0.06,
-    quality: 0.56,
-    minCompressBytes: 45 * 1024,
-    useWebp: true,
-    qualities: [0.56, 0.48, 0.40, 0.34, 0.28, 0.22]
+    useWebp: true
   };
 
   var VIDEO_CONFIG = {
@@ -534,63 +524,6 @@
     delete state.pendingSentTexts[key];
 
     return true;
-  }
-
-
-  function cpLoadImageFromFile(file) {
-    return new Promise(function (resolve, reject) {
-      var url = URL.createObjectURL(file);
-      var img = new Image();
-
-      img.onload = function () {
-        URL.revokeObjectURL(url);
-        resolve(img);
-      };
-
-      img.onerror = function (e) {
-        URL.revokeObjectURL(url);
-        reject(e);
-      };
-
-      img.src = url;
-    });
-  }
-
-  function cpCanvasToBlob(canvas, type, quality) {
-    return new Promise(function (resolve) {
-      canvas.toBlob(function (blob) {
-        resolve(blob);
-      }, type, quality);
-    });
-  }
-
-  function ensureWkMsgIdSet() {
-    if (state.wkMsgIds) return state.wkMsgIds;
-
-    state.wkMsgIds = new Set();
-    (state.wkMessages || []).forEach(function (m) {
-      if (m && m.id) state.wkMsgIds.add(String(m.id));
-    });
-
-    return state.wkMsgIds;
-  }
-
-  function cpFastRenderHash(renderArr) {
-    var first = renderArr && renderArr[0];
-    var last = renderArr && renderArr[renderArr.length - 1];
-
-    return [
-      state.renderVersion || 0,
-      renderArr ? renderArr.length : 0,
-      first && first.id,
-      first && first._ver,
-      first && first.recalled,
-      first && first.translationOpen,
-      last && last.id,
-      last && last._ver,
-      last && last.recalled,
-      last && last.translationOpen
-    ].join("|");
   }
 
   function msgTouch(m) {
@@ -1169,8 +1102,10 @@
     if (!slug) return false;
 
     state.peerUidCache = state.peerUidCache || String(slug);
-    state.peerUsernameCache = state.peerUsernameCache || String(slug);
-    state.peerUserslugCache = state.peerUserslugCache || String(slug);
+    if (!/^\d+$/.test(String(slug))) {
+      state.peerUsernameCache = state.peerUsernameCache || String(slug);
+      state.peerUserslugCache = state.peerUserslugCache || String(slug);
+    }
     updateHeaderPeerInfo(null);
 
     state.peerHydrating = true;
@@ -1588,7 +1523,7 @@
           }
 
           var fromUid = String(m.fromUID || m.from_uid || "");
-          if (fromUid === state.myUid) return;
+          if (cpIsMineUid(fromUid)) return;
 
           var currentPeerUid = getPeerUid();
           if (!currentPeerUid || fromUid !== currentPeerUid) return;
@@ -1751,7 +1686,7 @@
       var m = msgs[i];
       var payloadObj = extractWkPayload(m) || {};
       var fromUid = String(m.from_uid || m.fromUID);
-      var isMine = fromUid === state.myUid;
+      var isMine = cpIsMineUid(fromUid);
       var serverT = payloadObj.text || payloadObj.content || "";
 
       // 历史/离线消息里的通话信令不显示
@@ -1767,9 +1702,11 @@
 
       var msgId = String(m.message_id || m.messageID || m.client_msg_no || m.clientMsgNo || "wk_hist_" + Math.random());
 
-      var ids = ensureWkMsgIdSet();
-      if (ids.has(String(msgId))) continue;
-      ids.add(String(msgId));
+      var exists = state.wkMessages.some(function (x) {
+        return x.id === msgId;
+      });
+
+      if (exists) continue;
 
       var newMsg = createMessageObj(t, isMine, fromUid, m, payloadObj);
       newMsg.id = msgId;
@@ -2045,7 +1982,6 @@
     state.loadedPeerUid = "";
     state.wkMessages = [];
     state.messages = [];
-    state.wkMsgIds = new Set();
     state.myUid = String(window.app && window.app.user ? window.app.user.uid : "");
     state.unreadCount = 0;
     state.renderLimit = 50;
@@ -2319,7 +2255,7 @@
         </main>
 
         <button id="cp-fab-bottom" class="cp-fab-bottom" title="回到底部">
-          <span class="cp-fab-v">↓</span>
+          <span class="cp-fab-v">▼</span>
           <span id="cp-fab-badge" class="cp-fab-badge" hidden>0</span>
         </button>
 
@@ -3271,76 +3207,54 @@
     var msg = getMsgById(id);
     if (!msg) return;
 
-    var seq = msg.seq || (msg.wkMsg ? msg.wkMsg.messageSeq || msg.wkMsg.message_seq : 0);
+    var seq = msg.wkMsg ? msg.wkMsg.messageSeq || msg.wkMsg.message_seq : 0;
     var clientMsgNo = msg.wkMsg ? msg.wkMsg.clientMsgNo || msg.wkMsg.client_msg_no : "";
     var msgId = msg.wkMsg ? msg.wkMsg.messageID || msg.wkMsg.message_id : "";
-    var apiBase = cpPluginConfig().apiBase || "/api/wukong";
-    var revokedOnServer = false;
 
-    async function tryRevokeRoute(url) {
-      var res = await fetch(url, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          channel_id: getPeerUid(),
-          channel_type: 1,
-          message_id: msgId || msg.id,
-          message_seq: seq,
-          client_msg_no: clientMsgNo || msg.id
-        })
-      });
-      if (!res.ok) throw new Error("revoke http " + res.status);
-      return res.json().catch(function () { return { ok: true }; });
-    }
-
-    try {
-      await tryRevokeRoute(apiBase + "/revoke");
-      revokedOnServer = true;
-    } catch (e1) {
-      warn("revoke-api", e1);
+    if (msg.wkMsg) {
       try {
-        await tryRevokeRoute("/bridge/revoke");
-        revokedOnServer = true;
-      } catch (e2) {
-        warn("revoke-bridge", e2);
-      }
-    }
+        var res = await fetch("/bridge/revoke", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            channel_id: getPeerUid(),
+            message_seq: seq,
+            client_msg_no: clientMsgNo
+          })
+        });
 
-    if (!revokedOnServer && msg.wkMsg && window.wk) {
-      try {
-        var chat = window.wk.WKSDK.shared().chatManager;
-        if (chat && typeof chat.revokeMessage === "function") {
-          await chat.revokeMessage(msg.wkMsg);
-          revokedOnServer = true;
-        } else if (chat && typeof chat.send === "function") {
-          var channel = new window.wk.Channel(getPeerUid(), 1);
-          var revokeContent = new window.wk.MessageText("撤回消息请求");
+        if (!res.ok) throw new Error("Bridge route failed");
+      } catch (e) {
+        warn("revoke-bridge", e);
 
-          revokeContent.encode = function () {
-            return JSON.stringify({
-              type: 1006,
-              message_id: msgId || msg.id,
-              message_seq: seq,
-              client_msg_no: clientMsgNo || msg.id,
-              content: "此消息已被撤回"
-            });
-          };
+        if (window.wk && window.wk.WKSDK.shared().chatManager.send) {
+          try {
+            var channel = new window.wk.Channel(getPeerUid(), 1);
+            var revokeContent = new window.wk.MessageText("撤回消息请求");
 
-          chat.send(revokeContent, channel);
-          revokedOnServer = true;
+            revokeContent.encode = function () {
+              return JSON.stringify({
+                type: 1006,
+                message_id: msgId,
+                client_msg_no: clientMsgNo,
+                content: "此消息已被撤回"
+              });
+            };
+
+            window.wk.WKSDK.shared().chatManager.send(revokeContent, channel);
+          } catch (ex) {
+            warn("revoke-fallback", ex);
+          }
         }
-      } catch (ex) {
-        warn("revoke-fallback", ex);
       }
     }
 
     msg.recalled = true;
-    msg.text = cpT("recalled", "此消息已被撤回");
+    msg.text = "此消息已被撤回";
     msgTouch(msg);
 
     incrementalRender("keep");
-    toast(revokedOnServer ? cpT("recall", "撤回") + "成功" : "已在本地标记撤回");
+    toast("撤回成功");
   }
 
   async function deleteMessage(id) {
@@ -3362,7 +3276,6 @@
     state.wkMessages = state.wkMessages.filter(function (m) {
       return String(m.id) !== String(id);
     });
-    if (state.wkMsgIds) state.wkMsgIds.delete(String(id));
 
     state.renderVersion++;
     state.mergedDirty = true;
@@ -3725,7 +3638,20 @@
     var allMsgs = getMergedMessages();
     var renderArr = allMsgs.slice(-state.renderLimit);
 
-    var newHash = cpFastRenderHash(renderArr);
+    var newHash = state.renderVersion + "|" + renderArr.length + "|";
+    var h;
+
+    for (h = 0; h < renderArr.length; h++) {
+      newHash += [
+        renderArr[h].id,
+        renderArr[h]._ver || 0,
+        renderArr[h].recalled ? "R" : "",
+        renderArr[h].translationOpen ? "T" : "",
+        renderArr[h].translation || "",
+        renderArr[h].text || "",
+        renderArr[h].serverText || ""
+      ].join("|");
+    }
 
     if (state.lastRenderHash === newHash && mode === "keep") return;
     state.lastRenderHash = newHash;
@@ -3775,29 +3701,16 @@
       }
 
       var isLastInGroup = true;
-      var isFirstInGroup = true;
-      var mUid = m.mine ? state.myUid : m.uid;
-
-      if (i > 0) {
-        var prevM = renderArr[i - 1];
-        var prevUid = prevM.mine ? state.myUid : prevM.uid;
-
-        if (prevUid === mUid && m.ts - prevM.ts < 180000) {
-          isFirstInGroup = false;
-        }
-      }
 
       if (i < renderArr.length - 1) {
         var nextM = renderArr[i + 1];
+        var mUid = m.mine ? state.myUid : m.uid;
         var nextUid = nextM.mine ? state.myUid : nextM.uid;
 
         if (mUid === nextUid && nextM.ts - m.ts < 180000) {
           isLastInGroup = false;
         }
       }
-
-      var isSingleInGroup = isFirstInGroup && isLastInGroup;
-      var groupClass = isSingleInGroup ? " single" : (isFirstInGroup ? " first" : (isLastInGroup ? " last" : " middle"));
 
       var isMediaType = m.type === "image" || m.type === "video" || m.type === "gallery";
       var showTail = isLastInGroup && !m.recalled && !isMediaType;
@@ -3808,7 +3721,7 @@
         (m.type === "voice" ? " voice-shell" : "") +
         (isMediaType ? " media-shell" : "");
 
-      var rowClass = "cp-row " + (m.mine ? "mine" : "other") + groupClass;
+      var rowClass = "cp-row " + (m.mine ? "mine" : "other");
 
       if (showTail) rowClass += " has-tail";
       if (isLastInGroup) rowClass += " is-last";
@@ -4037,14 +3950,10 @@
   function observeLazyElements() {
     if (state.lazyObserver) {
       document.querySelectorAll(".cp-lazy-media").forEach(function (el) {
-        if (el.dataset.observed === "1") return;
-        el.dataset.observed = "1";
         state.lazyObserver.observe(el);
       });
 
       document.querySelectorAll(".cp-lazy-audio").forEach(function (el) {
-        if (el.dataset.observed === "1") return;
-        el.dataset.observed = "1";
         state.lazyObserver.observe(el);
       });
     } else {
@@ -5181,8 +5090,8 @@
   }
 
   async function compressWithCanvas(file, targetType) {
-    // v38: use ObjectURL instead of DataURL to avoid base64 memory bloat on phones.
-    var img = await cpLoadImageFromFile(file);
+    var dataUrl = await readFile(file);
+    var img = await loadImage(dataUrl);
 
     var w = img.naturalWidth || img.width;
     var h = img.naturalHeight || img.height;
@@ -5195,23 +5104,26 @@
     canvas.width = w;
     canvas.height = h;
 
-    var ctx = canvas.getContext("2d", { alpha: targetType === "image/webp" });
+    var ctx = canvas.getContext("2d");
     if (!ctx || !canvas.toBlob) return null;
 
     ctx.drawImage(img, 0, 0, w, h);
 
     var targetBytes = IMAGE_CONFIG.maxSizeMB * 1024 * 1024;
-    var qualities = Array.isArray(IMAGE_CONFIG.qualities) && IMAGE_CONFIG.qualities.length
-      ? IMAGE_CONFIG.qualities
-      : [IMAGE_CONFIG.quality || 0.6];
-
+    var qualities = [IMAGE_CONFIG.quality, 0.52, 0.45, 0.38];
     var best = null;
 
     for (var i = 0; i < qualities.length; i++) {
-      var blob = await cpCanvasToBlob(canvas, targetType, Number(qualities[i]));
+      var q = qualities[i];
+
+      var blob = await new Promise(function (resolve) {
+        canvas.toBlob(resolve, targetType, q);
+      });
+
       if (!blob) continue;
 
       best = blob;
+
       if (blob.size <= targetBytes) break;
     }
 
