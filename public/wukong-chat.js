@@ -34,7 +34,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-cache-peer-fastboot";
+  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v29";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -295,6 +295,44 @@
 
   function byId(id) {
     return document.getElementById(id);
+  }
+
+  function cpSetModalVisible(mask, visible) {
+    if (!mask) return;
+    if (visible) {
+      mask.hidden = false;
+      mask.removeAttribute("hidden");
+      mask.classList.add("is-open");
+      document.body.classList.add("cp-modal-open");
+      var root = byId("cp-chat-root");
+      if (root) root.classList.add("cp-modal-open");
+    } else {
+      mask.classList.remove("is-open");
+      mask.hidden = true;
+      mask.setAttribute("hidden", "");
+      var anyOpen = document.querySelector("#cp-chat-root .cp-modal-mask.is-open,#cp-chat-root .cp-context-overlay.is-open,#cp-chat-root .cp-preview-mask.is-open");
+      if (!anyOpen) {
+        document.body.classList.remove("cp-modal-open");
+        var root2 = byId("cp-chat-root");
+        if (root2) root2.classList.remove("cp-modal-open");
+      }
+    }
+  }
+
+  function cpNormalizeActionIcons() {
+    var mediaBtn = byId("cp-media-btn");
+    var primaryIcon = byId("cp-primary-icon");
+    var cameraIcon = document.querySelector("#cp-pick-camera .cp-menu-ico");
+    var cameraLabel = document.querySelector("#cp-pick-camera .cp-menu-label");
+    var albumIcon = document.querySelector("#cp-pick-album .cp-menu-ico");
+    var albumLabel = document.querySelector("#cp-pick-album .cp-menu-label");
+
+    if (mediaBtn) mediaBtn.innerHTML = ICON.photo;
+    if (primaryIcon && !String(byId("cp-input") && byId("cp-input").value || "").trim()) primaryIcon.innerHTML = ICON.mic;
+    if (cameraIcon) cameraIcon.innerHTML = ICON.camera;
+    if (cameraLabel) cameraLabel.textContent = cpT("shoot", "拍摄");
+    if (albumIcon) albumIcon.innerHTML = ICON.album;
+    if (albumLabel) albumLabel.textContent = cpT("album", "相册图片/视频");
   }
 
   function esc(str) {
@@ -663,15 +701,28 @@
     var data = await idbGet("chats", peerUid);
     if (!data || !data.messages) return;
 
-    state.wkMessages = data.messages
+    var restored = data.messages
       .filter(function (m) {
         return !isCallSignalMessage(m);
       })
       .slice(-MAX_PERSIST_MESSAGES);
 
-    for (var i = 0; i < state.wkMessages.length; i++) {
-      if (!state.wkMessages[i]._ver) state.wkMessages[i]._ver = 1;
+    var seen = new Set(state.wkMessages.map(function (m) {
+      return String(m.id || m.seq || ((m.uid || "") + "|" + (m.serverText || m.text || "") + "|" + (m.ts || "")));
+    }));
+
+    for (var ri = 0; ri < restored.length; ri++) {
+      var rm = restored[ri];
+      var rk = String(rm.id || rm.seq || ((rm.uid || "") + "|" + (rm.serverText || rm.text || "") + "|" + (rm.ts || "")));
+      if (seen.has(rk)) continue;
+      if (!rm._ver) rm._ver = 1;
+      state.wkMessages.push(rm);
+      seen.add(rk);
     }
+
+    state.wkMessages.sort(function (a, b) {
+      return (a.ts || 0) - (b.ts || 0);
+    });
 
     if (data.maxSeq) state.localMaxSeq = data.maxSeq;
 
@@ -1382,14 +1433,18 @@
         });
 
         wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
-          if (status === 1 && state.mounted && state.initialLoadDone) {
+          var connected = status === 1 || status === "connected" || status === "CONNECTED";
+          if (connected) state.wkReady = true;
+          if (connected && state.mounted && state.initialLoadDone) {
             var pUid = getPeerUid();
             if (pUid && state.localMaxSeq > 0) fetchOfflineMessages(pUid);
           }
         });
 
         wk.WKSDK.shared().connectManager.connect();
-        state.wkReady = true;
+        setTimeout(function () {
+          if (window.wk && window.wk.WKSDK) state.wkReady = true;
+        }, 1500);
       };
 
       s.onerror = function (e) {
@@ -1808,6 +1863,7 @@
 
     injectStyle();
     injectRoot();
+    cpNormalizeActionIcons();
     // 先用路由用户名占位，避免标题长时间停留在“加载中...”
     updateHeaderPeerInfo(null);
     hydratePeerFromRoute().then(function () {
@@ -2274,6 +2330,7 @@
     document.body.insertAdjacentHTML("beforeend", html);
     try { document.body.classList.remove("cp-chat-harmony-booting"); } catch (_) {}
     applyStaticTranslations();
+    cpNormalizeActionIcons();
 
     byId("cp-media-btn").innerHTML = ICON.photo;
     byId("cp-primary-icon").innerHTML = ICON.mic;
@@ -2390,16 +2447,16 @@
 
     byId("cp-src-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "source";
-      byId("cp-lang-mask").hidden = false;
+      cpSetModalVisible(byId("cp-lang-mask"), true);
     });
 
     byId("cp-tgt-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "target";
-      byId("cp-lang-mask").hidden = false;
+      cpSetModalVisible(byId("cp-lang-mask"), true);
     });
 
     byId("cp-lang-close").addEventListener("click", function () {
-      byId("cp-lang-mask").hidden = true;
+      cpSetModalVisible(byId("cp-lang-mask"), false);
     });
 
     byId("cp-lang-grid").addEventListener("click", function (e) {
@@ -2413,7 +2470,7 @@
 
       syncTranslateBar();
       saveJSON(KEY_CFG, state.cfg);
-      byId("cp-lang-mask").hidden = true;
+      cpSetModalVisible(byId("cp-lang-mask"), false);
       clearWingmanPanel();
     });
 
@@ -2463,7 +2520,7 @@
     function closeOnMaskClick(e) {
       if (e.target === this) {
         if (this.id === "cp-settings-mask") closeSettings(false);
-        else this.hidden = true;
+        else cpSetModalVisible(this, false);
       }
     }
 
@@ -2657,16 +2714,19 @@
   }
 
   function openSettings() {
-    byId("cp-settings-mask").hidden = false;
+    var mask = byId("cp-settings-mask");
+    cpSetModalVisible(mask, true);
     state.settingsOpen = true;
-    history.pushState({ cpSettings: true }, "", location.href);
+    try {
+      history.pushState({ cpSettings: true }, "", location.href);
+    } catch (_) {}
   }
 
   function closeSettings(fromPopState) {
-    if (!state.settingsOpen) return;
+    if (!state.settingsOpen && !(byId("cp-settings-mask") && byId("cp-settings-mask").classList.contains("is-open"))) return;
 
     state.settingsOpen = false;
-    byId("cp-settings-mask").hidden = true;
+    cpSetModalVisible(byId("cp-settings-mask"), false);
 
     if (!fromPopState) {
       try {
@@ -4710,7 +4770,9 @@
     var apiBase = cpPluginConfig().apiBase || "/api/wukong";
     var endpoints = [
       { url: apiBase + "/upload", field: "file" },
-      { url: rel + "/api/post/upload", field: "files[]" }
+      { url: apiBase + "/upload", field: "files[]" },
+      { url: rel + "/api/post/upload", field: "files[]" },
+      { url: rel + "/api/post/upload", field: "file" }
     ];
 
     return endpoints.reduce(function (promise, ep) {
@@ -5234,16 +5296,20 @@
       return;
     }
 
-    var icon = byId("cp-rec-pause").querySelector("i");
+    var pauseBtn = byId("cp-rec-pause");
 
     if (mr.state === "recording") {
       mr.pause();
       state.rec.paused = true;
-      icon.className = "fa fa-play-circle";
+      if (pauseBtn) pauseBtn.innerHTML = ICON.play;
+      var title = document.querySelector(".cp-rec-title");
+      if (title) title.textContent = "已暂停";
     } else if (mr.state === "paused") {
       mr.resume();
       state.rec.paused = false;
-      icon.className = "fa fa-pause-circle";
+      if (pauseBtn) pauseBtn.innerHTML = ICON.pause;
+      var title2 = document.querySelector(".cp-rec-title");
+      if (title2) title2.textContent = "正在录音";
     }
   }
 
@@ -5424,7 +5490,7 @@
 
     if (!bars) return;
 
-    bars.innerHTML = waveHeights.slice(0, 5).map(function (h, i) {
+    bars.innerHTML = waveHeights.slice(0, 10).map(function (h, i) {
       return '<i style="height:' + h + "px;animation-delay:" + i * 0.05 + 's"></i>';
     }).join("");
   }
