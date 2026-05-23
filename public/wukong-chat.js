@@ -23,13 +23,31 @@
     return (window.CPChatHarmony && window.CPChatHarmony.config) || {};
   }
 
+  function readSelfUidFromRuntime() {
+    var candidates = [
+      state && state.myUid,
+      window.app && window.app.user && window.app.user.uid,
+      window.ajaxify && ajaxify.data && ajaxify.data.loggedInUser && ajaxify.data.loggedInUser.uid,
+      window.ajaxify && ajaxify.data && ajaxify.data.uid,
+      window.config && config.uid
+    ];
+
+    for (var i = 0; i < candidates.length; i++) {
+      var uid = String(candidates[i] == null ? "" : candidates[i]).trim();
+      if (/^\d+$/.test(uid)) return uid;
+    }
+
+    return "";
+  }
+
+  function ensureSelfUid() {
+    var uid = readSelfUidFromRuntime();
+    if (uid && state && state.myUid !== uid) state.myUid = uid;
+    return String((state && state.myUid) || uid || "").trim();
+  }
+
   function getSelfUid() {
-    return String(
-      state.myUid ||
-      (window.app && window.app.user && window.app.user.uid) ||
-      (window.ajaxify && ajaxify.data && ajaxify.data.loggedInUser && ajaxify.data.loggedInUser.uid) ||
-      ""
-    ).trim();
+    return ensureSelfUid();
   }
 
   function cpSameUid(a, b) {
@@ -48,6 +66,16 @@
 
   function cpIsMineUid(uid) {
     return cpSameUid(uid, getSelfUid());
+  }
+
+  function normalizeMineFlag(m) {
+    if (!m) return m;
+    var uid = m.uid || m.from_uid || m.fromUid || m.fromUID || "";
+    if (uid && cpIsMineUid(uid)) {
+      m.mine = true;
+      m.uid = getSelfUid();
+    }
+    return m;
   }
 
   function cpAutoPlayPreviewVideo(video, mask) {
@@ -124,7 +152,7 @@
 
     for (var i = 0; i < urls.length; i++) {
       try {
-        var res = await fetch(urls[i] + "?v=39", {
+        var res = await fetch(urls[i] + "?v=40", {
           credentials: "same-origin",
           headers: { Accept: "application/json" }
         });
@@ -146,7 +174,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v39";
+  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v40";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -441,7 +469,7 @@
 
     if (mediaBtn) mediaBtn.innerHTML = ICON.photo;
     var transBtn = byId("cp-send-translate-toggle");
-    if (transBtn) transBtn.innerHTML = '<i class="fa-solid fa-language" style="color: rgb(177, 151, 252);"></i><span class="cp-trans-fallback">译</span>';
+    if (transBtn) transBtn.innerHTML = '<i class="fa-solid fa-language" style="color: rgb(177, 151, 252);"></i><span class="cp-trans-fallback">文A</span>';
     if (primaryIcon && !String(byId("cp-input") && byId("cp-input").value || "").trim()) primaryIcon.innerHTML = ICON.mic;
     if (cameraIcon) cameraIcon.innerHTML = ICON.camera;
     if (cameraLabel) cameraLabel.textContent = cpT("shoot", "拍摄");
@@ -812,6 +840,7 @@
   }
 
   async function loadChatFromDB(peerUid) {
+    ensureSelfUid();
     var data = await idbGet("chats", peerUid);
     if (!data || !data.messages) return;
 
@@ -826,7 +855,7 @@
     }));
 
     for (var ri = 0; ri < restored.length; ri++) {
-      var rm = restored[ri];
+      var rm = normalizeMineFlag(restored[ri]);
       var rk = String(rm.id || rm.seq || ((rm.uid || "") + "|" + (rm.serverText || rm.text || "") + "|" + (rm.ts || "")));
       if (seen.has(rk)) continue;
       if (!rm._ver) rm._ver = 1;
@@ -899,9 +928,11 @@
   }
 
   function getMergedMessages() {
+    ensureSelfUid();
     if (!state.mergedDirty && state.mergedCache) return state.mergedCache;
 
     var allRawMsgs = state.messages.concat(state.wkMessages || []).filter(function (m) {
+      normalizeMineFlag(m);
       return !isCallSignalMessage(m);
     });
 
@@ -1009,9 +1040,10 @@
   function setPeerFromUser(u) {
     if (!u || typeof u !== "object") return false;
 
-    var myUidStr = String(window.app && app.user ? app.user.uid : state.myUid);
+    var myUidStr = getSelfUid();
     var uid = u.uid || u.userId || u.id;
     var username = u.username || u.displayname || u.name || u.title || u.fullname || u.userslug || u.slug || "";
+    if (/^\d+$/.test(String(username || ""))) username = "";
     var userslug = u.userslug || u.slug || (username ? encodeURIComponent(String(username).toLowerCase().replace(/ /g, "-")) : "");
     var picture = u.picture || u.uploadedpicture || u.uploadedPicture || u.pictureUrl || u.avatarUrl || u.avatar || "";
 
@@ -1029,7 +1061,7 @@
     var data = window.ajaxify && ajaxify.data ? ajaxify.data : null;
     if (!data) return null;
 
-    var myUidStr = String(window.app && app.user ? app.user.uid : state.myUid);
+    var myUidStr = getSelfUid();
     var routeSlug = getRoutePeerSlug();
     var candidates = [];
 
@@ -1184,7 +1216,7 @@
     var text = String(username || "?").charAt(0).toUpperCase();
     var bg = "#72a5f2";
 
-    if (uid === state.myUid && window.app && window.app.user) {
+    if (cpIsMineUid(uid) && window.app && window.app.user) {
       pic = app.user.picture;
       if (app.user.icontext) text = app.user.icontext;
       if (app.user.iconbgColor) bg = app.user.iconbgColor;
@@ -1195,6 +1227,14 @@
         u = ajaxify.data.users.find(function (x) {
           return String(x.uid) === String(uid);
         });
+      }
+
+      if (!u && uid && String(uid) === String(state.peerUidCache || "")) {
+        u = {
+          picture: state.peerPictureCache,
+          icontext: state.peerIconTextCache,
+          iconbgColor: state.peerIconBgCache
+        };
       }
 
       if (!u && state.peerUsernameCache && String(username || "") === String(state.peerUsernameCache)) {
@@ -1213,7 +1253,7 @@
     }
 
     if (pic) {
-      return '<img class="avatar" src="' + escAttr(pic) + '" style="width:100%;height:100%;border-radius:40%;object-fit:cover;" />';
+      return '<img class="avatar" src="' + escAttr(pic) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" />';
     }
 
     if (fallbackHtml && fallbackHtml.indexOf("<img") > -1) return fallbackHtml;
@@ -1221,7 +1261,7 @@
     return (
       '<div class="avatar" style="background:' +
       escAttr(bg) +
-      ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:40%;font-size:16px;">' +
+      ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;font-size:16px;">' +
       esc(text) +
       "</div>"
     );
@@ -1256,9 +1296,11 @@
 
     if (!name) {
       var routeSlug = getRoutePeerSlug();
-      if (routeSlug) {
+      if (routeSlug && !/^\d+$/.test(String(routeSlug))) {
         name = routeSlug;
         userslug = userslug || routeSlug;
+      } else if (routeSlug) {
+        name = state.peerUsernameCache || cpT("unknown_user", "用户");
       }
     }
 
@@ -1354,7 +1396,7 @@
       return !m.mine && m.username;
     });
 
-    var username = isMine ? (window.app && app.user ? app.user.username : "我") : peerMsg ? peerMsg.username : state.peerUsernameCache || "用户" + uid;
+    var username = isMine ? (window.app && app.user ? app.user.username : "我") : peerMsg ? peerMsg.username : state.peerUsernameCache || cpT("unknown_user", "用户");
     var userslug = isMine ? (window.app && app.user ? app.user.userslug || "" : "") : peerMsg ? peerMsg.userslug : "";
     var avatarHtml = getAvatarHtml(String(uid), username, peerMsg ? peerMsg.avatarHtml : null);
 
@@ -1918,6 +1960,7 @@
   }
 
   async function ensurePeerLoaded() {
+    ensureSelfUid();
     var pUid = getPeerUid();
 
     if (!pUid) {
@@ -1982,7 +2025,7 @@
     state.loadedPeerUid = "";
     state.wkMessages = [];
     state.messages = [];
-    state.myUid = String(window.app && window.app.user ? window.app.user.uid : "");
+    state.myUid = ensureSelfUid();
     state.unreadCount = 0;
     state.renderLimit = 50;
     state.lastRenderHash = "";
@@ -2255,7 +2298,7 @@
         </main>
 
         <button id="cp-fab-bottom" class="cp-fab-bottom" title="回到底部">
-          <span class="cp-fab-v">▼</span>
+          <span class="cp-fab-v">▾</span>
           <span id="cp-fab-badge" class="cp-fab-badge" hidden>0</span>
         </button>
 
@@ -2269,7 +2312,7 @@
               <button class="cp-lang-btn" id="cp-src-lang-btn">🇨🇳 中文</button>
               <button class="cp-swap-btn" id="cp-lang-swap">⇄</button>
               <button class="cp-lang-btn" id="cp-tgt-lang-btn">🇲🇲 မြန်မာစာ</button>
-              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><i class="fa-solid fa-language" style="color: rgb(177, 151, 252);"></i><span class="cp-trans-fallback">译</span></button>
+              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><i class="fa-solid fa-language" style="color: rgb(177, 151, 252);"></i><span class="cp-trans-fallback">文A</span></button>
             </div>
           </div>
 
