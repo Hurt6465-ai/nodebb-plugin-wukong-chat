@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v3 - mobile first */
+/* Wukong independent conversation list v4 - mobile, no SDK connect */
 (function () {
   "use strict";
 
@@ -11,20 +11,19 @@
   var state = {
     uid: "",
     token: "",
-    addr: "",
     rooms: [],
     users: {},
-    query: "",
+    topics: {},
     tab: "direct",
     loading: false,
     error: false,
-    sdkReady: false,
     pollTimer: 0,
     raf: 0,
     menuRoom: null,
     hiddenRooms: {},
     pinnedRooms: {},
     remarks: {},
+    roomSnapshots: {},
     touchX: 0,
     touchY: 0
   };
@@ -46,12 +45,13 @@
   function c() {
     return Object.assign({
       apiBase: "/api/wukong",
+      bridgeBase: "/bridge",
       chatBase: "/wukong",
-      wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1",
+      topicBase: "/topic",
       i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
-      syncIntervalConnected: 45000,
-      syncIntervalFallback: 30000,
-      maxConversations: 500
+      syncInterval: 8000,
+      maxConversations: 500,
+      openTopicPage: true
     }, (W.NBBWukongConversations && W.NBBWukongConversations.config) || {});
   }
 
@@ -80,7 +80,7 @@
   async function loadI18n() {
     var loc = locale();
     try {
-      var res = await fetch(cfg.i18nBase.replace(/\/+$/, "") + "/wukong-conversations." + loc + ".json?v=3", {
+      var res = await fetch(cfg.i18nBase.replace(/\/+$/, "") + "/wukong-conversations." + loc + ".json?v=4", {
         credentials: "same-origin",
         headers: { Accept: "application/json" }
       });
@@ -89,7 +89,7 @@
   }
 
   function storageKey() {
-    return "nbb_wukong_conversations_v3:" + (state.uid || "0");
+    return "nbb_wukong_conversations_v4:" + (state.uid || "0");
   }
 
   function loadLocal() {
@@ -98,15 +98,34 @@
       state.hiddenRooms = data.hiddenRooms || {};
       state.pinnedRooms = data.pinnedRooms || {};
       state.remarks = data.remarks || {};
+      state.roomSnapshots = data.roomSnapshots || {};
+      state.topics = data.topics || {};
+      var snapshots = state.roomSnapshots || {};
+      state.rooms = Object.keys(snapshots).map(function (k) { return snapshots[k]; }).filter(Boolean);
     } catch (_) {}
   }
 
   function saveLocal() {
     try {
+      var snapshots = {};
+      state.rooms.slice(0, cfg.maxConversations || 500).forEach(function (r) {
+        snapshots[roomKey(r)] = {
+          id: r.id,
+          channelId: r.channelId,
+          channelType: r.channelType,
+          isTopic: r.isTopic,
+          ts: r.ts,
+          unread: r.unread,
+          text: r.text
+        };
+      });
+
       localStorage.setItem(storageKey(), JSON.stringify({
         hiddenRooms: state.hiddenRooms,
         pinnedRooms: state.pinnedRooms,
-        remarks: state.remarks
+        remarks: state.remarks,
+        roomSnapshots: snapshots,
+        topics: state.topics
       }));
     } catch (_) {}
   }
@@ -235,30 +254,43 @@
     return data;
   }
 
+  async function fetchAny(paths, opts) {
+    var last = null;
+    for (var i = 0; i < paths.length; i++) {
+      try {
+        return await fetchJson(paths[i], opts);
+      } catch (err) {
+        last = err;
+        if (err.status !== 404) throw err;
+      }
+    }
+    throw last || new Error("not_found");
+  }
+
   async function ensureToken() {
     if (state.uid && state.token) return;
-    var data = await fetchJson(cfg.apiBase + "/token");
+    var data = await fetchAny([cfg.apiBase + "/token", cfg.bridgeBase + "/token"]);
     state.uid = String(data.uid || data.wkUid || "");
     state.token = String(data.token || "");
-    state.addr = String(data.addr || data.wsAddr || data.wkws || "");
     loadLocal();
   }
 
-  async function sync(reason) {
+  async function sync() {
     if (state.loading) return;
     state.loading = true;
     setStatus(t("syncing", "同步中..."));
     try {
       await ensureToken();
-      var data = await fetchJson(cfg.apiBase + "/conversation/sync", {
+      var data = await fetchAny([cfg.apiBase + "/conversation/sync", cfg.bridgeBase + "/conversation/sync"], {
         method: "POST",
         body: JSON.stringify({ uid: state.uid, version: 0, msg_count: 1 })
       });
       var list = extractList(data).map(normalizeRoom).filter(Boolean);
       mergeRooms(list);
-      await hydrateUsers();
+      await Promise.all([hydrateUsers(), hydrateTopics()]);
       state.error = false;
-      setStatus(state.sdkReady ? t("connected", "已连接") : t("offline", "离线同步"));
+      setStatus(t("connected", "已连接"));
+      saveLocal();
       render();
     } catch (err) {
       state.error = true;
@@ -282,8 +314,6 @@
       var old = map[k];
 
       if (old) {
-        // Important: Wukong conversation/sync may return no preview payload.
-        // Do not erase text received from realtime SDK or previous history.
         if (!r.text && old.text) r.text = old.text;
         if (!r.ts && old.ts) r.ts = old.ts;
         if (!r.unread && old.unread) r.unread = old.unread;
@@ -294,44 +324,6 @@
     });
 
     state.rooms = Object.keys(map).map(function (k) { return map[k]; }).slice(0, cfg.maxConversations || 500);
-  }
-
-  function patchRoomFromMessage(msg) {
-    var channelId = String(get(msg, ["channel_id", "channelId", "channelID"], "") || "");
-    var fromUid = String(get(msg, ["from_uid", "fromUid", "fromUID", "uid"], "") || "");
-    var toUid = String(get(msg, ["to_uid", "toUid", "toUID"], "") || "");
-    var self = state.uid || "";
-    var type = Number(get(msg, ["channel_type", "channelType"], channelId.indexOf("nbb_topic_") === 0 ? 2 : 1)) || 1;
-
-    if (type === 1) {
-      if (!channelId || channelId === self) channelId = fromUid === self ? toUid : fromUid;
-    }
-
-    if (!channelId) return false;
-
-    var text = parsePayloadText(payloadOf(msg) || msg.payload || msg.content || msg.text || "");
-    var room = normalizeRoom(Object.assign({}, msg, {
-      channel_id: channelId,
-      channel_type: type,
-      last_msg: text,
-      timestamp: now(),
-      unread: fromUid && fromUid !== self ? 1 : 0
-    }));
-    if (!room) return false;
-    if (text) room.text = text;
-
-    var existing = state.rooms.filter(function (r) { return roomKey(r) === roomKey(room); })[0];
-    if (existing) {
-      existing.ts = room.ts;
-      if (room.text) existing.text = room.text;
-      if (room.unread) existing.unread = Number(existing.unread || 0) + 1;
-    } else {
-      state.rooms.unshift(room);
-    }
-
-    hydrateUsers();
-    scheduleRender();
-    return true;
   }
 
   async function hydrateUsers() {
@@ -353,14 +345,75 @@
     } catch (_) {}
   }
 
+  function topicTid(room) {
+    return String(room.channelId || "").replace("nbb_topic_", "").replace(/[^\d]/g, "");
+  }
+
+  async function hydrateTopics() {
+    var tids = state.rooms
+      .filter(function (r) { return r.isTopic; })
+      .map(topicTid)
+      .filter(Boolean)
+      .filter(function (tid) { return !state.topics[tid]; })
+      .filter(function (v, i, arr) { return arr.indexOf(v) === i; })
+      .slice(0, 40);
+
+    await Promise.all(tids.map(async function (tid) {
+      try {
+        var data = await fetchAny([rel() + "/api/topic/" + encodeURIComponent(tid), rel() + "/api/v3/topics/" + encodeURIComponent(tid)]);
+        var topic = data && (data.topic || data.response || data);
+        var title = topic && (topic.title || topic.name || topic.topic_title);
+        if (title) state.topics[tid] = { title: String(title), slug: topic.slug || topic.titleRaw || "" };
+      } catch (_) {}
+    }));
+
+    scheduleRender();
+  }
+
+  function flagEmoji(input) {
+    var raw = String(input || "").trim();
+    if (!raw) return "";
+    var s = raw.toLowerCase();
+
+    var map = {
+      cn: "🇨🇳", china: "🇨🇳", "中国": "🇨🇳", chinese: "🇨🇳",
+      mm: "🇲🇲", my: "🇲🇲", burma: "🇲🇲", myanmar: "🇲🇲", "缅甸": "🇲🇲",
+      us: "🇺🇸", usa: "🇺🇸", america: "🇺🇸", "美国": "🇺🇸",
+      jp: "🇯🇵", japan: "🇯🇵", "日本": "🇯🇵",
+      kr: "🇰🇷", korea: "🇰🇷", "韩国": "🇰🇷",
+      th: "🇹🇭", thailand: "🇹🇭", "泰国": "🇹🇭",
+      vn: "🇻🇳", vietnam: "🇻🇳", "越南": "🇻🇳",
+      la: "🇱🇦", laos: "🇱🇦", "老挝": "🇱🇦",
+      kh: "🇰🇭", cambodia: "🇰🇭", "柬埔寨": "🇰🇭",
+      id: "🇮🇩", indonesia: "🇮🇩", "印尼": "🇮🇩",
+      ph: "🇵🇭", philippines: "🇵🇭", "菲律宾": "🇵🇭",
+      in: "🇮🇳", india: "🇮🇳", "印度": "🇮🇳",
+      bd: "🇧🇩", bangladesh: "🇧🇩", "孟加拉": "🇧🇩"
+    };
+
+    if (map[s]) return map[s];
+    if (/^[a-z]{2}$/.test(s)) {
+      var a = s.toUpperCase().charCodeAt(0) - 65 + 0x1F1E6;
+      var b = s.toUpperCase().charCodeAt(1) - 65 + 0x1F1E6;
+      return String.fromCodePoint(a, b);
+    }
+    return "";
+  }
+
+  function userCountry(u) {
+    if (!u) return "";
+    return u.country || u.nationality || u.locationCountry || u["profile:country"] || u["custom:country"] || u.location || "";
+  }
+
+  function isOnlineUser(u) {
+    if (!u) return false;
+    var st = String(u.status || u.presence || u.onlineStatus || "").toLowerCase();
+    return u.online === true || u.isOnline === true || st === "online";
+  }
+
   function userName(uid) {
     var u = state.users[String(uid)];
     return (state.remarks[uid] || (u && (u.displayname || u.username || u.userslug)) || ("User-" + uid));
-  }
-
-  function userSearchText(uid) {
-    var u = state.users[String(uid)] || {};
-    return [uid, u.username, u.displayname, u.userslug, u.fullname, state.remarks[uid]].join(" ");
   }
 
   function avatar(uid) {
@@ -374,13 +427,17 @@
 
   function roomName(room) {
     if (state.remarks[roomKey(room)]) return state.remarks[roomKey(room)];
-    if (room.isTopic) return t("topic", "主题聊天室") + " " + String(room.channelId).replace("nbb_topic_", "#");
+    if (room.isTopic) {
+      var tid = topicTid(room);
+      return (state.topics[tid] && state.topics[tid].title) || (t("topic", "聊天室") + " #" + tid);
+    }
     return userName(room.id);
   }
 
   function openUrl(room) {
     if (room.isTopic) {
-      var tid = String(room.channelId).replace("nbb_topic_", "");
+      var tid = topicTid(room);
+      if (cfg.openTopicPage !== false) return rel() + cfg.topicBase + "/" + encodeURIComponent(tid);
       return rel() + cfg.chatBase + "?tid=" + encodeURIComponent(tid);
     }
     return rel() + cfg.chatBase + "/" + encodeURIComponent(room.id);
@@ -399,24 +456,11 @@
   }
 
   function getFiltered() {
-    var q = String(state.query || "").trim().toLowerCase();
-
     return state.rooms.filter(function (room) {
       if (state.hiddenRooms[roomKey(room)]) return false;
       if (state.tab === "direct" && room.isTopic) return false;
       if (state.tab === "rooms" && !room.isTopic) return false;
-      if (!q) return true;
-
-      var s = [
-        roomName(room),
-        room.text,
-        room.channelId,
-        room.id,
-        room.isTopic ? t("chatrooms", "聊天室") : t("messages", "消息"),
-        !room.isTopic ? userSearchText(room.id) : ""
-      ].join(" ").toLowerCase();
-
-      return s.indexOf(q) !== -1;
+      return true;
     }).sort(function (a, b) {
       var pa = state.pinnedRooms[roomKey(a)] ? 1 : 0;
       var pb = state.pinnedRooms[roomKey(b)] ? 1 : 0;
@@ -432,9 +476,6 @@
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-selected", active ? "true" : "false");
     });
-    if (els.search) {
-      els.search.placeholder = state.tab === "rooms" ? t("searchRooms", "搜索聊天室") : t("searchMessages", "搜索消息");
-    }
   }
 
   function render() {
@@ -444,8 +485,7 @@
     var rooms = getFiltered();
 
     if (state.error && !rooms.length) {
-      els.list.innerHTML =
-        '<div class="wkconv-error"><div><strong>' + esc(t("errorTitle", "加载失败")) + '</strong></div></div>';
+      els.list.innerHTML = '<div class="wkconv-error"><div><strong>' + esc(t("errorTitle", "加载失败")) + '</strong></div></div>';
       return;
     }
 
@@ -461,8 +501,14 @@
       var pinned = !!state.pinnedRooms[key];
       var unread = Number(room.unread || 0);
       var name = roomName(room);
-      return '<li class="wkconv-item' + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + '" data-key="' + esc(key) + '">' +
-        '<div class="wkconv-avatar">' + (room.isTopic ? '<span>#</span>' : avatar(room.id)) + '</div>' +
+      var u = room.isTopic ? null : state.users[String(room.id)];
+      var flag = !room.isTopic ? flagEmoji(userCountry(u)) : "";
+      var online = !room.isTopic && isOnlineUser(u);
+      return '<li class="wkconv-item' + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + (online ? " is-online" : "") + '" data-key="' + esc(key) + '">' +
+        '<div class="wkconv-avatar">' +
+          '<div class="wkconv-avatar-inner">' + (room.isTopic ? '<span>#</span>' : avatar(room.id)) + '</div>' +
+          '<span class="wkconv-online"></span><span class="wkconv-flag">' + esc(flag) + '</span>' +
+        '</div>' +
         '<div class="wkconv-main">' +
           '<div class="wkconv-top"><div class="wkconv-name">' + esc(name) + '</div><div class="wkconv-time">' + esc(fmtTime(room.ts)) + '</div></div>' +
           '<div class="wkconv-bottom"><span class="wkconv-pin">' + esc(t("pinned", "置顶")) + '</span><div class="wkconv-preview">' + esc(room.text || "") + '</div><div class="wkconv-badge">' + esc(unread > 99 ? "99+" : unread) + '</div></div>' +
@@ -486,6 +532,7 @@
   function openRoom(room) {
     if (!room) return;
     room.unread = 0;
+    saveLocal();
     location.href = openUrl(room);
   }
 
@@ -512,78 +559,11 @@
     state.menuRoom = null;
   }
 
-  async function loadSdk() {
-    if (D.getElementById("wkconv-sdk")) return true;
-    return new Promise(function (resolve) {
-      var s = D.createElement("script");
-      s.id = "wkconv-sdk";
-      s.async = true;
-      s.src = cfg.wkSdkUrl;
-      s.onload = function () { resolve(true); };
-      s.onerror = function () { resolve(false); };
-      (D.head || D.documentElement).appendChild(s);
-    });
-  }
-
-  function sdkShared() {
-    try {
-      if (W.wk && W.wk.WKSDK && typeof W.wk.WKSDK.shared === "function") return W.wk.WKSDK.shared();
-      if (W.WKSDK && typeof W.WKSDK.shared === "function") return W.WKSDK.shared();
-    } catch (_) {}
-    return null;
-  }
-
-  async function startRealtime() {
-    try {
-      await ensureToken();
-      await loadSdk();
-      var sdk = sdkShared();
-      if (!sdk || !sdk.config) return;
-
-      sdk.config.uid = state.uid;
-      sdk.config.token = state.token;
-      sdk.config.addr = state.addr || cfg.wsAddr || "";
-
-      if (sdk.chatManager && typeof sdk.chatManager.addMessageListener === "function") {
-        sdk.chatManager.addMessageListener(function (m) {
-          patchRoomFromMessage(sdkMessageToPayload(m));
-        });
-      }
-
-      if (sdk.connectManager && typeof sdk.connectManager.addConnectStatusListener === "function") {
-        sdk.connectManager.addConnectStatusListener(function (status) {
-          var st = String(status && (status.status || status.value || status) || "").toLowerCase();
-          state.sdkReady = status === 1 || status === "1" || st === "connected" || st === "connect" || st === "online";
-          setStatus(state.sdkReady ? t("connected", "已连接") : t("connecting", "正在连接..."));
-        });
-      }
-
-      if (sdk.connectManager && typeof sdk.connectManager.connect === "function") {
-        sdk.connectManager.connect();
-      }
-    } catch (_) {}
-  }
-
-  function sdkMessageToPayload(m) {
-    m = m || {};
-    var channel = m.channel || m.channelInfo || {};
-    var channelId = typeof channel === "object" ? get(channel, ["channelID", "channelId", "channel_id", "id"], "") : channel;
-    var payload = m.payload || m.messagePayload || m.message_payload || m.content || m.messageContent || m.message_content || m.body || "";
-    return {
-      channel_id: channelId,
-      channel_type: get(channel, ["channelType", "channel_type"], m.channelType || m.channel_type || 1),
-      from_uid: get(m, ["fromUID", "fromUid", "from_uid", "uid"], ""),
-      to_uid: get(m, ["toUID", "toUid", "to_uid", "targetUid"], ""),
-      payload: payload,
-      timestamp: get(m, ["timestamp", "time", "createdAt"], now())
-    };
-  }
-
   function startPoll() {
     clearTimeout(state.pollTimer);
     function loop() {
-      sync(state.sdkReady ? "poll" : "fallback").finally(function () {
-        state.pollTimer = setTimeout(loop, state.sdkReady ? cfg.syncIntervalConnected : cfg.syncIntervalFallback);
+      sync().finally(function () {
+        state.pollTimer = setTimeout(loop, cfg.syncInterval || 8000);
       });
     }
     state.pollTimer = setTimeout(loop, 1200);
@@ -597,17 +577,10 @@
     if (tab !== "direct" && tab !== "rooms") return;
     if (state.tab === tab) return;
     state.tab = tab;
-    state.query = "";
-    if (els.search) els.search.value = "";
     render();
   }
 
   function bind() {
-    els.search.addEventListener("input", function () {
-      state.query = this.value || "";
-      scheduleRender();
-    });
-
     els.tabs.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-tab]");
       if (btn) setTab(btn.getAttribute("data-tab"));
@@ -701,7 +674,6 @@
             '<button class="wkconv-tab" data-tab="rooms" role="tab" type="button">' + esc(t("chatrooms", "聊天室")) + '</button>' +
             '<div class="wkconv-status">' + esc(t("loading", "正在加载消息...")) + '</div>' +
           '</div>' +
-          '<div class="wkconv-search-wrap"><span class="wkconv-search-icon">⌕</span><input class="wkconv-search" type="search" placeholder="' + esc(t("searchMessages", "搜索消息")) + '"></div>' +
         '</header>' +
         '<main class="wkconv-list-wrap"><ul class="wkconv-list"></ul></main>' +
       '</div>' +
@@ -711,7 +683,6 @@
       app: D.getElementById("wkconv-app"),
       status: root.querySelector(".wkconv-status"),
       tabs: root.querySelector(".wkconv-tabs"),
-      search: root.querySelector(".wkconv-search"),
       listWrap: root.querySelector(".wkconv-list-wrap"),
       list: root.querySelector(".wkconv-list"),
       menuMask: root.querySelector(".wkconv-menu-mask"),
@@ -731,12 +702,15 @@
     mountHtml();
     bind();
 
-    sync("boot");
-    startRealtime();
+    await ensureToken().catch(function () {});
+    loadLocal();
+    render();
+
+    sync();
     startPoll();
 
     W.WukongConversations = {
-      version: "v3-mobile-tabs",
+      version: "v4-mobile-no-sdk",
       sync: sync,
       setTab: setTab,
       dump: function () { return state; }
