@@ -22,6 +22,55 @@
   function cpPluginConfig() {
     return (window.CPChatHarmony && window.CPChatHarmony.config) || {};
   }
+
+  function cpSameUid(a, b) {
+    a = String(a == null ? "" : a).trim();
+    b = String(b == null ? "" : b).trim();
+    if (!a || !b) return false;
+    return a === b || String(parseInt(a, 10)) === String(parseInt(b, 10));
+  }
+
+  function cpIsMineUid(uid) {
+    return cpSameUid(uid, getSelfUid());
+  }
+
+  function cpAutoPlayPreviewVideo(video, mask) {
+    if (!video) return;
+
+    video.controls = true;
+    video.muted = false;
+    video.playsInline = false;
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+
+    try { video.load(); } catch (_) {}
+
+    var fullscreenTarget = video;
+    try {
+      if (video.webkitEnterFullscreen) {
+        video.webkitEnterFullscreen();
+      } else if (fullscreenTarget.requestFullscreen) {
+        fullscreenTarget.requestFullscreen().catch(function () {});
+      } else if (mask && mask.requestFullscreen) {
+        mask.requestFullscreen().catch(function () {});
+      }
+    } catch (_) {}
+
+    setTimeout(function () {
+      try {
+        var p = video.play();
+        if (p && typeof p.catch === "function") {
+          p.catch(function () {
+            try {
+              video.muted = true;
+              video.play().catch(function () {});
+            } catch (_) {}
+          });
+        }
+      } catch (_) {}
+    }, 30);
+  }
+
   function cpKeyToSnake(key) {
     return String(key || "")
       .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
@@ -59,7 +108,7 @@
 
     for (var i = 0; i < urls.length; i++) {
       try {
-        var res = await fetch(urls[i] + "?v=33", {
+        var res = await fetch(urls[i] + "?v=34", {
           credentials: "same-origin",
           headers: { Accept: "application/json" }
         });
@@ -81,7 +130,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v33";
+  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v34";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -244,7 +293,7 @@
     album: cpSvgIcon("image"),
     trash: cpSvgIcon("trash"),
     close: cpSvgIcon("close"),
-    ai: '<span class="cp-mini-trans-icon">文</span>'
+    ai: '<i class="fa-solid fa-language cp-mini-trans-icon" style="color: rgb(177, 151, 252);"></i>'
   };
 
 
@@ -4589,6 +4638,73 @@
     return json;
   }
 
+
+  function cpMakeVideoPoster(url) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var video = document.createElement("video");
+      video.crossOrigin = "anonymous";
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "metadata";
+      video.src = url;
+
+      function finish(value) {
+        if (done) return;
+        done = true;
+        try { video.removeAttribute("src"); video.load(); } catch (_) {}
+        resolve(value || "");
+      }
+
+      video.addEventListener("loadeddata", function () {
+        try {
+          var canvas = document.createElement("canvas");
+          var w = video.videoWidth || 640;
+          var h = video.videoHeight || 360;
+          var max = 640;
+          var scale = Math.min(1, max / Math.max(w, h));
+          canvas.width = Math.max(1, Math.round(w * scale));
+          canvas.height = Math.max(1, Math.round(h * scale));
+          canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+          finish(canvas.toDataURL("image/jpeg", 0.78));
+        } catch (e) {
+          finish("");
+        }
+      }, { once: true });
+
+      video.addEventListener("loadedmetadata", function () {
+        try {
+          if (Number.isFinite(video.duration) && video.duration > 0) {
+            video.currentTime = Math.min(0.18, video.duration / 3);
+          }
+        } catch (_) {}
+      }, { once: true });
+
+      video.addEventListener("error", function () { finish(""); }, { once: true });
+      setTimeout(function () { finish(""); }, 4200);
+    });
+  }
+
+  async function cpHydrateVideoPosters(root) {
+    root = root || document;
+    var nodes = Array.prototype.slice.call(root.querySelectorAll(".cp-video-wrap[data-src]:not([data-poster-ready])"));
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      node.setAttribute("data-poster-ready", "1");
+      var url = node.getAttribute("data-src");
+      if (!url) continue;
+      try {
+        var poster = await cpMakeVideoPoster(url);
+        if (poster) {
+          node.style.backgroundImage = "url(" + poster + ")";
+          node.classList.add("has-poster");
+        }
+      } catch (e) {
+        warn("video-poster", e);
+      }
+    }
+  }
+
   function renderWingmanLoading() {
     var panel = byId("cp-wingman-panel");
     var analysis = byId("cp-wingman-analysis");
@@ -5336,7 +5452,7 @@
       body.innerHTML =
         '<video class="cp-preview-video" src="' +
         escAttr(videoUrl) +
-        '" controls preload="metadata" playsinline webkit-playsinline></video>';
+        '" controls preload="auto" playsinline webkit-playsinline></video>';
     }
 
     var mask = byId("cp-preview-mask");
@@ -5347,7 +5463,7 @@
 
     var pv = body.querySelector("video");
     if (pv) {
-      try { pv.load(); } catch (_) {}
+      cpAutoPlayPreviewVideo(pv, mask);
     }
 
     state.previewOpen = true;
