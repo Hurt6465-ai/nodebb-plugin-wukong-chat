@@ -791,6 +791,74 @@
     return (window.config && window.config.relative_path) || "";
   }
 
+  function getIndependentPageInfo() {
+    var cfg = cpPluginConfig() || {};
+    var page = window.__NBB_WUKONG_PAGE__ || {};
+    var root = document.querySelector('[data-wukong-root="1"]');
+    var q = new URLSearchParams(location.search || "");
+    var path = String(location.pathname || "");
+    var uidFromPath = "";
+    var m = path.match(/\/wukong\/([^\/?#]+)/i);
+    if (m) {
+      try { uidFromPath = decodeURIComponent(m[1]); } catch (_) { uidFromPath = m[1] || ""; }
+    }
+
+    var targetUid = String(
+      cfg.targetUid ||
+      page.targetUid ||
+      (root && root.getAttribute("data-target-uid")) ||
+      uidFromPath ||
+      q.get("uid") ||
+      ""
+    ).trim();
+
+    var tid = String(
+      cfg.tid ||
+      page.tid ||
+      (root && root.getAttribute("data-tid")) ||
+      q.get("tid") ||
+      ""
+    ).trim();
+
+    var channelId = String(
+      cfg.channelId ||
+      page.channelId ||
+      (root && root.getAttribute("data-channel-id")) ||
+      q.get("channel_id") ||
+      (tid ? ("nbb_topic_" + tid) : targetUid)
+    ).trim();
+
+    var channelType = Number(
+      cfg.channelType ||
+      page.channelType ||
+      (root && root.getAttribute("data-channel-type")) ||
+      q.get("channel_type") ||
+      (tid ? 2 : 1)
+    ) || (tid ? 2 : 1);
+
+    return {
+      independent: !!(cfg.independent || root || page.targetUid || page.tid || path.indexOf("/wukong") >= 0),
+      targetUid: targetUid,
+      tid: tid,
+      channelId: channelId,
+      channelType: channelType
+    };
+  }
+
+  function getApiBase() {
+    return String((cpPluginConfig() && cpPluginConfig().apiBase) || "/api/wukong").replace(/\/+$/, "");
+  }
+
+  function getCurrentChannelId() {
+    var page = getIndependentPageInfo();
+    return page.channelId || getPeerUid();
+  }
+
+  function getCurrentChannelType() {
+    var page = getIndependentPageInfo();
+    return page.channelType || 1;
+  }
+
   function getRoutePeerSlug() {
     var path = String(location.pathname || "");
     var rel = getRelativePath();
@@ -884,7 +952,30 @@
 
   async function hydratePeerFromRoute() {
     if (state.peerHydrating) return false;
-    if (state.peerUidCache && state.peerUsernameCache) return true;
+    if (state.peerUidCache && state.peerUsernameCache && !/^用户\d+$/.test(state.peerUsernameCache)) return true;
+
+    var page = getIndependentPageInfo();
+    if (page.targetUid && /^\d+$/.test(String(page.targetUid))) {
+      state.peerUidCache = String(page.targetUid);
+      state.peerHydrating = true;
+      try {
+        var userRes = await fetch(getApiBase() + "/user/" + encodeURIComponent(page.targetUid), {
+          credentials: "same-origin",
+          headers: { accept: "application/json" }
+        });
+        if (userRes.ok) {
+          var userJson = await userRes.json();
+          if (setPeerFromUser(userJson)) {
+            updateHeaderPeerInfo(null);
+            return true;
+          }
+        }
+      } catch (e) {
+        warn("hydrate-independent-peer", e);
+      } finally {
+        state.peerHydrating = false;
+      }
+    }
 
     var u = getPeerFromAjaxify();
     if (setPeerFromUser(u)) return true;
@@ -922,6 +1013,13 @@
 
   function getPeerUid() {
     if (state.peerUidCache) return state.peerUidCache;
+
+    var page = getIndependentPageInfo();
+    if (page.targetUid && /^\d+$/.test(String(page.targetUid))) {
+      state.peerUidCache = String(page.targetUid);
+      if (!state.peerUsernameCache) state.peerUsernameCache = "用户" + state.peerUidCache;
+      return state.peerUidCache;
+    }
 
     setPeerFromUser(getPeerFromAjaxify());
     if (state.peerUidCache) return state.peerUidCache;
@@ -1217,7 +1315,7 @@
     if (window.__wkEngineBooted) return;
     window.__wkEngineBooted = true;
 
-    $.getJSON("/bridge/token", function (res) {
+    $.getJSON(getApiBase() + "/token", function (res) {
       if (!res || !res.token) return;
 
       state.myUid = String(res.uid);
@@ -1232,7 +1330,7 @@
 
         wk.WKSDK.shared().config.uid = state.myUid;
         wk.WKSDK.shared().config.token = String(res.token);
-        wk.WKSDK.shared().config.addr = cpPluginConfig().wkWsUrl || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/wkws/");
+        wk.WKSDK.shared().config.addr = cpPluginConfig().wkWsUrl || res.addr || res.wsAddr || res.wkws || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/wkws/");
 
         wk.WKSDK.shared().chatManager.addMessageListener(function (m) {
           if (!state.mounted) return;
@@ -1340,7 +1438,9 @@
     if (byId("cp-top-spinner")) byId("cp-top-spinner").hidden = false;
 
     try {
-      var url = "/bridge/get-history?login_uid=" + encodeURIComponent(state.myUid) + "&channel_id=" + encodeURIComponent(peerUid) + "&limit=" + encodeURIComponent(limit);
+      var channelId = getCurrentChannelId() || peerUid;
+      var channelType = getCurrentChannelType();
+      var url = getApiBase() + "/history?login_uid=" + encodeURIComponent(state.myUid) + "&channel_id=" + encodeURIComponent(channelId) + "&channel_type=" + encodeURIComponent(channelType) + "&limit=" + encodeURIComponent(limit);
       if (startSeq && startSeq > 0) url += "&start_message_seq=" + encodeURIComponent(startSeq);
 
       var res = await fetch(url);
@@ -1377,10 +1477,12 @@
     while (hasMore) {
       try {
         var url =
-          "/bridge/get-history?login_uid=" +
+          getApiBase() + "/history?login_uid=" +
           encodeURIComponent(state.myUid) +
           "&channel_id=" +
-          encodeURIComponent(peerUid) +
+          encodeURIComponent(getCurrentChannelId() || peerUid) +
+          "&channel_type=" +
+          encodeURIComponent(getCurrentChannelType()) +
           "&limit=50&start_message_seq=" +
           encodeURIComponent(startSeq);
 
@@ -1635,6 +1737,16 @@
   }
 
   function boot() {
+    var page = getIndependentPageInfo();
+    var standaloneRoot = document.querySelector('[data-wukong-root="1"]');
+
+    if (page.independent) {
+      if (standaloneRoot) standaloneRoot.style.display = "none";
+      if (!state.mounted) mount();
+      else scheduleSync();
+      return;
+    }
+
     var chatContainer = document.querySelector('[component="chat/messages"]');
 
     if (chatContainer) {
