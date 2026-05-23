@@ -152,7 +152,7 @@
 
     for (var i = 0; i < urls.length; i++) {
       try {
-        var res = await fetch(urls[i] + "?v=40", {
+        var res = await fetch(urls[i] + "?v=41", {
           credentials: "same-origin",
           headers: { Accept: "application/json" }
         });
@@ -174,7 +174,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v40";
+  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v41";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -337,7 +337,7 @@
     album: cpSvgIcon("image"),
     trash: cpSvgIcon("trash"),
     close: cpSvgIcon("close"),
-    ai: '<i class="fa-solid fa-language cp-mini-trans-icon" style="color: rgb(177, 151, 252);"></i>'
+    ai: '<span class="cp-trans-wa"><i class="fa-solid fa-language" style="color: rgb(177, 151, 252);"></i><b>文A</b></span>'
   };
 
 
@@ -360,7 +360,7 @@
     messages: [],
     wkMessages: [],
 
-    renderLimit: 50,
+    renderLimit: 240,
     lastRenderHash: "",
     renderVersion: 0,
     renderPending: false,
@@ -1044,6 +1044,7 @@
     var uid = u.uid || u.userId || u.id;
     var username = u.username || u.displayname || u.name || u.title || u.fullname || u.userslug || u.slug || "";
     if (/^\d+$/.test(String(username || ""))) username = "";
+    if (/^\d+$/.test(String(username || ""))) username = "";
     var userslug = u.userslug || u.slug || (username ? encodeURIComponent(String(username).toLowerCase().replace(/ /g, "-")) : "");
     var picture = u.picture || u.uploadedpicture || u.uploadedPicture || u.pictureUrl || u.avatarUrl || u.avatar || "";
 
@@ -1213,7 +1214,7 @@
 
   function getAvatarHtml(uid, username, fallbackHtml) {
     var pic = "";
-    var text = String(username || "?").charAt(0).toUpperCase();
+    var text = /^\d+$/.test(String(username || "")) ? "用" : String(username || "?").charAt(0).toUpperCase();
     var bg = "#72a5f2";
 
     if (cpIsMineUid(uid) && window.app && window.app.user) {
@@ -2027,7 +2028,7 @@
     state.messages = [];
     state.myUid = ensureSelfUid();
     state.unreadCount = 0;
-    state.renderLimit = 50;
+    state.renderLimit = 240;
     state.lastRenderHash = "";
     state.renderVersion = 0;
     state.isPreloading = false;
@@ -2110,6 +2111,12 @@
 
     if (state.observer) state.observer.disconnect();
     state.observer = null;
+
+    if (state.heightObserver) {
+      state.heightObserver.disconnect();
+      state.heightObserver = null;
+      state.heightObserved = {};
+    }
 
     if (state.lazyObserver) state.lazyObserver.disconnect();
     state.lazyObserver = null;
@@ -2298,7 +2305,7 @@
         </main>
 
         <button id="cp-fab-bottom" class="cp-fab-bottom" title="回到底部">
-          <span class="cp-fab-v">▾</span>
+          <span class="cp-fab-v">⬇</span>
           <span id="cp-fab-badge" class="cp-fab-badge" hidden>0</span>
         </button>
 
@@ -3177,7 +3184,7 @@
         byId("cp-top-spinner").hidden = false;
 
         setTimeout(function () {
-          state.renderLimit += 50;
+          state.renderLimit += 80;
           state.isPreloading = false;
           byId("cp-top-spinner").hidden = true;
           incrementalRender("prepend");
@@ -3200,6 +3207,7 @@
     }
 
     if (state.mounted && getPeerUid()) state.scrollCache[getPeerUid()] = mainEl.scrollTop;
+    cpScheduleVirtualRender();
   }
 
   function showContextMenu(msgId) {
@@ -3667,6 +3675,126 @@
     );
   }
 
+
+  function cpMsgEstimatedHeight(m) {
+    if (!m) return 56;
+    var id = String(m.id || "");
+    if (state.heightMap && state.heightMap[id]) return state.heightMap[id];
+
+    if (m.type === "image" || m.type === "video") return 210;
+    if (m.type === "gallery") return 230;
+    if (m.type === "voice") return 64;
+    if (m.recalled) return 44;
+
+    var text = String(m.text || m.serverText || "");
+    var lines = Math.max(1, Math.ceil(text.length / 18));
+    return Math.min(180, 42 + lines * 22);
+  }
+
+  function cpRangeHeight(arr, start, end) {
+    var total = 0;
+    for (var i = start; i < end; i++) total += cpMsgEstimatedHeight(arr[i]);
+    return total;
+  }
+
+  function cpComputeVirtualWindow(arr, main, mode) {
+    var len = arr ? arr.length : 0;
+    var buffer = 10;
+    var minVirtual = 90;
+
+    if (!len || len <= minVirtual || !main || !main.clientHeight) {
+      return { enabled: false, start: 0, end: len, topHeight: 0, bottomHeight: 0, messages: arr || [] };
+    }
+
+    var viewportTop = Math.max(0, main.scrollTop || 0);
+    var viewportBottom = viewportTop + Math.max(main.clientHeight || 0, 500);
+
+    if (mode === "bottom" || mode === "restore") {
+      var lastStart = Math.max(0, len - 60);
+      return {
+        enabled: true,
+        start: lastStart,
+        end: len,
+        topHeight: cpRangeHeight(arr, 0, lastStart),
+        bottomHeight: 0,
+        messages: arr.slice(lastStart)
+      };
+    }
+
+    var y = 0;
+    var start = 0;
+    var end = len;
+
+    for (var i = 0; i < len; i++) {
+      var h = cpMsgEstimatedHeight(arr[i]);
+      if (y + h >= viewportTop) {
+        start = Math.max(0, i - buffer);
+        break;
+      }
+      y += h;
+    }
+
+    y = 0;
+    for (var j = 0; j < len; j++) {
+      y += cpMsgEstimatedHeight(arr[j]);
+      if (y >= viewportBottom) {
+        end = Math.min(len, j + 1 + buffer);
+        break;
+      }
+    }
+
+    if (end <= start) end = Math.min(len, start + 40);
+
+    return {
+      enabled: true,
+      start: start,
+      end: end,
+      topHeight: cpRangeHeight(arr, 0, start),
+      bottomHeight: cpRangeHeight(arr, end, len),
+      messages: arr.slice(start, end)
+    };
+  }
+
+  function cpObserveMessageHeight(node, id) {
+    if (!node || !id || typeof ResizeObserver === "undefined") return;
+
+    state.heightMap = state.heightMap || {};
+    state.heightObserved = state.heightObserved || {};
+    if (state.heightObserved[id] === node) return;
+
+    if (!state.heightObserver) {
+      state.heightObserver = new ResizeObserver(function (entries) {
+        var changed = false;
+
+        entries.forEach(function (entry) {
+          var el = entry.target;
+          var mid = el && el.getAttribute && el.getAttribute("data-id");
+          if (!mid || mid.indexOf("__v") === 0 || mid.indexOf("sep_") === 0) return;
+
+          var height = Math.ceil((entry.contentRect && entry.contentRect.height) || el.offsetHeight || 0);
+          if (height > 0 && Math.abs((state.heightMap[mid] || 0) - height) > 2) {
+            state.heightMap[mid] = height;
+            changed = true;
+          }
+        });
+
+        if (changed && state.mounted) cpScheduleVirtualRender();
+      });
+    }
+
+    state.heightObserved[id] = node;
+    try { state.heightObserver.observe(node); } catch (_) {}
+  }
+
+  function cpScheduleVirtualRender() {
+    if (state.virtualRenderPending || state.renderPending) return;
+    state.virtualRenderPending = true;
+    requestAnimationFrame(function () {
+      state.virtualRenderPending = false;
+      if (state.mounted) doIncrementalRender("keep");
+    });
+  }
+
   function doIncrementalRender(mode) {
     var list = byId("cp-msg-list");
     var main = byId("cp-main");
@@ -3679,9 +3807,11 @@
     var wasAtBottom = oldScrollHeight - oldScrollTop - main.clientHeight < BOTTOM_THRESHOLD;
 
     var allMsgs = getMergedMessages();
-    var renderArr = allMsgs.slice(-state.renderLimit);
+    var baseRenderArr = allMsgs.slice(-state.renderLimit);
+    var virtualMeta = cpComputeVirtualWindow(baseRenderArr, main, mode);
+    var renderArr = virtualMeta.messages;
 
-    var newHash = state.renderVersion + "|" + renderArr.length + "|";
+    var newHash = state.renderVersion + "|" + baseRenderArr.length + "|" + virtualMeta.start + "|" + virtualMeta.end + "|";
     var h;
 
     for (h = 0; h < renderArr.length; h++) {
@@ -3720,6 +3850,16 @@
     var targetIds = [];
     var targetNodes = {};
     var prevDayStr = "";
+
+    if (virtualMeta.enabled) {
+      var topSpacerId = "__vtop";
+      var topSpacer = existingMap[topSpacerId] || document.createElement("div");
+      topSpacer.className = "cp-virtual-spacer cp-virtual-top";
+      topSpacer.setAttribute("data-id", topSpacerId);
+      topSpacer.style.height = Math.max(0, virtualMeta.topHeight || 0) + "px";
+      targetIds.push(topSpacerId);
+      targetNodes[topSpacerId] = topSpacer;
+    }
 
     for (var i = 0; i < renderArr.length; i++) {
       var m = renderArr[i];
@@ -3813,7 +3953,7 @@
             '<span class="cp-media-time">' + esc(timeStr) + "</span>";
         } else if (m.type === "video") {
           body =
-            '<button class="cp-media-thumb cp-video-wrap" data-act="preview-media">' +
+            '<button class="cp-media-thumb cp-video-wrap" data-act="preview-media" data-src="' + escAttr(m.mediaUrl || "") + '">' +
               '<div class="cp-lazy-media cp-lazy-loading" data-type="video" data-src="' +
                 escAttr(m.mediaUrl || "") +
               '">' +
@@ -3905,8 +4045,19 @@
         node.setAttribute("data-hash", nodeHash);
       }
 
+      cpObserveMessageHeight(node, m.id);
       targetIds.push(m.id);
       targetNodes[m.id] = node;
+    }
+
+    if (virtualMeta.enabled) {
+      var bottomSpacerId = "__vbottom";
+      var bottomSpacer = existingMap[bottomSpacerId] || document.createElement("div");
+      bottomSpacer.className = "cp-virtual-spacer cp-virtual-bottom";
+      bottomSpacer.setAttribute("data-id", bottomSpacerId);
+      bottomSpacer.style.height = Math.max(0, virtualMeta.bottomHeight || 0) + "px";
+      targetIds.push(bottomSpacerId);
+      targetNodes[bottomSpacerId] = bottomSpacer;
     }
 
     var targetSet = new Set(targetIds);
@@ -3963,6 +4114,7 @@
     }
 
     observeLazyElements();
+    if (typeof cpHydrateVideoPosters === "function") cpHydrateVideoPosters(list);
     updateFooterHeight();
   }
 
@@ -3993,10 +4145,14 @@
   function observeLazyElements() {
     if (state.lazyObserver) {
       document.querySelectorAll(".cp-lazy-media").forEach(function (el) {
+        if (el.dataset.observed === "1") return;
+        el.dataset.observed = "1";
         state.lazyObserver.observe(el);
       });
 
       document.querySelectorAll(".cp-lazy-audio").forEach(function (el) {
+        if (el.dataset.observed === "1") return;
+        el.dataset.observed = "1";
         state.lazyObserver.observe(el);
       });
     } else {
