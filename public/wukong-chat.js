@@ -11,11 +11,121 @@
     var lang = (window.CPChatHarmony && window.CPChatHarmony.i18n) || {};
     return lang[key] || fallback || key;
   }
+
+  function cpDetectLocale() {
+    var nav = (navigator.language || navigator.userLanguage || "zh-CN").toLowerCase();
+    var htmlLang = (document.documentElement.getAttribute("lang") || "").toLowerCase();
+    var lang = htmlLang || nav;
+    if (lang.indexOf("my") === 0 || lang.indexOf("mm") >= 0) return "my-MM";
+    if (lang.indexOf("en") === 0) return "en-US";
+    return "zh-CN";
+  }
+
+  function cpLoadI18n() {
+    var cfg = cpPluginConfig();
+    var locale = cpRaw(cfg.locale) || cpDetectLocale();
+    var base = cpRaw(cfg.i18nBase) || "/plugins/nodebb-plugin-wukong-chat/static/i18n";
+    if (window.CPChatHarmony && window.CPChatHarmony.i18n && Object.keys(window.CPChatHarmony.i18n).length) {
+      return Promise.resolve();
+    }
+    return fetch(base + "/" + locale + ".json", { credentials: "same-origin", cache: "force-cache" })
+      .then(function (r) {
+        if (!r.ok && locale !== "zh-CN") return fetch(base + "/zh-CN.json", { credentials: "same-origin", cache: "force-cache" });
+        return r;
+      })
+      .then(function (r) { return r && r.ok ? r.json() : {}; })
+      .then(function (dict) {
+        window.CPChatHarmony = window.CPChatHarmony || {};
+        window.CPChatHarmony.i18n = Object.assign({}, dict || {}, window.CPChatHarmony.i18n || {});
+      })
+      .catch(function () {});
+  }
+
   function cpLog() {
     if (cpPluginConfig().debug && window.console && console.log) {
       console.log.apply(console, ['[cp-chat-harmony]'].concat(Array.prototype.slice.call(arguments)));
     }
   }
+
+
+  function cpIndependentMode() {
+    return true;
+  }
+
+  function cpRaw(v) {
+    if (v === undefined || v === null) return "";
+    var s = String(v).trim();
+    if (!s || s === "undefined" || s === "null") return "";
+    if (/^\{[^}]+\}$/.test(s)) return "";
+    return s;
+  }
+
+  function cpDigits(v) {
+    return cpRaw(v).replace(/[^0-9]/g, "");
+  }
+
+  function cpPageConfig() {
+    var root = document.getElementById("nodebb-wukong-root");
+    var cfg = window.__NBB_WUKONG_PAGE__ || {};
+    var q = new URLSearchParams(location.search || "");
+    var mUser = String(location.pathname || "").match(/\/wukong\/(\d+)/i);
+    var targetUid = cpDigits(root && root.getAttribute("data-target-uid")) || cpDigits(cfg.targetUid) || cpDigits(mUser && mUser[1]) || cpDigits(q.get("uid"));
+    var tid = cpDigits(root && root.getAttribute("data-tid")) || cpDigits(cfg.tid) || cpDigits(q.get("tid"));
+    var channelId = cpRaw(root && root.getAttribute("data-channel-id")) || cpRaw(cfg.channelId) || cpRaw(q.get("channel_id"));
+    var channelType = Number(cpRaw(root && root.getAttribute("data-channel-type")) || cpRaw(cfg.channelType) || cpRaw(q.get("channel_type")) || 0);
+    if (tid && !channelId) channelId = "nbb_topic_" + tid;
+    if (!channelId && targetUid) channelId = targetUid;
+    if (![1, 2].includes(channelType)) channelType = tid || String(channelId).indexOf("nbb_topic_") === 0 ? 2 : 1;
+    return { targetUid: targetUid, tid: tid, channelId: channelId, channelType: channelType };
+  }
+
+  function cpApiBase() {
+    return cpRaw(cpPluginConfig().apiBase) || "/api/wukong";
+  }
+
+  function cpGetTargetUid() {
+    var c = cpPageConfig();
+    return c.channelType === 1 ? cpDigits(c.targetUid || c.channelId) : "";
+  }
+
+  function cpGetChannelId() {
+    var c = cpPageConfig();
+    return c.channelId || c.targetUid || "";
+  }
+
+  function cpGetChannelType() {
+    return Number(cpPageConfig().channelType || 1) || 1;
+  }
+
+  function cpLoadScriptSequential(urls, onload, onerror) {
+    urls = (urls || []).filter(Boolean);
+    if (window.wk && window.wk.WKSDK) return onload();
+    var idx = 0;
+    var tryNext = function () {
+      if (idx >= urls.length) {
+        if (onerror) onerror(new Error("all_wukong_sdk_urls_failed"));
+        return;
+      }
+      var url = urls[idx++];
+      var s = document.createElement("script");
+      s.src = url;
+      s.async = true;
+      s.onload = function () {
+        if (window.wk && window.wk.WKSDK) onload();
+        else tryNext();
+      };
+      s.onerror = tryNext;
+      document.head.appendChild(s);
+    };
+    tryNext();
+  }
+
+  async function cpFetchJSON(url, opts) {
+    var res = await fetch(url, Object.assign({ credentials: "include", headers: { accept: "application/json" } }, opts || {}));
+    if (!res.ok) throw new Error("HTTP " + res.status + " " + url);
+    return await res.json();
+  }
+
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
@@ -150,25 +260,27 @@
     '  ]\n' +
     '}';
 
-  function cpSvgIcon(name) {
-    var map = {
-      play: '▶', pause: 'Ⅱ', mic: '🎙', send: '➤', photo: '▧', quote: '↩', recall: '↶', trans: '译', camera: '📷', album: '🖼'
-    };
-    return '<span class="cp-fallback-icon cp-i-' + escAttr(name) + '">' + esc(map[name] || name) + '</span>';
+  function cpIcon(name, faClass, fallback) {
+    faClass = faClass || "";
+    fallback = fallback || "";
+    return '<span class="cp-icon-wrap cp-icon-' + escAttr(name) + '">' +
+      '<i class="' + escAttr(faClass) + '" aria-hidden="true"></i>' +
+      '<span class="cp-icon-fallback">' + esc(fallback) + '</span>' +
+    '</span>';
   }
 
   var ICON = {
-    play: cpSvgIcon('play'),
-    pause: cpSvgIcon('pause'),
-    mic: cpSvgIcon('mic'),
-    send: cpSvgIcon('send'),
-    photo: cpSvgIcon('photo'),
-    quote: cpSvgIcon('quote'),
-    recall: cpSvgIcon('recall'),
-    trans: cpSvgIcon('trans'),
-    camera: cpSvgIcon('camera'),
-    album: cpSvgIcon('album'),
-    ai: '<span class="cp-fallback-icon cp-i-ai">译</span>'
+    play: cpIcon("play", "fa-solid fa-play fa fa-play", "▶"),
+    pause: cpIcon("pause", "fa-solid fa-pause fa fa-pause", "Ⅱ"),
+    mic: cpIcon("mic", "fa-solid fa-microphone fa fa-microphone", "🎙"),
+    send: cpIcon("send", "fa-solid fa-arrow-up fa fa-arrow-up", "↑"),
+    photo: cpIcon("photo", "fa-solid fa-image fa fa-image", "＋"),
+    quote: cpIcon("quote", "fa-solid fa-reply fa fa-reply", "↩"),
+    recall: cpIcon("recall", "fa-solid fa-rotate-left fa fa-undo", "↶"),
+    trans: '<i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i>',
+    camera: cpIcon("camera", "fa-solid fa-camera fa fa-camera", "📷"),
+    album: cpIcon("album", "fa-solid fa-images fa fa-picture-o", "🖼"),
+    ai: '<i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i>'
   };
 
   var waveHeights = [5, 8, 12, 16, 10, 7, 14, 9, 13, 6, 11, 15];
@@ -265,39 +377,6 @@
 
   function byId(id) {
     return document.getElementById(id);
-  }
-
-
-  function ensureMobileCss() {
-    if (byId("cp-chat-mobile-css")) return;
-
-    var href = "";
-    try {
-      var current = document.currentScript && document.currentScript.src ? document.currentScript.src : "";
-      if (current) href = current.replace(/\/[^\/]*$/, "/wukong-chat.css");
-    } catch (_) {}
-
-    if (!href) href = getRelativePath() + "/plugins/nodebb-plugin-wukong-chat/wukong-chat.css";
-    href += (href.indexOf("?") === -1 ? "?" : "&") + "v=mobile-v5";
-
-    var link = document.createElement("link");
-    link.id = "cp-chat-mobile-css";
-    link.rel = "stylesheet";
-    link.href = href;
-    document.head.appendChild(link);
-  }
-
-  function closeBootMasks() {
-    ["cp-settings-mask", "cp-lang-mask", "cp-context-overlay", "cp-preview-mask", "cp-media-pop"].forEach(function (id) {
-      var el = byId(id);
-      if (!el) return;
-      el.hidden = true;
-      el.setAttribute("hidden", "");
-      el.classList.remove("is-open", "show", "active");
-      el.removeAttribute("data-open");
-    });
-    state.settingsOpen = false;
-    state.previewOpen = false;
   }
 
   function esc(str) {
@@ -791,75 +870,10 @@
     return (window.config && window.config.relative_path) || "";
   }
 
-  function getIndependentPageInfo() {
-    var cfg = cpPluginConfig() || {};
-    var page = window.__NBB_WUKONG_PAGE__ || {};
-    var root = document.querySelector('[data-wukong-root="1"]');
-    var q = new URLSearchParams(location.search || "");
-    var path = String(location.pathname || "");
-    var uidFromPath = "";
-    var m = path.match(/\/wukong\/([^\/?#]+)/i);
-    if (m) {
-      try { uidFromPath = decodeURIComponent(m[1]); } catch (_) { uidFromPath = m[1] || ""; }
-    }
-
-    var targetUid = String(
-      cfg.targetUid ||
-      page.targetUid ||
-      (root && root.getAttribute("data-target-uid")) ||
-      uidFromPath ||
-      q.get("uid") ||
-      ""
-    ).trim();
-
-    var tid = String(
-      cfg.tid ||
-      page.tid ||
-      (root && root.getAttribute("data-tid")) ||
-      q.get("tid") ||
-      ""
-    ).trim();
-
-    var channelId = String(
-      cfg.channelId ||
-      page.channelId ||
-      (root && root.getAttribute("data-channel-id")) ||
-      q.get("channel_id") ||
-      (tid ? ("nbb_topic_" + tid) : targetUid)
-    ).trim();
-
-    var channelType = Number(
-      cfg.channelType ||
-      page.channelType ||
-      (root && root.getAttribute("data-channel-type")) ||
-      q.get("channel_type") ||
-      (tid ? 2 : 1)
-    ) || (tid ? 2 : 1);
-
-    return {
-      independent: !!(cfg.independent || root || page.targetUid || page.tid || path.indexOf("/wukong") >= 0),
-      targetUid: targetUid,
-      tid: tid,
-      channelId: channelId,
-      channelType: channelType
-    };
-  }
-
-  function getApiBase() {
-    return String((cpPluginConfig() && cpPluginConfig().apiBase) || "/api/wukong").replace(/\/+$/, "");
-  }
-
-  function getCurrentChannelId() {
-    var page = getIndependentPageInfo();
-    return page.channelId || getPeerUid();
-  }
-
-  function getCurrentChannelType() {
-    var page = getIndependentPageInfo();
-    return page.channelType || 1;
-  }
-
   function getRoutePeerSlug() {
+    var pageUid = cpGetTargetUid();
+    if (pageUid) return pageUid;
+
     var path = String(location.pathname || "");
     var rel = getRelativePath();
 
@@ -877,6 +891,7 @@
     }
   }
 
+
   function pickUserRecord(obj) {
     if (!obj || typeof obj !== "object") return null;
 
@@ -891,19 +906,33 @@
   }
 
   function setPeerFromUser(u) {
+    u = pickUserRecord(u) || (u && u.data ? pickUserRecord(u.data) : null) || (u && u.userData ? pickUserRecord(u.userData) : null) || u;
     if (!u || typeof u !== "object") return false;
 
     var myUidStr = String(window.app && app.user ? app.user.uid : state.myUid);
-    var uid = u.uid || u.userId || u.id;
-    var username = u.username || u.displayname || u.name || u.title || u.fullname || u.userslug || u.slug || "";
+    var uid = u.uid || u.userId || u.id || u.user_id;
+    var username =
+      u.displayname ||
+      u.fullname ||
+      u.username ||
+      u.name ||
+      u.title ||
+      u.userslug ||
+      u.slug ||
+      (uid ? "用户" + uid : "");
     var userslug = u.userslug || u.slug || (username ? encodeURIComponent(String(username).toLowerCase().replace(/ /g, "-")) : "");
 
     if (uid && String(uid) !== myUidStr && String(uid) !== "0") state.peerUidCache = String(uid);
     if (username) state.peerUsernameCache = String(username);
     if (userslug) state.peerUserslugCache = String(userslug);
-    if (u.picture) state.peerPictureCache = u.picture;
-    if (u.icontext) state.peerIconTextCache = u.icontext;
-    if (u.iconbgColor) state.peerIconBgCache = u.iconbgColor;
+
+    var picture = u.picture || u.uploadedpicture || u.uploadedPicture || u.avatar || u.avatarUrl || u.avatar_url || "";
+    var iconText = u.icontext || u["icon:text"] || u.iconText || (username ? String(username).charAt(0).toUpperCase() : "");
+    var iconBg = u.iconbgColor || u["icon:bgColor"] || u.iconBgColor || u.icon_bg_color || "#72a5f2";
+
+    if (picture) state.peerPictureCache = picture;
+    if (iconText) state.peerIconTextCache = iconText;
+    if (iconBg) state.peerIconBgCache = iconBg;
 
     return !!(state.peerUidCache || state.peerUsernameCache || state.peerUserslugCache);
   }
@@ -952,33 +981,31 @@
 
   async function hydratePeerFromRoute() {
     if (state.peerHydrating) return false;
-    if (state.peerUidCache && state.peerUsernameCache && !/^用户\d+$/.test(state.peerUsernameCache)) return true;
+    if (state.peerUidCache && state.peerUsernameCache) return true;
 
-    var page = getIndependentPageInfo();
-    if (page.targetUid && /^\d+$/.test(String(page.targetUid))) {
-      state.peerUidCache = String(page.targetUid);
+    var targetUid = cpGetTargetUid();
+    if (targetUid) {
+      state.peerUidCache = String(targetUid);
+      state.peerUsernameCache = state.peerUsernameCache || ("用户" + targetUid);
       state.peerHydrating = true;
       try {
-        var userRes = await fetch(getApiBase() + "/user/" + encodeURIComponent(page.targetUid), {
-          credentials: "same-origin",
-          headers: { accept: "application/json" }
-        });
-        if (userRes.ok) {
-          var userJson = await userRes.json();
-          if (setPeerFromUser(userJson)) {
-            updateHeaderPeerInfo(null);
-            return true;
-          }
+        var u = await cpFetchJSON(cpApiBase() + "/user/" + encodeURIComponent(targetUid));
+        var record = pickUserRecord(u) || (u && u.data ? pickUserRecord(u.data) : null) || (u && u.user ? pickUserRecord(u.user) : null) || u;
+        if (setPeerFromUser(record)) {
+          updateHeaderPeerInfo(null);
+          return true;
         }
       } catch (e) {
-        warn("hydrate-independent-peer", e);
+        warn("hydrate-peer-api", e);
       } finally {
         state.peerHydrating = false;
       }
+      updateHeaderPeerInfo(null);
+      return true;
     }
 
-    var u = getPeerFromAjaxify();
-    if (setPeerFromUser(u)) return true;
+    var u2 = getPeerFromAjaxify();
+    if (setPeerFromUser(u2)) return true;
 
     var slug = getRoutePeerSlug();
     if (!slug) return false;
@@ -1011,13 +1038,13 @@
     return false;
   }
 
+
   function getPeerUid() {
     if (state.peerUidCache) return state.peerUidCache;
 
-    var page = getIndependentPageInfo();
-    if (page.targetUid && /^\d+$/.test(String(page.targetUid))) {
-      state.peerUidCache = String(page.targetUid);
-      if (!state.peerUsernameCache) state.peerUsernameCache = "用户" + state.peerUidCache;
+    var pageUid = cpGetTargetUid();
+    if (pageUid) {
+      state.peerUidCache = String(pageUid);
       return state.peerUidCache;
     }
 
@@ -1046,6 +1073,7 @@
     return "";
   }
 
+
   function getAvatarHtml(uid, username, fallbackHtml) {
     var pic = "";
     var text = String(username || "?").charAt(0).toUpperCase();
@@ -1064,18 +1092,21 @@
         });
       }
 
-      if (!u && state.peerUsernameCache && String(username || "") === String(state.peerUsernameCache)) {
+      if (!u && (state.peerUsernameCache || state.peerUidCache) && (String(username || "") === String(state.peerUsernameCache) || String(uid || "") === String(state.peerUidCache))) {
         u = {
           picture: state.peerPictureCache,
+          uploadedpicture: state.peerPictureCache,
           icontext: state.peerIconTextCache,
-          iconbgColor: state.peerIconBgCache
+          "icon:text": state.peerIconTextCache,
+          iconbgColor: state.peerIconBgCache,
+          "icon:bgColor": state.peerIconBgCache
         };
       }
 
       if (u) {
-        pic = u.picture;
-        if (u.icontext) text = u.icontext;
-        if (u.iconbgColor) bg = u.iconbgColor;
+        pic = u.picture || u.uploadedpicture || u.uploadedPicture || u.avatar || u.avatarUrl || "";
+        if (u.icontext || u["icon:text"] || u.iconText) text = u.icontext || u["icon:text"] || u.iconText;
+        if (u.iconbgColor || u["icon:bgColor"] || u.iconBgColor) bg = u.iconbgColor || u["icon:bgColor"] || u.iconBgColor;
       }
     }
 
@@ -1137,9 +1168,11 @@
       pInfo.innerHTML = '<a href="' + getRelativePath() + '/user/' + escAttr(userslug) + '/topics" title="访问主页">' + esc(name) + "</a>";
       if (avatar) avatar.innerHTML = avatarHtml || getAvatarHtml(String(uid || getPeerUid() || ""), name, null);
     } else {
+      var fallbackUid = cpGetTargetUid() || state.peerUidCache || "";
+      var fallbackName = fallbackUid ? ("用户" + fallbackUid) : cpT("chatRoom", "聊天室");
       pInfo.dataset.ready = '1';
-      pInfo.textContent = cpT("chatRoom", "聊天室");
-      if (avatar) avatar.innerHTML = getAvatarHtml("", "?", null);
+      pInfo.textContent = fallbackName;
+      if (avatar) avatar.innerHTML = getAvatarHtml(fallbackUid, fallbackName, null);
     }
   }
 
@@ -1315,120 +1348,125 @@
     if (window.__wkEngineBooted) return;
     window.__wkEngineBooted = true;
 
-    $.getJSON(getApiBase() + "/token", function (res) {
-      if (!res || !res.token) return;
+    cpFetchJSON(cpApiBase() + "/token")
+      .catch(function () {
+        return cpFetchJSON("/bridge/token");
+      })
+      .then(function (res) {
+        if (!res || !res.token) return;
 
-      state.myUid = String(res.uid);
+        state.myUid = String(res.wkUid || res.uid || "");
 
-      var s = document.createElement("script");
-      s.src = cpPluginConfig().wkSdkUrl || "https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js";
-      document.head.appendChild(s);
+        var urls = [];
+        var cfgUrl = cpRaw(cpPluginConfig().wkSdkUrl);
+        if (cfgUrl) urls.push(cfgUrl);
+        urls.push("/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1");
+        urls.push("/plugins/nodebb-plugin-cp-wukong-inject/static/vendor/wukongimjssdk.umd.js?v=1");
+        urls.push("https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js");
 
-      s.onload = function () {
-        var wk = window.wk;
-        if (!wk || !wk.WKSDK) return;
+        cpLoadScriptSequential(urls, function () {
+          var wk = window.wk;
+          if (!wk || !wk.WKSDK) return;
 
-        wk.WKSDK.shared().config.uid = state.myUid;
-        wk.WKSDK.shared().config.token = String(res.token);
-        wk.WKSDK.shared().config.addr = cpPluginConfig().wkWsUrl || res.addr || res.wsAddr || res.wkws || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/wkws/");
+          wk.WKSDK.shared().config.uid = state.myUid;
+          wk.WKSDK.shared().config.token = String(res.token);
+          wk.WKSDK.shared().config.addr = cpRaw(res.wkws || res.wsAddr || res.addr || cpPluginConfig().wkWsUrl) || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/wkws/");
 
-        wk.WKSDK.shared().chatManager.addMessageListener(function (m) {
-          if (!state.mounted) return;
+          wk.WKSDK.shared().chatManager.addMessageListener(function (m) {
+            if (!state.mounted) return;
 
-          var payloadObj = extractWkPayload(m) || {};
+            var payloadObj = extractWkPayload(m) || {};
 
-          if (m.contentType === 1006 || payloadObj.type === 1006) {
-            var targetId = payloadObj.client_msg_no || payloadObj.message_id || payloadObj.clientMsgNo;
+            if (m.contentType === 1006 || payloadObj.type === 1006) {
+              var targetId = payloadObj.client_msg_no || payloadObj.message_id || payloadObj.clientMsgNo;
 
-            var targetMsg = state.wkMessages.find(function (x) {
-              return x.id === targetId || (x.wkMsg && (x.wkMsg.clientMsgNo === targetId || x.wkMsg.messageID === targetId));
-            });
+              var targetMsg = state.wkMessages.find(function (x) {
+                return x.id === targetId || (x.wkMsg && (x.wkMsg.clientMsgNo === targetId || x.wkMsg.messageID === targetId));
+              });
 
-            if (targetMsg) {
-              targetMsg.recalled = true;
-              targetMsg.text = "此消息已被撤回";
-              msgTouch(targetMsg);
-              incrementalRender("keep");
+              if (targetMsg) {
+                targetMsg.recalled = true;
+                targetMsg.text = "此消息已被撤回";
+                msgTouch(targetMsg);
+                incrementalRender("keep");
+              }
+
+              return;
             }
 
-            return;
-          }
+            var fromUid = String(m.fromUID || m.from_uid || "");
+            if (fromUid === state.myUid) return;
 
-          var fromUid = String(m.fromUID);
-          if (fromUid === state.myUid) return;
+            var currentPeerUid = getPeerUid();
+            if (cpGetChannelType() === 1 && (!currentPeerUid || fromUid !== currentPeerUid)) return;
 
-          var currentPeerUid = getPeerUid();
-          if (!currentPeerUid || fromUid !== currentPeerUid) return;
+            var t = payloadObj.text || payloadObj.content || "";
+            if (!t) return;
+            if (isCallSignalText(t)) return;
 
-          var t = payloadObj.text || payloadObj.content || "";
-          if (!t) return;
+            var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
+            newMsg.serverText = t;
 
-          // 通话信令只用于通话控制，不显示为普通聊天气泡
-          if (isCallSignalText(t)) return;
+            var incomingSeq = m.messageSeq || m.message_seq || 0;
+            if (incomingSeq > state.localMaxSeq) state.localMaxSeq = incomingSeq;
 
-          var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
-          // 修复：标记接收到的服务器文本
-          newMsg.serverText = t;
+            state.wkMessages.push(newMsg);
+            pruneWkMessages();
+            pruneAllMessagesInMemory();
 
-          var incomingSeq = m.messageSeq || m.message_seq || 0;
-          if (incomingSeq > state.localMaxSeq) state.localMaxSeq = incomingSeq;
+            state.renderVersion++;
+            state.mergedDirty = true;
+            state.msgIndexDirty = true;
 
-          state.wkMessages.push(newMsg);
-          pruneWkMessages();
-          pruneAllMessagesInMemory();
+            schedulePersistChat(currentPeerUid || cpGetChannelId());
 
-          state.renderVersion++;
-          state.mergedDirty = true;
-          state.msgIndexDirty = true;
+            var wasAtBottom = isMainAtBottom();
 
-          schedulePersistChat(currentPeerUid);
+            if (state.cfg.autoTranslateLastMsg) {
+              setTimeout(function () {
+                executePeerTranslateOnly(newMsg);
+              }, 0);
+            }
 
-          // 修复：记录滚动位置，再渲染再决策
-          var wasAtBottom = isMainAtBottom();
+            if (wasAtBottom) {
+              state.unreadCount = 0;
+              updateUnreadBadge();
+              incrementalRender("bottom");
+              requestAnimationFrame(function () {
+                forceScrollToBottom();
+                setTimeout(markVisibleAsRead, 60);
+              });
+            } else {
+              state.unreadCount++;
+              updateUnreadBadge();
+              incrementalRender("keep");
+              if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
+            }
+          });
 
-          if (state.cfg.autoTranslateLastMsg) {
-            setTimeout(function () {
-              executePeerTranslateOnly(newMsg);
-            }, 0);
-          }
+          wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
+            if (status === 1 && state.mounted && state.initialLoadDone) {
+              var pUid = getPeerUid();
+              if (pUid && state.localMaxSeq > 0) fetchOfflineMessages(pUid);
+            }
+          });
 
-          if (wasAtBottom) {
-            state.unreadCount = 0;
-            updateUnreadBadge();
-            incrementalRender("bottom");
-            // 修复：渲染后强制滚到底
-            requestAnimationFrame(function () {
-              forceScrollToBottom();
-              setTimeout(markVisibleAsRead, 60);
-            });
-          } else {
-            state.unreadCount++;
-            updateUnreadBadge();
-            incrementalRender("keep");
-            if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
-          }
+          wk.WKSDK.shared().connectManager.connect();
+          state.wkReady = true;
+        }, function (e) {
+          warn("wk-sdk-load", e);
+          toast("悟空 SDK 加载失败");
         });
-
-        wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
-          if (status === 1 && state.mounted && state.initialLoadDone) {
-            var pUid = getPeerUid();
-            if (pUid && state.localMaxSeq > 0) fetchOfflineMessages(pUid);
-          }
-        });
-
-        wk.WKSDK.shared().connectManager.connect();
-        state.wkReady = true;
-      };
-
-      s.onerror = function (e) {
-        warn("wk-sdk-load", e);
-      };
-    }).fail(function (e) {
-      warn("wk-token", e);
-    });
+      })
+      .catch(function (e) {
+        warn("wk-token", e);
+        toast("悟空登录失败");
+      });
   }
 
+
   async function fetchWukongHistory(peerUid, startSeq, opts) {
+    peerUid = peerUid || cpGetChannelId();
     if (!peerUid || state.isPreloading || state.hasNoMoreHistory) return;
 
     opts = opts || {};
@@ -1438,12 +1476,10 @@
     if (byId("cp-top-spinner")) byId("cp-top-spinner").hidden = false;
 
     try {
-      var channelId = getCurrentChannelId() || peerUid;
-      var channelType = getCurrentChannelType();
-      var url = getApiBase() + "/history?login_uid=" + encodeURIComponent(state.myUid) + "&channel_id=" + encodeURIComponent(channelId) + "&channel_type=" + encodeURIComponent(channelType) + "&limit=" + encodeURIComponent(limit);
+      var url = cpApiBase() + "/history?channel_id=" + encodeURIComponent(cpGetChannelId() || peerUid) + "&channel_type=" + encodeURIComponent(cpGetChannelType()) + "&limit=" + encodeURIComponent(limit);
       if (startSeq && startSeq > 0) url += "&start_message_seq=" + encodeURIComponent(startSeq);
 
-      var res = await fetch(url);
+      var res = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
       if (!res.ok) throw new Error("HTTP " + res.status);
 
       var json = await res.json();
@@ -1468,7 +1504,9 @@
     }
   }
 
+
   async function fetchOfflineMessages(peerUid) {
+    peerUid = peerUid || cpGetChannelId();
     if (!peerUid || !state.localMaxSeq) return;
 
     var startSeq = state.localMaxSeq + 1;
@@ -1476,17 +1514,9 @@
 
     while (hasMore) {
       try {
-        var url =
-          getApiBase() + "/history?login_uid=" +
-          encodeURIComponent(state.myUid) +
-          "&channel_id=" +
-          encodeURIComponent(getCurrentChannelId() || peerUid) +
-          "&channel_type=" +
-          encodeURIComponent(getCurrentChannelType()) +
-          "&limit=50&start_message_seq=" +
-          encodeURIComponent(startSeq);
+        var url = cpApiBase() + "/history?channel_id=" + encodeURIComponent(cpGetChannelId() || peerUid) + "&channel_type=" + encodeURIComponent(cpGetChannelType()) + "&limit=50&start_message_seq=" + encodeURIComponent(startSeq);
 
-        var res = await fetch(url);
+        var res = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
         if (!res.ok) break;
 
         var json = await res.json();
@@ -1518,6 +1548,7 @@
       }
     }
   }
+
 
   function processWukongMessages(msgs, isLoadMore) {
     var added = false;
@@ -1616,7 +1647,7 @@
 
     var peerUid = getPeerUid();
 
-    try {
+    if (!cpIndependentMode()) try {
       var nativeInput = document.querySelector('[component="chat/input"]');
       var nativeBtn = document.querySelector('[component="chat/send"]');
 
@@ -1644,7 +1675,9 @@
 
     if (peerUid && state.wkReady && window.wk) {
       try {
-        var channel = new window.wk.Channel(peerUid, 1);
+        var sendChannelId = cpGetChannelId() || peerUid;
+        var sendChannelType = cpGetChannelType() || 1;
+        var channel = new window.wk.Channel(sendChannelId, sendChannelType);
         var msgContent = new window.wk.MessageText(text);
 
         if (originalText) {
@@ -1737,13 +1770,8 @@
   }
 
   function boot() {
-    var page = getIndependentPageInfo();
-    var standaloneRoot = document.querySelector('[data-wukong-root="1"]');
-
-    if (page.independent) {
-      if (standaloneRoot) standaloneRoot.style.display = "none";
+    if (cpIndependentMode()) {
       if (!state.mounted) mount();
-      else scheduleSync();
       return;
     }
 
@@ -1758,6 +1786,7 @@
       state.bootRetryTimer = setTimeout(boot, 500);
     }
   }
+
 
   async function ensurePeerLoaded() {
     var pUid = getPeerUid();
@@ -1844,9 +1873,7 @@
     cleanUpOldMedia();
 
     injectStyle();
-    ensureMobileCss();
     injectRoot();
-    closeBootMasks();
     // 先用路由用户名占位，避免标题长时间停留在“加载中...”
     updateHeaderPeerInfo(null);
     hydratePeerFromRoute().then(function () {
@@ -1966,1354 +1993,15 @@
 
   function injectStyle() {
     if (byId("cp-chat-style")) return;
-
-    var css = `
-      body.cp-shell-on[component="chat/main-wrapper"],
-      body.cp-shell-on .chats-full,
-      body.cp-shell-on .chat-modal,
-      body.cp-shell-on[component="chat/nav-wrapper"] {
-        position:absolute!important;
-        top:-9999px!important;
-        left:-9999px!important;
-        opacity:0!important;
-        pointer-events:none!important;
-        z-index:-1!important;
-      }
-
-      #cp-chat-root {
-        position:fixed;
-        inset:0;
-        z-index:2147483000;
-        --cp-other:#fff;
-        --cp-mine:#e0c3fc;
-        --cp-bg:#f1f5f9;
-        --cp-text:#1f2937;
-        --cp-primary:#3b82f6;
-        --cp-danger:#ef4444;
-        --cp-footer-h:118px;
-        font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
-        color:var(--cp-text);
-        overflow:hidden;
-        background:var(--cp-bg);
-        -webkit-user-select:none!important;
-        user-select:none!important;
-        -webkit-touch-callout:none!important;
-        touch-action:manipulation;
-      }
-
-      #cp-chat-root *,
-      #cp-chat-root *::before,
-      #cp-chat-root *::after {
-        box-sizing:border-box;
-        -webkit-user-select:none!important;
-        user-select:none!important;
-        -webkit-touch-callout:none!important;
-      }
-
-      #cp-chat-root textarea,
-      #cp-chat-root input,
-      #cp-chat-root select {
-        -webkit-user-select:text!important;
-        user-select:text!important;
-        -webkit-touch-callout:default!important;
-      }
-
-      #cp-chat-root *::-webkit-scrollbar { display:none!important; }
-
-      .cp-bg {
-        position:absolute;
-        inset:0;
-        background-size:cover;
-        background-position:center;
-        z-index:0;
-        pointer-events:none;
-      }
-
-      .cp-bg-mask {
-        position:absolute;
-        inset:0;
-        background:rgba(241,245,249,var(--bg-op,.85));
-        z-index:1;
-        pointer-events:none;
-      }
-
-      .cp-header {
-        position:absolute;
-        left:0;
-        right:0;
-        top:0;
-        z-index:20;
-        height:calc(52px + env(safe-area-inset-top));
-        padding:env(safe-area-inset-top) 12px 7px 10px;
-        display:flex;
-        align-items:flex-end;
-        justify-content:flex-start;
-        gap:8px;
-        border-bottom:1px solid rgba(255,255,255,.35);
-        background:rgba(255,255,255,.72);
-        backdrop-filter:blur(10px);
-        box-shadow:0 1px 3px rgba(0,0,0,.02);
-      }
-
-      .cp-header-back {
-        width:32px;
-        height:36px;
-        border:none;
-        background:transparent;
-        color:#111827;
-        font-size:30px;
-        line-height:1;
-        display:grid;
-        place-items:center;
-        cursor:pointer;
-        flex-shrink:0;
-      }
-
-      .cp-header-peer {
-        min-width:0;
-        flex:1;
-        display:flex;
-        align-items:center;
-        gap:9px;
-        padding-bottom:2px;
-      }
-
-      .cp-peer-avatar {
-        width:36px;
-        height:36px;
-        border-radius:40%;
-        overflow:hidden;
-        flex-shrink:0;
-        box-shadow:0 1px 4px rgba(0,0,0,.10);
-        background:#cbd5e1;
-      }
-
-      .cp-peer-avatar .avatar,
-      .cp-peer-avatar img {
-        width:100%!important;
-        height:100%!important;
-        border-radius:40%!important;
-        object-fit:cover;
-      }
-
-      .cp-header-center {
-        flex:1;
-        min-width:0;
-        font-size:18px;
-        text-align:left;
-        font-weight:800;
-        color:#111827;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-      }
-
-      .cp-header-center a {
-        color:inherit;
-        text-decoration:none;
-      }
-
-      .cp-header-actions {
-        width:42px;
-        flex-shrink:0;
-        display:flex;
-        justify-content:center;
-        align-items:center;
-        padding-right:6px;
-        padding-bottom:3px;
-      }
-
-      .cp-header-actions button {
-        width:34px;
-        height:34px;
-        border:none;
-        border-radius:50%;
-        background:transparent!important;
-        box-shadow:none!important;
-        display:grid;
-        place-items:center;
-        font-size:18px;
-        color:#4b5563;
-        cursor:pointer;
-        padding:0;
-      }
-
-      .cp-main {
-        position:absolute;
-        left:0;
-        right:0;
-        top:calc(52px + env(safe-area-inset-top));
-        bottom:calc(var(--cp-footer-h) + env(safe-area-inset-bottom));
-        z-index:10;
-        overflow-y:auto;
-        overflow-x:hidden;
-        padding:10px 8px 20px;
-        scroll-behavior:auto;
-        -webkit-overflow-scrolling:touch;
-        overscroll-behavior:contain;
-      }
-
-      .cp-skeleton-spinner {
-        text-align:center;
-        font-size:13px;
-        color:#9ca3af;
-        padding:12px 0;
-        height:40px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        gap:8px;
-      }
-
-      .cp-skeleton-spinner i { animation:fa-spin 1s infinite linear; }
-
-      .cp-fab-bottom {
-        position:absolute;
-        right:16px;
-        bottom:calc(var(--cp-footer-h) + 20px);
-        width:38px;
-        height:38px;
-        border-radius:50%;
-        border:1px solid rgba(0,0,0,.05);
-        background:rgba(255,255,255,.9);
-        backdrop-filter:blur(5px);
-        box-shadow:0 4px 12px rgba(0,0,0,.15);
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-size:20px;
-        color:var(--cp-primary);
-        cursor:pointer;
-        opacity:0;
-        pointer-events:none;
-        transform:translateY(20px);
-        transition:all .25s cubic-bezier(.2,.8,.2,1);
-        z-index:35;
-      }
-
-      .cp-fab-bottom.show {
-        opacity:1;
-        pointer-events:auto;
-        transform:translateY(0);
-      }
-
-      .cp-fab-badge {
-        position:absolute;
-        top:-4px;
-        right:-4px;
-        background:#ef4444;
-        color:#fff;
-        font-size:10px;
-        font-family:sans-serif;
-        font-weight:bold;
-        padding:2px 5px;
-        border-radius:10px;
-        box-shadow:0 1px 2px rgba(0,0,0,.2);
-      }
-
-      .cp-time-sep {
-        display:flex;
-        justify-content:center;
-        margin:16px 0 10px;
-        pointer-events:none;
-      }
-
-      .cp-time-sep span {
-        background:transparent!important;
-        color:#94a3b8;
-        font-size:11px;
-        font-weight:600;
-        padding:2px 4px;
-        border-radius:0;
-        backdrop-filter:none!important;
-        box-shadow:none!important;
-      }
-
-      .cp-row {
-        display:flex;
-        align-items:flex-end;
-        gap:8px;
-        padding:2px 0;
-        position:relative;
-      }
-
-      .cp-row.mine { justify-content:flex-end; }
-      .cp-row.mine .cp-avatar-wrap { display:none; }
-
-      .cp-avatar-wrap {
-        display:block;
-        flex-shrink:0;
-        width:40px;
-        height:40px;
-        cursor:pointer;
-        border-radius:40%;
-        overflow:hidden;
-        visibility:hidden;
-        z-index:8;
-        position:relative!important;
-        transform:translateZ(0);
-      }
-
-      .cp-row.is-last .cp-avatar-wrap { visibility:visible; }
-
-      .cp-bubble-wrap {
-        max-width:78%;
-        min-width:40px;
-        position:relative!important;
-        z-index:1!important;
-        overflow:visible;
-      }
-
-      .cp-bubble {
-        position:relative!important;
-        padding:6px 10px 8px;
-        font-size:15.5px;
-        line-height:1.45;
-        word-break:break-word;
-        cursor:default;
-        border-radius:15px 15px 13px 15px;
-        z-index:1!important;
-      }
-
-      .cp-row.other .cp-bubble {
-        background:var(--cp-other);
-        color:#000;
-      }
-
-      .cp-row.mine .cp-bubble {
-        background:var(--cp-mine);
-        color:#111;
-      }
-
-      .cp-row.other.has-tail .cp-bubble { border-bottom-left-radius:0; }
-      .cp-row.mine.has-tail .cp-bubble { border-bottom-right-radius:4px; }
-
-      .cp-row.other.has-tail .cp-bubble::before {
-        content:"";
-        position:absolute;
-        bottom:2px;
-        left:-8px;
-        width:20px;
-        height:10px;
-        background:var(--cp-other);
-        border-bottom-right-radius:16px 14px;
-        z-index:0!important;
-        pointer-events:none!important;
-      }
-
-      .cp-row.other.has-tail .cp-bubble::after {
-        content:"";
-        position:absolute;
-        bottom:2px;
-        left:-12px;
-        width:12px;
-        height:20px;
-        background:var(--cp-bg);
-        border-bottom-right-radius:10px;
-        z-index:0!important;
-        pointer-events:none!important;
-      }
-
-      .cp-row.mine.has-tail .cp-bubble::before {
-        content:"";
-        position:absolute;
-        bottom:2px;
-        right:-12px;
-        width:28px;
-        height:19px;
-        background:var(--cp-mine);
-        border-bottom-left-radius:18px 18px;
-        z-index:0!important;
-        pointer-events:none!important;
-      }
-
-      .cp-row.mine.has-tail .cp-bubble::after {
-        content:"";
-        position:absolute;
-        bottom:2px;
-        right:-12px;
-        width:12px;
-        height:20px;
-        background:var(--cp-bg);
-        border-bottom-left-radius:10px;
-        z-index:0!important;
-        pointer-events:none!important;
-      }
-
-      body.cp-has-bg .cp-row.has-tail .cp-bubble::before,
-      body.cp-has-bg .cp-row.has-tail .cp-bubble::after { display:none!important; }
-
-      body.cp-has-bg .cp-row.other.has-tail .cp-bubble {
-        border-bottom-left-radius:18px!important;
-      }
-
-      body.cp-has-bg .cp-row.mine.has-tail .cp-bubble {
-        border-bottom-right-radius:18px!important;
-      }
-
-      .cp-bubble.recalled {
-        opacity:.72;
-        background:#e5e7eb!important;
-        border-radius:8px!important;
-      }
-
-      .cp-bubble.recalled::before,
-      .cp-bubble.recalled::after { display:none!important; }
-
-      .cp-bubble.media-shell {
-        padding:0;
-        background:transparent!important;
-        box-shadow:none;
-        border-radius:8px!important;
-        overflow:hidden;
-      }
-
-      .cp-bubble.media-shell::before,
-      .cp-bubble.media-shell::after { display:none!important; }
-
-      .cp-quote-card {
-        display:flex;
-        background:rgba(59,130,246,.08);
-        border-radius:8px;
-        margin-bottom:6px;
-        overflow:hidden;
-        pointer-events:none;
-      }
-
-      .cp-row.mine .cp-quote-card { background:rgba(0,0,0,.06); }
-
-      .cp-quote-bar {
-        width:3px;
-        min-width:3px;
-        background:var(--cp-primary);
-        border-radius:3px 0 0 3px;
-        flex-shrink:0;
-      }
-
-      .cp-row.mine .cp-quote-bar { background:rgba(0,0,0,.35); }
-
-      .cp-quote-body {
-        padding:5px 10px;
-        min-width:0;
-        overflow:hidden;
-      }
-
-      .cp-quote-name {
-        font-size:12px;
-        font-weight:600;
-        color:var(--cp-primary);
-        line-height:1.3;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-      }
-
-      .cp-row.mine .cp-quote-name { color:rgba(0,0,0,.55); }
-
-      .cp-quote-text {
-        font-size:13px;
-        color:rgba(0,0,0,.55);
-        line-height:1.35;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-        max-width:220px;
-      }
-
-      .cp-inline-time {
-        float:right;
-        margin:12px 0 0 8px;
-        font-size:10px;
-        opacity:.45;
-        font-variant-numeric:tabular-nums;
-        line-height:1.45;
-        pointer-events:none;
-      }
-
-      .cp-text {
-        white-space:pre-wrap;
-        pointer-events:none;
-      }
-
-      .cp-text a { pointer-events:auto; }
-
-      .cp-text img.emoji {
-        width:1.25em;
-        height:1.25em;
-        vertical-align:-.2em;
-        display:inline-block;
-      }
-
-      .cp-translation-wrap {
-        clear:both;
-        margin-top:6px;
-        padding-top:6px;
-        border-top:1px dashed rgba(0,0,0,.1);
-      }
-
-      .cp-translation-text {
-        font-size:13.5px;
-        white-space:pre-wrap;
-        opacity:.95;
-        color:#374151;
-      }
-
-      .cp-translation-text.is-error {
-        color:#ef4444;
-        cursor:pointer;
-        pointer-events:auto;
-      }
-
-      .cp-quick-trans {
-        position:absolute;
-        right:-34px;
-        top:50%;
-        transform:translateY(-50%);
-        width:28px;
-        height:28px;
-        background:rgba(255,255,255,.98);
-        border-radius:999px;
-        box-shadow:0 2px 8px rgba(0,0,0,.12);
-        display:grid;
-        place-items:center;
-        cursor:pointer;
-        border:1px solid rgba(0,0,0,.04);
-        z-index:14;
-        transition:transform .18s,box-shadow .18s;
-        pointer-events:auto;
-        touch-action:manipulation;
-        -webkit-tap-highlight-color:transparent;
-      }
-
-      .cp-quick-trans:active { transform:translateY(-50%) scale(.92); }
-
-      .cp-media-time {
-        position:absolute;
-        right:6px;
-        bottom:6px;
-        font-size:10px;
-        color:#fff;
-        background:rgba(0,0,0,.5);
-        border-radius:8px;
-        padding:2px 6px;
-        z-index:2;
-        font-variant-numeric:tabular-nums;
-      }
-
-      .cp-media-thumb {
-        display:block;
-        border:0;
-        padding:0;
-        margin:0;
-        background:transparent;
-        cursor:pointer;
-        pointer-events:auto;
-      }
-
-      .cp-media-thumb img {
-        display:block;
-        width:200px;
-        max-height:280px;
-        border-radius:8px;
-        object-fit:cover;
-        object-position:top;
-      }
-
-      .cp-video-wrap {
-        width:200px;
-        max-height:280px;
-        border-radius:8px;
-        overflow:hidden;
-        position:relative;
-        background:#e2e8f0;
-      }
-
-      .cp-video-wrap video {
-        width:100%;
-        height:100%;
-        object-fit:cover;
-        object-position:top;
-        display:block;
-      }
-
-      .cp-video-wrap::after {
-        content:"\\f01d";
-        font-family:FontAwesome;
-        position:absolute;
-        left:50%;
-        top:50%;
-        transform:translate(-50%,-50%);
-        font-size:32px;
-        color:rgba(255,255,255,.8);
-        pointer-events:none;
-        text-shadow:0 2px 4px rgba(0,0,0,.3);
-      }
-
-      .cp-video-mark {
-        position:absolute;
-        right:6px;
-        bottom:6px;
-        font-size:10px;
-        color:#fff;
-        background:rgba(0,0,0,.6);
-        border-radius:8px;
-        padding:2px 6px;
-        z-index:2;
-      }
-
-      .cp-voice {
-        display:flex;
-        align-items:center;
-        gap:6px;
-        min-width:100px;
-        border:0;
-        background:transparent;
-        cursor:pointer;
-        pointer-events:auto;
-        padding:0;
-        color:inherit;
-      }
-
-      .cp-play-circle {
-        width:28px;
-        height:28px;
-        border-radius:50%;
-        display:grid;
-        place-items:center;
-        box-shadow:0 1px 3px rgba(0,0,0,.1);
-        flex-shrink:0;
-        font-size:12px;
-        background:#f1f5f9;
-        color:var(--cp-primary);
-      }
-
-      .cp-wave {
-        display:flex;
-        align-items:center;
-        gap:2px;
-        height:14px;
-        flex:1;
-        opacity:.6;
-      }
-
-      .cp-wave i {
-        width:2px;
-        border-radius:2px;
-        background:currentColor;
-      }
-
-      .cp-voice.playing .cp-wave i {
-        animation:cp-wave-pulse .6s ease-in-out infinite alternate;
-        opacity:1;
-      }
-
-      .cp-voice-info-col {
-        display:flex;
-        flex-direction:column;
-        align-items:flex-end;
-        line-height:1;
-        margin-left:2px;
-      }
-
-      .cp-voice-dur {
-        font-size:13px;
-        font-weight:bold;
-      }
-
-      .cp-voice-time {
-        font-size:9px;
-        opacity:.45;
-        margin-top:3px;
-        font-variant-numeric:tabular-nums;
-      }
-
-      @keyframes cp-wave-pulse {
-        from { transform:scaleY(.4); }
-        to { transform:scaleY(1.5); }
-      }
-
-      @keyframes cp-rec-bar-pulse {
-        from { transform:scaleY(.5); }
-        to { transform:scaleY(1.6); }
-      }
-
-      .cp-lazy-loading {
-        animation:cp-pulse 1.5s infinite;
-        background:rgba(0,0,0,.05);
-        width:180px;
-        height:180px;
-        border-radius:8px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        flex-shrink:0;
-      }
-
-      @keyframes cp-pulse {
-        0% { opacity:.6; }
-        50% { opacity:1; }
-        100% { opacity:.6; }
-      }
-
-      .cp-context-overlay {
-        position:fixed;
-        inset:0;
-        z-index:2147483004;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        padding:20px;
-        background:rgba(15,23,42,.32);
-        backdrop-filter:blur(1px);
-      }
-
-      .cp-context-menu {
-        z-index:2147483005;
-        background:#fff;
-        border-radius:18px;
-        box-shadow:0 8px 30px rgba(0,0,0,.18);
-        padding:6px;
-        width:auto;
-        min-width:166px;
-        max-width:210px;
-        animation:cp-menu-pop-center .16s cubic-bezier(.2,.8,.2,1);
-      }
-
-      @keyframes cp-menu-pop-center {
-        from { transform:scale(.92); opacity:0; }
-        to { transform:scale(1); opacity:1; }
-      }
-
-      .cp-menu-item {
-        padding:12px 14px;
-        font-size:15px;
-        color:#374151;
-        cursor:pointer;
-        border-radius:10px;
-        display:flex;
-        align-items:center;
-        gap:10px;
-        white-space:nowrap;
-      }
-
-      .cp-menu-item:active { background:#e5e7eb; }
-      .cp-menu-item.danger { color:#ef4444; }
-
-      .cp-footer {
-        position:absolute;
-        left:0;
-        right:0;
-        bottom:0;
-        z-index:30;
-        padding:0 12px max(12px,env(safe-area-inset-bottom));
-        background:linear-gradient(to top,rgba(255,255,255,.96),rgba(255,255,255,.80),transparent);
-        display:flex;
-        flex-direction:column;
-        gap:6px;
-      }
-
-      .cp-translate-bar {
-        max-width:100%;
-        margin:2px 4px 0;
-        display:inline-flex;
-        align-items:center;
-        gap:4px;
-        padding:2px 8px;
-        border:1px solid rgba(255,255,255,.6);
-        border-radius:20px;
-        background:rgba(255,255,255,.88);
-        backdrop-filter:blur(8px);
-        box-shadow:0 1px 6px rgba(0,0,0,.04);
-      }
-
-      .cp-lang-btn {
-        background:transparent;
-        border:none;
-        font-size:12px;
-        font-weight:700;
-        color:#374151;
-        cursor:pointer;
-        padding:2px 6px;
-        border-radius:12px;
-        white-space:nowrap;
-      }
-
-      .cp-swap-btn {
-        border:none;
-        background:transparent;
-        color:#9ca3af;
-        font-size:13px;
-        cursor:pointer;
-        padding:0 4px;
-      }
-
-      .cp-toggle-ai-send {
-        position:relative;
-        border:none;
-        background:transparent;
-        color:#9ca3af;
-        font-size:14px;
-        cursor:pointer;
-        padding:4px 4px 4px 14px;
-        border-radius:50%;
-        display:flex;
-        align-items:center;
-        margin-left:4px;
-        border-left:1px solid #e5e7eb;
-      }
-
-      .cp-toggle-ai-send::before {
-        content:"";
-        position:absolute;
-        left:4px;
-        top:50%;
-        transform:translateY(-50%);
-        width:5px;
-        height:5px;
-        border-radius:50%;
-        background:#9ca3af;
-      }
-
-      .cp-toggle-ai-send.active { color:var(--cp-primary); }
-
-      .cp-toggle-ai-send.active::before {
-        background:#22c55e;
-        box-shadow:0 0 4px #22c55e;
-      }
-
-      .cp-wingman-panel {
-        margin:0 4px;
-        padding:7px 9px;
-        border:1px solid rgba(99,102,241,.16);
-        border-radius:16px;
-        background:rgba(255,255,255,.92);
-        backdrop-filter:blur(6px);
-        box-shadow:0 3px 12px rgba(0,0,0,.05);
-      }
-
-      .cp-wingman-analysis {
-        font-size:12.5px;
-        color:#475569;
-        margin-bottom:7px;
-        line-height:1.4;
-        display:flex;
-        align-items:center;
-        gap:6px;
-      }
-
-      .cp-thinking-dot {
-        width:6px;
-        height:6px;
-        border-radius:50%;
-        background:#6366f1;
-        animation:cp-thinking 1s infinite alternate;
-        display:inline-block;
-        flex-shrink:0;
-      }
-
-      @keyframes cp-thinking {
-        from { opacity:.25; transform:scale(.8); }
-        to { opacity:1; transform:scale(1.25); }
-      }
-
-      .cp-smart-replies-bar {
-        display:flex;
-        gap:8px;
-        overflow-x:auto;
-        padding:1px 0;
-        scroll-behavior:smooth;
-        -webkit-overflow-scrolling:touch;
-        scrollbar-width:none;
-        background:transparent;
-        max-width:100%;
-      }
-
-      .cp-smart-replies-bar::-webkit-scrollbar { display:none; }
-
-      .cp-sr-pill {
-        flex-shrink:0;
-        background:#e0e7ff;
-        color:#4338ca;
-        padding:7px 12px;
-        border-radius:16px;
-        font-size:13px;
-        font-weight:600;
-        cursor:pointer;
-        border:1px solid rgba(0,0,0,.05);
-        white-space:normal;
-        line-height:1.35;
-        box-shadow:0 2px 4px rgba(0,0,0,.05);
-        max-width:min(72vw,260px);
-        overflow:visible;
-        text-overflow:clip;
-      }
-
-      .cp-sr-pill {
-        display:-webkit-box;
-        -webkit-line-clamp:2;
-        -webkit-box-orient:vertical;
-        overflow:hidden;
-      }
-
-      .cp-sr-pill:active { background:#c7d2fe; }
-
-      .cp-sr-pill em {
-        font-style:normal;
-        opacity:.72;
-        font-weight:500;
-        margin-left:4px;
-        font-size:11px;
-      }
-
-      .cp-quote-preview {
-        display:flex;
-        align-items:center;
-        gap:8px;
-        background:rgba(255,255,255,.92);
-        backdrop-filter:blur(6px);
-        border-radius:12px;
-        padding:6px 10px;
-        margin:0 4px 4px;
-        border:1px solid rgba(0,0,0,.06);
-        font-size:13px;
-        color:#4b5563;
-      }
-
-      .cp-quote-preview-bar {
-        width:3px;
-        min-height:28px;
-        background:var(--cp-primary);
-        border-radius:3px;
-        flex-shrink:0;
-      }
-
-      .cp-quote-preview-body {
-        flex:1;
-        min-width:0;
-        overflow:hidden;
-      }
-
-      .cp-quote-preview-name {
-        font-size:11px;
-        font-weight:700;
-        color:var(--cp-primary);
-      }
-
-      .cp-quote-preview-text {
-        font-size:12px;
-        color:#6b7280;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-      }
-
-      .cp-quote-preview-close {
-        border:none;
-        background:none;
-        font-size:16px;
-        color:#9ca3af;
-        cursor:pointer;
-        padding:0 4px;
-        flex-shrink:0;
-      }
-
-      .cp-toolbar {
-        position:relative;
-        max-width:100%;
-        margin:0;
-        display:flex;
-        align-items:flex-end;
-        padding:6px;
-        border:1px solid rgba(0,0,0,.08);
-        border-radius:28px;
-        background:rgba(255,255,255,.95);
-        box-shadow:0 4px 15px rgba(0,0,0,.06);
-        min-height:50px;
-      }
-
-      .cp-progress-wrap {
-        position:absolute;
-        left:16px;
-        right:16px;
-        top:-5px;
-        height:4px;
-        background:rgba(0,0,0,.06);
-        border-radius:4px;
-        overflow:hidden;
-        pointer-events:none;
-      }
-
-      .cp-progress-bar {
-        height:100%;
-        width:0%;
-        background:var(--cp-primary);
-        transition:width .1s linear;
-      }
-
-      .cp-tool-btn {
-        width:36px;
-        height:36px;
-        border:none;
-        background:transparent;
-        color:#6b7280;
-        cursor:pointer;
-        display:grid;
-        place-items:center;
-        flex-shrink:0;
-        border-radius:50%;
-        margin-bottom:2px;
-      }
-
-      .cp-input-box {
-        flex:1;
-        min-width:0;
-        display:flex;
-        align-items:center;
-      }
-
-      .cp-input-box textarea {
-        width:100%;
-        min-height:36px;
-        max-height:120px;
-        border:none;
-        padding:8px 4px;
-        margin:2px 0;
-        font-size:15px;
-        outline:none;
-        background:transparent;
-        color:#1f2937;
-        resize:none;
-        overflow-y:auto;
-        font-family:inherit;
-        line-height:20px;
-      }
-
-      .cp-primary-btn {
-        width:38px;
-        height:38px;
-        border:none;
-        border-radius:50%;
-        color:#6b7280;
-        cursor:pointer;
-        display:grid;
-        place-items:center;
-        background:transparent;
-        flex-shrink:0;
-        margin-bottom:1px;
-      }
-
-      .cp-primary-btn.send {
-        background:var(--cp-primary);
-        color:#fff;
-        box-shadow:0 2px 8px rgba(37,99,235,.3);
-      }
-
-      .cp-modal-mask {
-        position:absolute;
-        inset:0;
-        z-index:50;
-        background:rgba(0,0,0,.4);
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        backdrop-filter:blur(2px);
-        padding:20px;
-      }
-
-      .cp-modal {
-        width:100%;
-        max-width:420px;
-        max-height:86vh;
-        overflow-y:auto;
-        border-radius:22px;
-        background:#fff;
-        box-shadow:0 10px 40px rgba(0,0,0,.2);
-      }
-
-      .cp-lang-grid {
-        display:grid;
-        grid-template-columns:1fr 1fr;
-        gap:10px;
-        margin-top:14px;
-      }
-
-      .cp-lang-item {
-        display:flex;
-        align-items:center;
-        gap:10px;
-        padding:11px 14px;
-        border-radius:14px;
-        background:#f8fafc;
-        border:1px solid #e2e8f0;
-        cursor:pointer;
-        font-size:15px;
-        color:#334155;
-      }
-
-      .cp-settings-head {
-        position:sticky;
-        top:0;
-        z-index:2;
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        padding:13px 14px;
-        background:rgba(255,255,255,.98);
-        border-bottom:1px solid #eef2f7;
-      }
-
-      .cp-settings-head h3 {
-        margin:0;
-        font-size:17px;
-        font-weight:800;
-      }
-
-      .cp-settings-x {
-        width:32px;
-        height:32px;
-        border:none;
-        border-radius:50%;
-        background:#f1f5f9;
-        color:#64748b;
-        cursor:pointer;
-      }
-
-      .cp-settings-body {
-        padding:12px 14px 16px;
-        max-height:calc(86vh - 60px);
-        overflow-y:auto;
-      }
-
-      .cp-settings-section {
-        margin-bottom:12px;
-        padding:11px;
-        border:1px solid #e2e8f0;
-        border-radius:16px;
-        background:#f8fafc;
-      }
-
-      .cp-settings-section-title {
-        font-size:13px;
-        font-weight:800;
-        color:#334155;
-        margin-bottom:9px;
-      }
-
-      .cp-provider-tabs {
-        display:grid;
-        grid-template-columns:1fr 1fr;
-        gap:8px;
-      }
-
-      .cp-provider-tab {
-        border:1px solid #dbe4ef;
-        border-radius:14px;
-        padding:10px 8px;
-        background:#fff;
-        color:#475569;
-        font-size:14px;
-        font-weight:800;
-        cursor:pointer;
-      }
-
-      .cp-provider-tab.active {
-        color:#fff;
-        border-color:var(--cp-primary);
-        background:linear-gradient(135deg,#3b82f6,#6366f1);
-        box-shadow:0 6px 16px rgba(59,130,246,.22);
-      }
-
-      .cp-ai-pane {
-        display:none;
-        margin-top:8px;
-      }
-
-      .cp-ai-pane.show { display:block; }
-
-      .cp-setting-row {
-        display:flex;
-        gap:9px;
-        align-items:center;
-      }
-
-      .cp-setting-row > * { flex:1; }
-
-      .cp-setting-field {
-        display:block;
-        margin-top:8px;
-      }
-
-      .cp-setting-field span {
-        display:block;
-        font-size:12px;
-        color:#64748b;
-        margin-bottom:5px;
-      }
-
-      .cp-setting-field input,
-      .cp-setting-field select {
-        width:100%;
-        box-sizing:border-box;
-        padding:9px 10px;
-        border:1px solid #dbe4ef;
-        border-radius:12px;
-        background:#fff;
-        color:#111827;
-        outline:none;
-        font-family:inherit;
-      }
-
-      .cp-setting-toggle {
-        display:flex;
-        justify-content:space-between;
-        align-items:center;
-        gap:10px;
-        background:#fff;
-        border:1px solid #e2e8f0;
-        padding:10px;
-        border-radius:14px;
-        font-size:13px;
-        cursor:pointer;
-      }
-
-      .cp-setting-toggle input {
-        width:18px;
-        height:18px;
-        accent-color:var(--cp-primary);
-      }
-
-      .cp-settings-actions {
-        display:flex;
-        gap:10px;
-        position:sticky;
-        bottom:0;
-        padding-top:8px;
-        background:linear-gradient(to top,#fff 70%,rgba(255,255,255,0));
-      }
-
-      .cp-settings-actions button {
-        flex:1;
-        padding:11px;
-        border-radius:14px;
-        font-weight:800;
-        font-size:15px;
-        cursor:pointer;
-      }
-
-      .cp-settings-secondary {
-        background:#f1f5f9;
-        color:#475569;
-        border:1px solid #cbd5e1;
-      }
-
-      .cp-settings-primary {
-        background:var(--cp-primary);
-        color:#fff;
-        border:none;
-      }
-
-      .cp-rec-inline {
-        display:flex;
-        align-items:center;
-        gap:6px;
-        flex:1;
-        padding:2px 4px;
-        background:transparent;
-        width:100%;
-      }
-
-      .cp-rec-btn-icon {
-        background:none;
-        border:none;
-        padding:4px 8px;
-        cursor:pointer;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-      }
-
-      .cp-rec-vis {
-        flex:1;
-        display:flex;
-        align-items:center;
-        gap:4px;
-        min-width:0;
-      }
-
-      .cp-rec-dot {
-        width:8px;
-        height:8px;
-        background:#ef4444;
-        border-radius:50%;
-        flex-shrink:0;
-        animation:cp-rec-blink 1.5s infinite;
-      }
-
-      .cp-rec-dash {
-        flex:1;
-        height:2px;
-        border-bottom:3px dotted #9ca3af;
-        margin:0 4px;
-        opacity:.8;
-      }
-
-      .cp-rec-bars {
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        gap:3px;
-        height:20px;
-        width:28px;
-        margin-right:4px;
-      }
-
-      .cp-rec-bars i {
-        width:3px;
-        border-radius:2px;
-        background:#9ca3af;
-        animation:cp-rec-bar-pulse .7s ease-in-out infinite alternate;
-      }
-
-      @keyframes cp-rec-blink {
-        0%,100% { opacity:1; }
-        50% { opacity:.3; }
-      }
-
-
-      /* ===== critical visibility fix, keep at the end of injected CSS ===== */
-      #cp-chat-root [hidden],
-      #cp-chat-root .cp-modal-mask[hidden],
-      #cp-chat-root .cp-context-overlay[hidden],
-      #cp-chat-root .cp-preview-mask[hidden],
-      #cp-chat-root .cp-media-pop[hidden],
-      #cp-chat-root #cp-settings-mask[hidden],
-      #cp-chat-root #cp-lang-mask[hidden],
-      #cp-chat-root #cp-wingman-panel[hidden],
-      #cp-chat-root #cp-quote-preview[hidden],
-      #cp-chat-root #cp-upload-progress-wrap[hidden],
-      #cp-chat-root #cp-rec-inline[hidden],
-      #cp-chat-root #cp-fab-badge[hidden],
-      #cp-chat-root #cp-top-spinner[hidden] {
-        display:none!important;
-        visibility:hidden!important;
-        opacity:0!important;
-        pointer-events:none!important;
-      }
-
-      #cp-chat-root .cp-modal-mask.is-open,
-      #cp-chat-root .cp-context-overlay.is-open,
-      #cp-chat-root .cp-preview-mask.is-open {
-        display:flex!important;
-        visibility:visible!important;
-        opacity:1!important;
-        pointer-events:auto!important;
-      }
-    `;
-
-    var st = document.createElement("style");
-    st.id = "cp-chat-style";
-    st.textContent = css;
-    document.head.appendChild(st);
+    var href = (cpRaw(cpPluginConfig().cssUrl) || "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=18");
+    var existing = document.querySelector('link[href*="wukong-chat.css"]');
+    if (!existing) {
+      var link = document.createElement("link");
+      link.id = "cp-chat-style";
+      link.rel = "stylesheet";
+      link.href = href;
+      document.head.appendChild(link);
+    }
   }
 
 
@@ -3435,7 +2123,7 @@
               <button class="cp-lang-btn" id="cp-src-lang-btn">🇨🇳 中文</button>
               <button class="cp-swap-btn" id="cp-lang-swap">⇄</button>
               <button class="cp-lang-btn" id="cp-tgt-lang-btn">🇲🇲 မြန်မာစာ</button>
-              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送">译</button>
+              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><i class="fa-solid fa-language fa fa-language"></i></button>
             </div>
           </div>
 
@@ -3751,16 +2439,16 @@
 
     byId("cp-src-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "source";
-      byId("cp-lang-mask").hidden = false; byId("cp-lang-mask").removeAttribute("hidden"); byId("cp-lang-mask").classList.add("is-open");
+      byId("cp-lang-mask").hidden = false;
     });
 
     byId("cp-tgt-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "target";
-      byId("cp-lang-mask").hidden = false; byId("cp-lang-mask").removeAttribute("hidden"); byId("cp-lang-mask").classList.add("is-open");
+      byId("cp-lang-mask").hidden = false;
     });
 
     byId("cp-lang-close").addEventListener("click", function () {
-      byId("cp-lang-mask").hidden = true; byId("cp-lang-mask").setAttribute("hidden", ""); byId("cp-lang-mask").classList.remove("is-open");
+      byId("cp-lang-mask").hidden = true;
     });
 
     byId("cp-lang-grid").addEventListener("click", function (e) {
@@ -3774,7 +2462,7 @@
 
       syncTranslateBar();
       saveJSON(KEY_CFG, state.cfg);
-      byId("cp-lang-mask").hidden = true; byId("cp-lang-mask").setAttribute("hidden", ""); byId("cp-lang-mask").classList.remove("is-open");
+      byId("cp-lang-mask").hidden = true;
       clearWingmanPanel();
     });
 
@@ -4018,36 +2706,18 @@
   }
 
   function openSettings() {
-    var mask = byId("cp-settings-mask");
-    if (!mask) return;
-
-    mask.hidden = false;
-    mask.removeAttribute("hidden");
-    mask.classList.add("is-open");
-    mask.dataset.open = "1";
-
-    if (!state.settingsOpen) {
-      state.settingsOpen = true;
-      try {
-        history.pushState({ cpSettings: true }, "", location.href);
-      } catch (_) {}
-    }
+    byId("cp-settings-mask").hidden = false;
+    state.settingsOpen = true;
+    history.pushState({ cpSettings: true }, "", location.href);
   }
 
   function closeSettings(fromPopState) {
-    var mask = byId("cp-settings-mask");
-    var wasOpen = !!state.settingsOpen;
+    if (!state.settingsOpen) return;
 
     state.settingsOpen = false;
+    byId("cp-settings-mask").hidden = true;
 
-    if (mask) {
-      mask.hidden = true;
-      mask.setAttribute("hidden", "");
-      mask.classList.remove("is-open", "show", "active");
-      delete mask.dataset.open;
-    }
-
-    if (wasOpen && !fromPopState) {
+    if (!fromPopState) {
       try {
         history.back();
       } catch (_) {}
@@ -4154,7 +2824,7 @@
     setValue("cp-relationship-stage", state.cfg.relationshipStage || "刚认识");
     setValue("cp-communication-style", state.cfg.communicationStyle || "自然直接，偶尔幽默");
 
-    var op = state.bg.opacity !== undefined ? state.bg.opacity : 0.08;
+    var op = state.bg.opacity !== undefined ? state.bg.opacity : 0.85;
     setValue("cp-bg-opacity", op);
 
     var bgOpVal = byId("cp-bg-op-val");
@@ -4205,7 +2875,7 @@
     state.cfg.ai.model = value("cp-ai-model", state.cfg.ai.model || "gpt-4o-mini").trim() || "gpt-4o-mini";
     state.cfg.ai.temperature = 0.2;
 
-    state.bg.opacity = parseFloat(value("cp-bg-opacity", state.bg.opacity !== undefined ? state.bg.opacity : 0.08));
+    state.bg.opacity = parseFloat(value("cp-bg-opacity", state.bg.opacity !== undefined ? state.bg.opacity : 0.85));
 
     saveJSON(KEY_CFG, state.cfg);
     saveJSON(KEY_BG, state.bg);
@@ -4346,11 +3016,11 @@
     html += '<div class="cp-menu-item danger" data-action="delete"><i class="fa fa-trash"></i> 删除</div>';
 
     menu.innerHTML = html;
-    byId("cp-context-overlay").hidden = false; byId("cp-context-overlay").removeAttribute("hidden"); byId("cp-context-overlay").classList.add("is-open");
+    byId("cp-context-overlay").hidden = false;
   }
 
   function hideContextMenu() {
-    byId("cp-context-overlay").hidden = true; byId("cp-context-overlay").setAttribute("hidden", ""); byId("cp-context-overlay").classList.remove("is-open");
+    byId("cp-context-overlay").hidden = true;
     state.contextMsg = null;
   }
 
@@ -4487,6 +3157,7 @@
   }
 
   function mountNativeObserver() {
+    if (cpIndependentMode()) return;
     if (!state.mounted) return;
 
     var root = document.querySelector('[component="chat/messages"]');
@@ -4506,7 +3177,9 @@
     state.observer.observe(root, { childList: true, subtree: true });
   }
 
+
   function scheduleSync() {
+    if (cpIndependentMode()) return;
     if (state.syncScheduled) return;
 
     state.syncScheduled = true;
@@ -4517,7 +3190,9 @@
     }, 80);
   }
 
+
   function syncFromNative() {
+    if (cpIndependentMode()) return;
     var rootRows = Array.prototype.slice.call(document.querySelectorAll('[component="chat/messages"] [component="chat/message"]'));
 
     if (!rootRows.length) {
@@ -5991,48 +4666,93 @@
   }
 
   function uploadToNodeBB(file, onProgress) {
-    return new Promise(function (resolve, reject) {
-      var fd = new FormData();
-      fd.append("files[]", file, file.name || "cp_" + Date.now());
+    function extractUploadUrl(json) {
+      if (!json) return "";
 
-      var xhr = new XMLHttpRequest();
-      xhr.open("POST", (window.config && config.relative_path ? config.relative_path : "") + "/api/post/upload");
-      xhr.withCredentials = true;
+      var candidates = [
+        json.url,
+        json.path,
+        json.src,
+        json.location,
+        json.file,
+        json.image,
+        json.uploadedFile,
+        json.uploadedfile,
+        json.data && json.data.url,
+        json.data && json.data.path,
+        json.response && json.response.url,
+        json.response && json.response.path,
+        json.response && json.response.image && json.response.image.url,
+        json.response && json.response.file && json.response.file.url,
+        json.response && json.response.files && json.response.files[0] && (json.response.files[0].url || json.response.files[0].path),
+        json.response && json.response.images && json.response.images[0] && (json.response.images[0].url || json.response.images[0].path),
+        json.files && json.files[0] && (json.files[0].url || json.files[0].path || json.files[0].src),
+        json.images && json.images[0] && (json.images[0].url || json.images[0].path || json.images[0].src),
+        json.uploads && json.uploads[0] && (json.uploads[0].url || json.uploads[0].path || json.uploads[0].src)
+      ];
 
-      if (window.config) xhr.setRequestHeader("x-csrf-token", config.csrf_token || config.csrfToken || "");
-
-      xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-      };
-
-      xhr.onload = function () {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            var json = JSON.parse(xhr.responseText);
-
-            var url =
-              (json && json.response && json.response.images && json.response.images[0] && json.response.images[0].url) ||
-              (json && json.files && json.files[0] && (json.files[0].url || json.files[0].path)) ||
-              "";
-
-            if (url && !/^https?:\/\//i.test(url) && url.charAt(0) !== "/") url = "/" + url;
-
-            if (!url) throw new Error("upload url empty");
-
-            resolve(url);
-          } catch (err) {
-            reject(err);
+      for (var i = 0; i < candidates.length; i++) {
+        var u = candidates[i];
+        if (u && typeof u === "string") {
+          u = u.trim();
+          if (u) {
+            if (!/^https?:\/\//i.test(u) && u.charAt(0) !== "/") u = "/" + u;
+            return u;
           }
-        } else {
-          reject(new Error("upload failed: " + xhr.status));
         }
-      };
+      }
 
-      xhr.onerror = function () {
-        reject(new Error("network error"));
-      };
+      return "";
+    }
 
-      xhr.send(fd);
+    function tryUpload(fieldName) {
+      return new Promise(function (resolve, reject) {
+        var fd = new FormData();
+        fd.append(fieldName, file, file.name || "cp_" + Date.now());
+
+        var xhr = new XMLHttpRequest();
+        var url = cpIndependentMode()
+          ? (cpApiBase() + "/upload")
+          : ((window.config && config.relative_path ? config.relative_path : "") + "/api/post/upload");
+
+        xhr.open("POST", url);
+        xhr.withCredentials = true;
+
+        var csrf = (window.config && (config.csrf_token || config.csrfToken)) ||
+          (document.querySelector('meta[name="csrf-token"]') && document.querySelector('meta[name="csrf-token"]').getAttribute("content")) ||
+          "";
+        if (csrf) xhr.setRequestHeader("x-csrf-token", csrf);
+
+        xhr.upload.onprogress = function (e) {
+          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+        };
+
+        xhr.onload = function () {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              var json = JSON.parse(xhr.responseText || "{}");
+              var url = extractUploadUrl(json);
+              if (!url) throw new Error("upload url empty");
+              resolve(url);
+            } catch (err) {
+              reject(err);
+            }
+          } else {
+            reject(new Error("upload failed: " + xhr.status + " " + xhr.responseText));
+          }
+        };
+
+        xhr.onerror = function () {
+          reject(new Error("network error"));
+        };
+
+        xhr.send(fd);
+      });
+    }
+
+    return tryUpload("files[]").catch(function (err) {
+      if (!cpIndependentMode()) throw err;
+      return tryUpload("file");
     });
   }
 
@@ -6397,10 +5117,7 @@
     }
 
     if (bgMask) {
-      var op = state.bg && state.bg.opacity !== undefined ? Number(state.bg.opacity) : 0.08;
-      if (!Number.isFinite(op)) op = 0.08;
-      if (state.bg && state.bg.dataUrl) op = Math.min(op, 0.16);
-      bgMask.style.setProperty("--bg-op", op);
+      bgMask.style.setProperty("--bg-op", state.bg && state.bg.opacity !== undefined ? Math.min(Number(state.bg.opacity) || 0.08, 0.30) : 0.08);
     }
   }
 
@@ -6496,6 +5213,7 @@
               pBar.style.width = pct * 100 + "%";
             });
 
+            if (!url) throw new Error("voice upload url empty");
             sendText("[语音消息](" + url + ")");
           } catch (e) {
             warn("record-upload", e);
@@ -6827,15 +5545,20 @@
     }, 2000);
   }
 
+  function cpStart() {
+    cpLoadI18n().finally(boot);
+  }
+
   if (window.jQuery) {
-    $(boot);
+    $(cpStart);
+    document.addEventListener("DOMContentLoaded", cpStart);
 
     $(window).on("action:ajaxify.end action:chat.loaded action:chat.switched", function () {
-      setTimeout(boot, 80);
-      setTimeout(boot, 260);
+      setTimeout(cpStart, 80);
+      setTimeout(cpStart, 260);
     });
   } else {
-    document.addEventListener("DOMContentLoaded", boot);
-    window.addEventListener("load", boot);
+    document.addEventListener("DOMContentLoaded", cpStart);
+    window.addEventListener("load", cpStart);
   }
 })();
