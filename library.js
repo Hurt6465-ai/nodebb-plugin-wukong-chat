@@ -256,6 +256,8 @@ async function getNodeBBUserByUid(uid) {
     'icon:bgColor',
     'status',
     'language',
+    // Custom NodeBB user field used by this forum for the user's country / flag.
+    // It may be a two-letter country code (for emoji flags), an emoji, or an image URL.
     'language_flag',
   ]);
 
@@ -273,6 +275,9 @@ async function getNodeBBUserByUid(uid) {
     status: firstNonEmpty(fields.status),
     language: firstNonEmpty(fields.language),
     language_flag: firstNonEmpty(fields.language_flag),
+    country: firstNonEmpty(fields.language_flag),
+    countryCode: firstNonEmpty(fields.language_flag),
+    countryFlagUrl: /^https?:\/\//i.test(String(firstNonEmpty(fields.language_flag))) ? firstNonEmpty(fields.language_flag) : '',
   };
 }
 
@@ -309,6 +314,148 @@ async function fetchNodeBBUserPublic(uid) {
   });
 
   return u;
+}
+
+
+function getObjectValue(obj, keys, fallback = '') {
+  for (const key of keys) {
+    if (!obj || obj[key] === undefined || obj[key] === null) continue;
+    const value = obj[key];
+    if (typeof value === 'string' && !value.trim()) continue;
+    return value;
+  }
+  return fallback;
+}
+
+function extractConversationList(data) {
+  if (Array.isArray(data)) return { list: data, path: 'root' };
+  if (!data || typeof data !== 'object') return { list: [], path: '' };
+
+  if (Array.isArray(data.conversations)) return { list: data.conversations, path: 'conversations' };
+  if (Array.isArray(data.list)) return { list: data.list, path: 'list' };
+  if (Array.isArray(data.data)) return { list: data.data, path: 'data' };
+  if (data.data && Array.isArray(data.data.conversations)) return { list: data.data.conversations, path: 'data.conversations' };
+  if (data.data && Array.isArray(data.data.list)) return { list: data.data.list, path: 'data.list' };
+
+  return { list: [], path: '' };
+}
+
+function setConversationList(data, pathName, list) {
+  if (Array.isArray(data)) return list;
+  const out = data && typeof data === 'object' ? { ...data } : {};
+
+  if (pathName === 'conversations') out.conversations = list;
+  else if (pathName === 'list') out.list = list;
+  else if (pathName === 'data') out.data = list;
+  else if (pathName === 'data.conversations') out.data = { ...(out.data || {}), conversations: list };
+  else if (pathName === 'data.list') out.data = { ...(out.data || {}), list };
+
+  // Also expose a normalized top-level list for old clients. This does not remove
+  // the original WuKongIM response shape.
+  out.conversations = list;
+  return out;
+}
+
+function channelIdOfConversation(item) {
+  let ch = getObjectValue(item, ['channel_id', 'channelId', 'channelID', 'channel'], '');
+  if (ch && typeof ch === 'object') ch = getObjectValue(ch, ['channel_id', 'channelId', 'channelID', 'id'], '');
+  return String(ch || '').trim();
+}
+
+function channelTypeOfConversation(item, channelId) {
+  const raw = getObjectValue(item, ['channel_type', 'channelType'], '');
+  const n = toInt(raw, channelId && String(channelId).startsWith(TOPIC_CHANNEL_PREFIX) ? TOPIC_CHANNEL_TYPE : 1);
+  return normalizeChannelType(n, 1);
+}
+
+function publicUserForConversation(u) {
+  if (!u) return null;
+  return {
+    uid: String(u.uid),
+    username: u.username || '',
+    userslug: u.userslug || '',
+    displayname: u.displayname || u.username || '',
+    avatarUrl: u.picture || '',
+    picture: u.picture || '',
+    icontext: u.icontext || '',
+    iconbgColor: u.iconbgColor || '#72a5f2',
+    status: u.status || '',
+    country: u.country || '',
+    countryCode: u.countryCode || '',
+    countryFlagUrl: u.countryFlagUrl || '',
+    language_flag: u.language_flag || '',
+  };
+}
+
+async function enrichConversationSyncData(data, currentUid) {
+  const found = extractConversationList(data);
+  if (!found.list.length) return data;
+
+  const activity = readActivity();
+
+  const enriched = [];
+  for (const item of found.list) {
+    if (!item || typeof item !== 'object') {
+      enriched.push(item);
+      continue;
+    }
+
+    const channelId = channelIdOfConversation(item);
+    const channelType = channelTypeOfConversation(item, channelId);
+    const row = { ...item };
+
+    if (channelType === 1) {
+      // In this deployment WuKong uid == NodeBB uid. Enrich direct chats here so
+      // the mobile list does not briefly render raw WuKong IDs or letter avatars.
+      const peerUid = channelId.replace(/[^0-9]/g, '');
+      if (peerUid && peerUid !== String(currentUid || '')) {
+        const u = await fetchNodeBBUserPublic(peerUid);
+        const profile = publicUserForConversation(u);
+        if (profile) {
+          row.nbbUser = profile;
+          row.user = profile;
+          row.displayName = profile.displayname || profile.username;
+          row.username = profile.username;
+          row.avatarUrl = profile.avatarUrl;
+          row.picture = profile.picture;
+          row.icontext = profile.icontext;
+          row.iconbgColor = profile.iconbgColor;
+          row.country = profile.country;
+          row.countryCode = profile.countryCode;
+          row.countryFlagUrl = profile.countryFlagUrl;
+          row.language_flag = profile.language_flag;
+        }
+      }
+    } else if (channelType === TOPIC_CHANNEL_TYPE || channelId.startsWith(TOPIC_CHANNEL_PREFIX)) {
+      const tid = topicIdFromChannelId(channelId);
+      const topicActivity = tid ? activity[tid] : null;
+      const publisherUid = String(
+        getObjectValue(row, ['publisher_uid', 'publisherUid', 'last_chat_uid', 'lastChatUid', 'from_uid', 'fromUID'], '') ||
+        (topicActivity && topicActivity.last_chat_uid) ||
+        ''
+      ).replace(/[^0-9]/g, '');
+
+      if (publisherUid) {
+        const u = await fetchNodeBBUserPublic(publisherUid);
+        const profile = publicUserForConversation(u);
+        if (profile) row.publisher = profile;
+      }
+
+      if (topicActivity) {
+        row.topic = {
+          tid,
+          title: topicActivity.title || '',
+          cid: topicActivity.cid || '',
+        };
+        if (!row.last_msg && topicActivity.last_chat_text) row.last_msg = topicActivity.last_chat_text;
+        if (!row.last_msg_at && topicActivity.last_chat_at) row.last_msg_at = topicActivity.last_chat_at;
+      }
+    }
+
+    enriched.push(row);
+  }
+
+  return setConversationList(data, found.path, enriched);
 }
 
 async function provisionWukongUser(uid, username, token, source = 'unknown') {
@@ -782,7 +929,8 @@ function registerApiRoutes(router, middleware) {
     };
 
     const data = await wkPostAny(['/conversation/sync', '/v1/conversation/sync'], payload, 5000, []);
-    res.json(data);
+    const enriched = await enrichConversationSyncData(data, current.uid);
+    res.json(enriched);
   }));
 
   router.post(`${api}/topic-channel/ensure`, ensureLogin, asyncHandler(async (req, res) => {
