@@ -1,3 +1,4 @@
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
 <link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=26">
 <link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1">
 <link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=26">
