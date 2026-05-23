@@ -1,4 +1,4 @@
-<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=19">
+<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=20">
 <link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1">
 <link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=19">
 
@@ -32,7 +32,7 @@
     channelId: channelId,
     channelType: Number(channelType || 1),
     wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1",
-    cssUrl: "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=19",
+    cssUrl: "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=20",
     i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
     defaultSourceLang: "中文",
     defaultTargetLang: "မြန်မာစာ",
@@ -41,4 +41,4 @@
   });
 })();
 </script>
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=19"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=20"></script>
