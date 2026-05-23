@@ -41,203 +41,6 @@
     return cpSameUid(uid, getSelfUid());
   }
 
-  var IMAGE_COMPRESS_CONFIG = {
-    maxSide: 1440,
-    maxSizeMB: 0.25,
-    quality: 0.60,
-    minCompressBytes: 120 * 1024,
-    useWebp: true,
-    qualities: [0.60, 0.55, 0.50, 0.45]
-  };
-
-  var IMAGE_COMPRESS_SOCIAL = {
-    maxSide: 1080,
-    maxSizeMB: 0.09,
-    quality: 0.58,
-    minCompressBytes: 70 * 1024,
-    useWebp: true,
-    qualities: [0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22]
-  };
-
-  var AVATAR_COMPRESS_CONFIG = {
-    maxSide: 512,
-    maxSizeMB: 0.06,
-    quality: 0.56,
-    minCompressBytes: 45 * 1024,
-    useWebp: true,
-    qualities: [0.56, 0.48, 0.40, 0.34, 0.28, 0.22]
-  };
-
-  var cpWebpSupportPromise = null;
-
-  function canEncodeWebP() {
-    if (cpWebpSupportPromise) return cpWebpSupportPromise;
-
-    cpWebpSupportPromise = new Promise(function (resolve) {
-      try {
-        var canvas = document.createElement("canvas");
-        canvas.width = 1;
-        canvas.height = 1;
-        canvas.toBlob(function (blob) {
-          resolve(!!(blob && blob.type === "image/webp"));
-        }, "image/webp", 0.8);
-      } catch (_) {
-        resolve(false);
-      }
-    });
-
-    return cpWebpSupportPromise;
-  }
-
-  function cpIsSkippableImageType(file) {
-    var type = String(file && file.type || "").toLowerCase();
-    var name = String(file && file.name || "").toLowerCase();
-    return (
-      type === "image/gif" ||
-      type === "image/svg+xml" ||
-      type === "image/heic" ||
-      type === "image/heif" ||
-      /\.gif$|\.svg$|\.heic$|\.heif$/i.test(name)
-    );
-  }
-
-  function loadImageFromFile(file) {
-    return new Promise(function (resolve, reject) {
-      var url = URL.createObjectURL(file);
-      var img = new Image();
-
-      img.onload = function () {
-        URL.revokeObjectURL(url);
-        resolve(img);
-      };
-
-      img.onerror = function (e) {
-        URL.revokeObjectURL(url);
-        reject(e);
-      };
-
-      img.src = url;
-    });
-  }
-
-  function canvasToBlob(canvas, type, quality) {
-    return new Promise(function (resolve) {
-      canvas.toBlob(function (blob) {
-        resolve(blob);
-      }, type, quality);
-    });
-  }
-
-  function cpMakeCompressedFile(blob, originalFile, outputType) {
-    var originalName = String(originalFile && originalFile.name || "image").replace(/\.[^.]+$/, "");
-    var ext = outputType === "image/webp" ? ".webp" : ".jpg";
-    return new File([blob], originalName + ext, {
-      type: outputType,
-      lastModified: Date.now()
-    });
-  }
-
-  async function compressImageFile(file, config) {
-    config = Object.assign({}, IMAGE_COMPRESS_CONFIG, config || {});
-
-    if (!file || !/^image\//i.test(file.type)) return file;
-    if (file.size < config.minCompressBytes) return file;
-    if (cpIsSkippableImageType(file)) return file;
-
-    var supportsWebp = config.useWebp ? await canEncodeWebP() : false;
-    var outputType = supportsWebp ? "image/webp" : "image/jpeg";
-    var maxBytes = Math.max(1, Number(config.maxSizeMB || 0.25) * 1024 * 1024);
-
-    var img = await loadImageFromFile(file);
-    var sourceW = img.naturalWidth || img.width;
-    var sourceH = img.naturalHeight || img.height;
-    if (!sourceW || !sourceH) return file;
-
-    var scale = Math.min(1, Number(config.maxSide || 1440) / Math.max(sourceW, sourceH));
-    var targetW = Math.max(1, Math.round(sourceW * scale));
-    var targetH = Math.max(1, Math.round(sourceH * scale));
-
-    var canvas = document.createElement("canvas");
-    canvas.width = targetW;
-    canvas.height = targetH;
-
-    var ctx = canvas.getContext("2d", { alpha: outputType === "image/webp" });
-    ctx.drawImage(img, 0, 0, targetW, targetH);
-
-    var qualities = Array.isArray(config.qualities) && config.qualities.length ? config.qualities : [config.quality || 0.6];
-    var bestBlob = null;
-
-    for (var i = 0; i < qualities.length; i++) {
-      var q = Number(qualities[i]);
-      var blob = await canvasToBlob(canvas, outputType, q);
-      if (!blob) continue;
-
-      bestBlob = blob;
-      if (blob.size <= maxBytes) break;
-    }
-
-    if (!bestBlob) return file;
-
-    // Avoid making tiny files bigger.
-    if (bestBlob.size >= file.size && scale >= 1) return file;
-
-    var compressed = cpMakeCompressedFile(bestBlob, file, outputType);
-    compressed._compressedFrom = {
-      size: file.size,
-      width: sourceW,
-      height: sourceH,
-      outputType: outputType,
-      maxSide: config.maxSide,
-      maxSizeMB: config.maxSizeMB
-    };
-
-    return compressed;
-  }
-
-  function ensureWkMsgIdSet() {
-    if (state.wkMsgIds) return state.wkMsgIds;
-
-    state.wkMsgIds = new Set();
-    (state.wkMessages || []).forEach(function (m) {
-      if (m && m.id) state.wkMsgIds.add(String(m.id));
-    });
-
-    return state.wkMsgIds;
-  }
-
-  function cpFastRenderHash(renderArr) {
-    var first = renderArr && renderArr[0];
-    var last = renderArr && renderArr[renderArr.length - 1];
-
-    return [
-      state.renderVersion || 0,
-      renderArr ? renderArr.length : 0,
-      first && first.id,
-      first && first._ver,
-      last && last.id,
-      last && last._ver
-    ].join("|");
-  }
-
-  function setupFooterResizeObserver() {
-    if (state.footerResizeObserver) return;
-
-    var footer = byId("cp-footer");
-    var root = byId("cp-chat-root");
-    if (!footer || !root || typeof ResizeObserver === "undefined") return;
-
-    state.footerResizeObserver = new ResizeObserver(function () {
-      requestAnimationFrame(function () {
-        var h = Math.max(84, Math.ceil(footer.offsetHeight || 84));
-        root.style.setProperty("--cp-footer-h", h + "px");
-        if (state.stickToBottom) forceScrollToBottom();
-      });
-    });
-
-    state.footerResizeObserver.observe(footer);
-  }
-
-
   function cpAutoPlayPreviewVideo(video, mask) {
     if (!video) return;
 
@@ -312,7 +115,7 @@
 
     for (var i = 0; i < urls.length; i++) {
       try {
-        var res = await fetch(urls[i] + "?v=35", {
+        var res = await fetch(urls[i] + "?v=36", {
           credentials: "same-origin",
           headers: { Accept: "application/json" }
         });
@@ -334,7 +137,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v35";
+  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v36";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -396,10 +199,29 @@
 
   var IMAGE_CONFIG = {
     maxSide: 1440,
-    maxSizeMB: 0.45,
-    quality: 0.6,
+    maxSizeMB: 0.25,
+    quality: 0.60,
     minCompressBytes: 120 * 1024,
-    useWebp: true
+    useWebp: true,
+    qualities: [0.60, 0.55, 0.50, 0.45]
+  };
+
+  var IMAGE_COMPRESS_SOCIAL = {
+    maxSide: 1080,
+    maxSizeMB: 0.09,
+    quality: 0.58,
+    minCompressBytes: 70 * 1024,
+    useWebp: true,
+    qualities: [0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22]
+  };
+
+  var AVATAR_COMPRESS_CONFIG = {
+    maxSide: 512,
+    maxSizeMB: 0.06,
+    quality: 0.56,
+    minCompressBytes: 45 * 1024,
+    useWebp: true,
+    qualities: [0.56, 0.48, 0.40, 0.34, 0.28, 0.22]
   };
 
   var VIDEO_CONFIG = {
@@ -628,6 +450,8 @@
     var albumLabel = document.querySelector("#cp-pick-album .cp-menu-label");
 
     if (mediaBtn) mediaBtn.innerHTML = ICON.photo;
+    var transBtn = byId("cp-send-translate-toggle");
+    if (transBtn) transBtn.innerHTML = '<i class="fa-solid fa-language" style="color: rgb(177, 151, 252);"></i><span class="cp-trans-fallback">译</span>';
     if (primaryIcon && !String(byId("cp-input") && byId("cp-input").value || "").trim()) primaryIcon.innerHTML = ICON.mic;
     if (cameraIcon) cameraIcon.innerHTML = ICON.camera;
     if (cameraLabel) cameraLabel.textContent = cpT("shoot", "拍摄");
@@ -1088,6 +912,7 @@
     if (!state.mergedDirty && state.mergedCache) return state.mergedCache;
 
     var allRawMsgs = state.messages.concat(state.wkMessages || []).filter(function (m) {
+      normalizeMessageOwnership(m);
       return !isCallSignalMessage(m);
     });
 
@@ -1288,8 +1113,10 @@
     if (!slug) return false;
 
     state.peerUidCache = state.peerUidCache || String(slug);
-    state.peerUsernameCache = state.peerUsernameCache || String(slug);
-    state.peerUserslugCache = state.peerUserslugCache || String(slug);
+    if (!/^\d+$/.test(String(slug))) {
+      state.peerUsernameCache = state.peerUsernameCache || String(slug);
+      state.peerUserslugCache = state.peerUserslugCache || String(slug);
+    }
     updateHeaderPeerInfo(null);
 
     state.peerHydrating = true;
@@ -1333,8 +1160,10 @@
 
     if (direct) {
       state.peerUidCache = String(direct);
-      if (!state.peerUsernameCache) state.peerUsernameCache = String(direct);
-      if (!state.peerUserslugCache) state.peerUserslugCache = String(direct);
+      if (!/^\d+$/.test(String(direct))) {
+        if (!state.peerUsernameCache) state.peerUsernameCache = String(direct);
+        if (!state.peerUserslugCache) state.peerUserslugCache = String(direct);
+      }
       return state.peerUidCache;
     }
 
@@ -1355,8 +1184,10 @@
     var slug = getRoutePeerSlug();
     if (slug) {
       state.peerUidCache = String(slug);
-      state.peerUsernameCache = state.peerUsernameCache || String(slug);
-      state.peerUserslugCache = state.peerUserslugCache || String(slug);
+      if (!/^\d+$/.test(String(slug))) {
+        state.peerUsernameCache = state.peerUsernameCache || String(slug);
+        state.peerUserslugCache = state.peerUserslugCache || String(slug);
+      }
       return state.peerUidCache;
     }
 
@@ -1381,6 +1212,14 @@
         });
       }
 
+      if (!u && uid && String(uid) === String(state.peerUidCache || "")) {
+        u = {
+          picture: state.peerPictureCache,
+          icontext: state.peerIconTextCache,
+          iconbgColor: state.peerIconBgCache
+        };
+      }
+
       if (!u && state.peerUsernameCache && String(username || "") === String(state.peerUsernameCache)) {
         u = {
           picture: state.peerPictureCache,
@@ -1397,7 +1236,7 @@
     }
 
     if (pic) {
-      return '<img class="avatar" src="' + escAttr(pic) + '" style="width:100%;height:100%;border-radius:40%;object-fit:cover;" />';
+      return '<img class="avatar" src="' + escAttr(pic) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" />';
     }
 
     if (fallbackHtml && fallbackHtml.indexOf("<img") > -1) return fallbackHtml;
@@ -1405,7 +1244,7 @@
     return (
       '<div class="avatar" style="background:' +
       escAttr(bg) +
-      ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:40%;font-size:16px;">' +
+      ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;font-size:16px;">' +
       esc(text) +
       "</div>"
     );
@@ -1441,8 +1280,12 @@
     if (!name) {
       var routeSlug = getRoutePeerSlug();
       if (routeSlug) {
-        name = routeSlug;
-        userslug = userslug || routeSlug;
+        if (!/^\d+$/.test(String(routeSlug))) {
+          name = routeSlug;
+          userslug = userslug || routeSlug;
+        } else {
+          name = state.peerUsernameCache || cpT("peer_loading", "加载中...");
+        }
       }
     }
 
@@ -1870,7 +1713,7 @@
       var m = msgs[i];
       var payloadObj = extractWkPayload(m) || {};
       var fromUid = String(m.from_uid || m.fromUID);
-      var isMine = fromUid === state.myUid;
+      var isMine = cpIsMineUid(fromUid);
       var serverT = payloadObj.text || payloadObj.content || "";
 
       // 历史/离线消息里的通话信令不显示
@@ -1886,11 +1729,9 @@
 
       var msgId = String(m.message_id || m.messageID || m.client_msg_no || m.clientMsgNo || "wk_hist_" + Math.random());
 
-      var exists = state.wkMessages.some(function (x) {
-        return x.id === msgId;
-      });
-
-      if (exists) continue;
+      var ids = ensureWkMsgIdSet();
+      if (ids.has(String(msgId))) continue;
+      ids.add(String(msgId));
 
       var newMsg = createMessageObj(t, isMine, fromUid, m, payloadObj);
       newMsg.id = msgId;
@@ -2253,6 +2094,11 @@
     if (state.observer) state.observer.disconnect();
     state.observer = null;
 
+    if (state.footerResizeObserver) {
+      state.footerResizeObserver.disconnect();
+      state.footerResizeObserver = null;
+    }
+
     if (state.lazyObserver) state.lazyObserver.disconnect();
     state.lazyObserver = null;
 
@@ -2440,7 +2286,7 @@
         </main>
 
         <button id="cp-fab-bottom" class="cp-fab-bottom" title="回到底部">
-          <span class="cp-fab-v">∨</span>
+          <span class="cp-fab-v">↓</span>
           <span id="cp-fab-badge" class="cp-fab-badge" hidden>0</span>
         </button>
 
@@ -2454,7 +2300,7 @@
               <button class="cp-lang-btn" id="cp-src-lang-btn">🇨🇳 中文</button>
               <button class="cp-swap-btn" id="cp-lang-swap">⇄</button>
               <button class="cp-lang-btn" id="cp-tgt-lang-btn">🇲🇲 မြန်မာစာ</button>
-              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送">译</button>
+              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><i class="fa-solid fa-language" style="color: rgb(177, 151, 252);"></i><span class="cp-trans-fallback">译</span></button>
             </div>
           </div>
 
@@ -2741,14 +2587,20 @@
       pop.hidden = !pop.hidden;
     });
 
-    byId("cp-pick-camera").addEventListener("click", function () {
+    byId("cp-pick-camera").addEventListener("click", function (ev) {
+      ev.preventDefault();
       byId("cp-media-pop").hidden = true;
-      byId("cp-camera-file").click();
+      var input = byId("cp-camera-file");
+      input.value = "";
+      input.click();
     });
 
-    byId("cp-pick-album").addEventListener("click", function () {
+    byId("cp-pick-album").addEventListener("click", function (ev) {
+      ev.preventDefault();
       byId("cp-media-pop").hidden = true;
-      byId("cp-media-file").click();
+      var input = byId("cp-media-file");
+      input.value = "";
+      input.click();
     });
 
     byId("cp-camera-file").addEventListener("change", onPickMedia);
@@ -3342,15 +3194,12 @@
 
     var menu = byId("cp-context-menu");
     var html =
-      '<div class="cp-menu-item" data-action="quote">' +
-      ICON.quote +
-      ' 引用</div><div class="cp-menu-item" data-action="translate">' +
-      ICON.trans +
-      " 翻译</div>";
+      '<div class="cp-menu-item" data-action="quote">' + esc(cpT("quote", "引用")) + '</div>' +
+      '<div class="cp-menu-item" data-action="translate">' + esc(cpT("translate", "翻译")) + '</div>';
 
-    if (msg.mine) html += '<div class="cp-menu-item danger" data-action="recall">' + ICON.recall + " 撤回</div>";
+    if (msg.mine) html += '<div class="cp-menu-item danger" data-action="recall">' + esc(cpT("recall", "撤回")) + '</div>';
 
-    html += '<div class="cp-menu-item danger" data-action="delete"><i class="fa fa-trash"></i> 删除</div>';
+    html += '<div class="cp-menu-item danger" data-action="delete">' + esc(cpT("delete", "删除")) + '</div>';
 
     menu.innerHTML = html;
     byId("cp-context-overlay").hidden = false;
@@ -3792,7 +3641,7 @@
         '<div class="cp-translation-text' +
           (isError ? " is-error" : "") +
           '"' +
-          (isError ? ' data-act="retry-translate"' : "") +
+          (isError ? ' data-act="retry-translate"' : ' data-act="collapse-translation"') +
         ">" +
           (isLoading ? "⏳ " : "✨ ") +
           esc(m.translation) +
@@ -3816,20 +3665,7 @@
     var allMsgs = getMergedMessages();
     var renderArr = allMsgs.slice(-state.renderLimit);
 
-    var newHash = state.renderVersion + "|" + renderArr.length + "|";
-    var h;
-
-    for (h = 0; h < renderArr.length; h++) {
-      newHash += [
-        renderArr[h].id,
-        renderArr[h]._ver || 0,
-        renderArr[h].recalled ? "R" : "",
-        renderArr[h].translationOpen ? "T" : "",
-        renderArr[h].translation || "",
-        renderArr[h].text || "",
-        renderArr[h].serverText || ""
-      ].join("|");
-    }
+    var newHash = cpFastRenderHash(renderArr);
 
     if (state.lastRenderHash === newHash && mode === "keep") return;
     state.lastRenderHash = newHash;
@@ -4126,11 +3962,6 @@
   }
 
   function observeLazyElements() {
-    if (state.footerResizeObserver) {
-      state.footerResizeObserver.disconnect();
-      state.footerResizeObserver = null;
-    }
-
     if (state.lazyObserver) {
       document.querySelectorAll(".cp-lazy-media").forEach(function (el) {
         if (el.dataset.observed === "1") return;
@@ -4228,6 +4059,21 @@
   }
 
   function onListClick(e) {
+    var collapseEl = e.target.closest('[data-act="collapse-translation"]');
+
+    if (collapseEl) {
+      var collapseRow = collapseEl.closest(".cp-row");
+      var collapseMsg = collapseRow && getMsgById(collapseRow.getAttribute("data-id"));
+      if (collapseMsg) {
+        collapseMsg.translationOpen = false;
+        collapseMsg._ver = (collapseMsg._ver || 1) + 1;
+        state.renderVersion++;
+        state.mergedDirty = true;
+        incrementalRender("keep");
+      }
+      return;
+    }
+
     var retryEl = e.target.closest('[data-act="retry-translate"]');
 
     if (retryEl) {
@@ -5217,6 +5063,88 @@
     });
   }
 
+
+  function loadImageFromFile(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        resolve(img);
+      };
+
+      img.onerror = function (e) {
+        URL.revokeObjectURL(url);
+        reject(e);
+      };
+
+      img.src = url;
+    });
+  }
+
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise(function (resolve) {
+      canvas.toBlob(function (blob) {
+        resolve(blob);
+      }, type, quality);
+    });
+  }
+
+  function ensureWkMsgIdSet() {
+    if (state.wkMsgIds) return state.wkMsgIds;
+
+    state.wkMsgIds = new Set();
+    (state.wkMessages || []).forEach(function (m) {
+      if (m && m.id) state.wkMsgIds.add(String(m.id));
+    });
+
+    return state.wkMsgIds;
+  }
+
+  function cpFastRenderHash(renderArr) {
+    var first = renderArr && renderArr[0];
+    var last = renderArr && renderArr[renderArr.length - 1];
+
+    return [
+      state.renderVersion || 0,
+      renderArr ? renderArr.length : 0,
+      first && first.id,
+      first && first._ver,
+      first && first.translationOpen,
+      last && last.id,
+      last && last._ver,
+      last && last.translationOpen
+    ].join("|");
+  }
+
+  function setupFooterResizeObserver() {
+    if (state.footerResizeObserver) return;
+
+    var footer = byId("cp-footer");
+    var root = byId("cp-chat-root");
+    if (!footer || !root || typeof ResizeObserver === "undefined") return;
+
+    state.footerResizeObserver = new ResizeObserver(function () {
+      requestAnimationFrame(function () {
+        var h = Math.max(72, Math.ceil(footer.offsetHeight || 72));
+        root.style.setProperty("--cp-footer-h", h + "px");
+      });
+    });
+
+    state.footerResizeObserver.observe(footer);
+  }
+
+  function normalizeMessageOwnership(m) {
+    if (!m) return m;
+    var uid = m.uid || m.from_uid || m.fromUid || m.fromUID || "";
+    if (cpIsMineUid(uid)) {
+      m.mine = true;
+      m.uid = String(state.myUid || uid);
+    }
+    return m;
+  }
+
   async function canEncode(type) {
     if (!state.encodeSupport) state.encodeSupport = {};
     if (state.encodeSupport[type] !== undefined) return state.encodeSupport[type];
@@ -5262,12 +5190,57 @@
   }
 
   async function compressWithCanvas(file, targetType) {
-    // v35: ObjectURL + Canvas compression. Avoids base64/DataURL memory bloat.
-    // Default profile: max 1440px, target 0.25MB, WebP if supported.
+    var img = await loadImageFromFile(file);
+
+    var w = img.naturalWidth || img.width;
+    var h = img.naturalHeight || img.height;
+    var scale = Math.min(1, IMAGE_CONFIG.maxSide / Math.max(w, h));
+
+    w = Math.max(1, Math.round(w * scale));
+    h = Math.max(1, Math.round(h * scale));
+
+    var canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+
+    var ctx = canvas.getContext("2d", { alpha: targetType === "image/webp" });
+    ctx.drawImage(img, 0, 0, w, h);
+
+    var qualities = Array.isArray(IMAGE_CONFIG.qualities) && IMAGE_CONFIG.qualities.length ? IMAGE_CONFIG.qualities : [IMAGE_CONFIG.quality || 0.6];
+    var maxBytes = Math.max(1, Number(IMAGE_CONFIG.maxSizeMB || 0.25) * 1024 * 1024);
+    var bestBlob = null;
+
+    for (var i = 0; i < qualities.length; i++) {
+      var blob = await canvasToBlob(canvas, targetType, Number(qualities[i]));
+      if (!blob) continue;
+      bestBlob = blob;
+      if (blob.size <= maxBytes) break;
+    }
+
+    return bestBlob;
+  }
+
+  async function compressImage(file) {
+    if (!file || !/^image\//i.test(file.type)) return file;
+    if (/image\/(gif|svg\+xml)/i.test(file.type)) return file;
+    if (file.size < IMAGE_CONFIG.minCompressBytes) return file;
+
+    var targetType = IMAGE_CONFIG.useWebp && (await canEncode("image/webp")) ? "image/webp" : "image/jpeg";
+
     try {
-      return await compressImageFile(file, IMAGE_COMPRESS_CONFIG);
-    } catch (e) {
-      warn("compress-image", e);
+      var blob = await compressWithLibrary(file, targetType);
+
+      if (!blob) blob = await compressWithCanvas(file, targetType);
+      if (!blob || blob.size >= file.size * 0.95) return file;
+
+      var baseName = String(file.name || "image-" + Date.now()).replace(/\.[^.]+$/, "");
+
+      return new File([blob], baseName + extForMime(targetType), {
+        type: targetType,
+        lastModified: Date.now()
+      });
+    } catch (err) {
+      warn("compress-image", err);
       return file;
     }
   }
@@ -5322,8 +5295,11 @@
 
     try {
       for (var i = 0; i < files.length; i++) {
-        pWrap.hidden = false;
-        pBar.style.width = "0%";
+        if (pWrap) {
+          pWrap.hidden = false;
+          pWrap.removeAttribute("hidden");
+        }
+        if (pBar) pBar.style.width = "0%";
 
         var rawFile = files[i];
         var uploadFile = rawFile;
@@ -5343,9 +5319,9 @@
         }
 
         var url = await uploadToNodeBB(uploadFile, function (pct) {
-          pBar.style.width = Math.max(1, Math.min(100, pct * 100)) + "%";
+          if (pBar) pBar.style.width = Math.max(1, Math.min(100, pct * 100)) + "%";
         });
-        pBar.style.width = "100%";
+        if (pBar) pBar.style.width = "100%";
 
         if (!url) { toast("上传失败：没有返回文件地址"); continue; }
 
@@ -5361,8 +5337,8 @@
       warn("pick-media", err);
       toast(cpT("uploadFailed", "上传失败"));
     } finally {
-      pWrap.hidden = true;
-      pBar.style.width = "0%";
+      if (pWrap) pWrap.hidden = true;
+      if (pBar) pBar.style.width = "0%";
     }
 
     e.target.value = "";
