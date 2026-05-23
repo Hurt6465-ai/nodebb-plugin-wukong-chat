@@ -17,6 +17,11 @@
     }
   }
 
+  /* ===== Independent /wukong page helpers ===== */
+  function cpIndependentMode() {
+    var cfg = cpPluginConfig();
+    return !!(cfg.independent || document.querySelector('[data-wukong-root="1"]') || /^\/wukong(?:\/|$)/i.test(location.pathname));
+  }
 
   function cpRaw(v) {
     if (v === undefined || v === null) return "";
@@ -30,50 +35,30 @@
     return cpRaw(v).replace(/[^0-9]/g, "");
   }
 
-  function cpIndependentMode() {
-    var cfg = cpPluginConfig();
-    if (cfg && cfg.independent) return true;
-    if (document.getElementById("nodebb-wukong-root")) return true;
-    var path = String(location.pathname || "");
-    var rel = (window.config && window.config.relative_path) || "";
-    if (rel && path.indexOf(rel) === 0) path = path.slice(rel.length) || "/";
-    return /^\/wukong(?:\/|$)/i.test(path);
+  function cpApiBase() {
+    return cpRaw(cpPluginConfig().apiBase) || "/api/wukong";
   }
 
   function cpPageConfig() {
     var root = document.getElementById("nodebb-wukong-root");
     var cfg = window.__NBB_WUKONG_PAGE__ || {};
     var q = new URLSearchParams(location.search || "");
-    var path = String(location.pathname || "");
-    var rel = (window.config && window.config.relative_path) || "";
-    if (rel && path.indexOf(rel) === 0) path = path.slice(rel.length) || "/";
-    var mUser = path.match(/\/wukong\/(\d+)/i);
-    var targetUid =
-      cpDigits(root && root.getAttribute("data-target-uid")) ||
-      cpDigits(cfg.targetUid) ||
-      cpDigits(mUser && mUser[1]) ||
-      cpDigits(q.get("uid"));
-    var tid =
-      cpDigits(root && root.getAttribute("data-tid")) ||
-      cpDigits(cfg.tid) ||
-      cpDigits(q.get("tid"));
-    var channelId =
-      cpRaw(root && root.getAttribute("data-channel-id")) ||
-      cpRaw(cfg.channelId) ||
-      cpRaw(q.get("channel_id")) ||
-      (tid ? ("nbb_topic_" + tid) : targetUid);
-    var channelType = Number(
-      cpRaw(root && root.getAttribute("data-channel-type")) ||
-      cpRaw(cfg.channelType) ||
-      cpRaw(q.get("channel_type")) ||
-      (tid ? 2 : 1)
-    );
-    if (![1, 2].includes(channelType)) channelType = tid || String(channelId).indexOf("nbb_topic_") === 0 ? 2 : 1;
-    return { targetUid: targetUid, tid: tid, channelId: channelId, channelType: channelType };
-  }
+    var mUser = String(location.pathname || "").match(/\/wukong\/(\d+)/i);
+    var targetUid = cpDigits(root && root.getAttribute("data-target-uid")) || cpDigits(cfg.targetUid) || cpDigits(mUser && mUser[1]) || cpDigits(q.get("uid"));
+    var tid = cpDigits(root && root.getAttribute("data-tid")) || cpDigits(cfg.tid) || cpDigits(q.get("tid"));
+    var channelId = cpRaw(root && root.getAttribute("data-channel-id")) || cpRaw(cfg.channelId) || cpRaw(q.get("channel_id"));
+    var channelType = Number(cpRaw(root && root.getAttribute("data-channel-type")) || cpRaw(cfg.channelType) || cpRaw(q.get("channel_type")) || 0);
 
-  function cpApiBase() {
-    return cpRaw(cpPluginConfig().apiBase) || "/api/wukong";
+    if (tid && !channelId) channelId = "nbb_topic_" + tid;
+    if (!channelId && targetUid) channelId = targetUid;
+    if (channelType !== 1 && channelType !== 2) channelType = tid || String(channelId).indexOf("nbb_topic_") === 0 ? 2 : 1;
+
+    return {
+      targetUid: targetUid,
+      tid: tid,
+      channelId: channelId,
+      channelType: channelType
+    };
   }
 
   function cpGetTargetUid() {
@@ -83,54 +68,23 @@
 
   function cpGetChannelId() {
     var c = cpPageConfig();
-    return cpRaw(c.channelId || c.targetUid || "");
+    return c.channelId || c.targetUid || "";
   }
 
   function cpGetChannelType() {
     return Number(cpPageConfig().channelType || 1) || 1;
   }
 
-  function cpPickUserRecord(obj) {
-    if (!obj || typeof obj !== "object") return null;
-    if (obj.user && typeof obj.user === "object") return cpPickUserRecord(obj.user);
-    if (obj.userData && typeof obj.userData === "object") return cpPickUserRecord(obj.userData);
-    if (obj.data && typeof obj.data === "object") return cpPickUserRecord(obj.data);
-    if (obj.targetUser && typeof obj.targetUser === "object") return cpPickUserRecord(obj.targetUser);
-    if (obj.recipient && typeof obj.recipient === "object") return cpPickUserRecord(obj.recipient);
-    if (Array.isArray(obj.users) && obj.users[0]) return cpPickUserRecord(obj.users[0]);
-    if (obj.uid || obj.username || obj.userslug || obj.displayname || obj.name || obj.picture || obj.uploadedpicture) return obj;
-    return null;
-  }
-
-  function cpNormalizeUploadUrl(url) {
-    url = cpRaw(url);
-    if (!url) return "";
-    if (/^https?:\/\//i.test(url)) return url;
-    if (url.charAt(0) === "/") return url;
-    return "/" + url;
-  }
-
-  function cpCollectUploadUrls(obj, out) {
-    out = out || [];
-    if (!obj) return out;
-    if (typeof obj === "string") {
-      var s = cpNormalizeUploadUrl(obj);
-      if (s && (s.indexOf("/") === 0 || /^https?:\/\//i.test(s))) out.push(s);
-      return out;
+  async function cpFetchJSON(url, opts) {
+    var res = await fetch(url, Object.assign({ credentials: "include", headers: { accept: "application/json" } }, opts || {}));
+    var text = await res.text();
+    var data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
+    if (!res.ok) {
+      var msg = (data && (data.error || data.message)) || ("HTTP " + res.status + " " + url);
+      throw new Error(msg);
     }
-    if (Array.isArray(obj)) {
-      obj.forEach(function (x) { cpCollectUploadUrls(x, out); });
-      return out;
-    }
-    if (typeof obj === "object") {
-      ["url", "path", "src", "location", "href"].forEach(function (k) {
-        if (obj[k]) cpCollectUploadUrls(obj[k], out);
-      });
-      ["file", "files", "image", "images", "upload", "uploads", "response", "data", "body", "result"].forEach(function (k) {
-        if (obj[k]) cpCollectUploadUrls(obj[k], out);
-      });
-    }
-    return out;
+    return data;
   }
 
   function cpLoadScriptSequential(urls, onload, onerror) {
@@ -143,15 +97,6 @@
         return;
       }
       var url = urls[idx++];
-      var existing = document.querySelector('script[src="' + url.replace(/"/g, '\\"') + '"]');
-      if (existing) {
-        existing.addEventListener("load", function () {
-          if (window.wk && window.wk.WKSDK) onload();
-          else tryNext();
-        }, { once: true });
-        existing.addEventListener("error", tryNext, { once: true });
-        return;
-      }
       var s = document.createElement("script");
       s.src = url;
       s.async = true;
@@ -165,21 +110,14 @@
     tryNext();
   }
 
-  async function cpFetchJSON(url, opts) {
-    var res = await fetch(url, Object.assign({
-      credentials: "include",
-      headers: { accept: "application/json" }
-    }, opts || {}));
-    var text = await res.text();
-    var data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
-    if (!res.ok) {
-      var err = new Error((data && (data.error || data.message)) || ("HTTP " + res.status));
-      err.status = res.status;
-      err.data = data;
-      throw err;
-    }
-    return data;
+  function cpPickUserRecord(obj) {
+    if (!obj || typeof obj !== "object") return null;
+    if (obj.user && typeof obj.user === "object") return obj.user;
+    if (obj.data && typeof obj.data === "object") return cpPickUserRecord(obj.data) || obj.data;
+    if (obj.userData && typeof obj.userData === "object") return obj.userData;
+    if (obj.profile && typeof obj.profile === "object") return obj.profile;
+    if (obj.uid || obj.username || obj.userslug || obj.displayname || obj.picture || obj.icontext) return obj;
+    return null;
   }
 
   if (cpPluginConfig().enabled === false) return;
@@ -317,17 +255,17 @@
     '}';
 
   var ICON = {
-    play: '<span class="cp-svg cp-svg-play" aria-hidden="true">▶</span>',
-    pause: '<span class="cp-svg cp-svg-pause" aria-hidden="true">Ⅱ</span>',
-    mic: '<span class="cp-svg cp-svg-mic" aria-hidden="true">🎙</span>',
-    send: '<span class="cp-svg cp-svg-send" aria-hidden="true">↑</span>',
-    photo: '<span class="cp-svg cp-svg-plus" aria-hidden="true">＋</span>',
-    quote: '<span class="cp-svg cp-svg-quote" aria-hidden="true">↩</span>',
-    recall: '<span class="cp-svg cp-svg-recall" aria-hidden="true">↶</span>',
-    trans: '<i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i><span class="cp-icon-fallback">译</span>',
-    camera: '<span class="cp-svg cp-svg-camera" aria-hidden="true">📷</span>',
-    album: '<span class="cp-svg cp-svg-album" aria-hidden="true">🖼</span>',
-    ai: '<i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i><span class="cp-icon-fallback">译</span>'
+    play: '<span class="cp-icon-text cp-icon-play">▶</span>',
+    pause: '<span class="cp-icon-text cp-icon-pause">Ⅱ</span>',
+    mic: '<span class="cp-icon-text cp-icon-mic">🎙</span>',
+    send: '<span class="cp-icon-text cp-icon-send">↑</span>',
+    photo: '<span class="cp-icon-text cp-icon-plus">＋</span>',
+    quote: '<span class="cp-icon-text cp-icon-quote">↩</span>',
+    recall: '<span class="cp-icon-text cp-icon-recall">↶</span>',
+    trans: '<span class="cp-i cp-i-language"><i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i><span class="cp-i-fallback">译</span></span>',
+    camera: '<span class="cp-icon-text cp-icon-camera">📷</span>',
+    album: '<span class="cp-icon-text cp-icon-album">🖼</span>',
+    ai: '<span class="cp-i cp-i-language"><i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i><span class="cp-i-fallback">译</span></span>'
   };
 
   var waveHeights = [5, 8, 12, 16, 10, 7, 14, 9, 13, 6, 11, 15];
@@ -918,7 +856,8 @@
   }
 
   function getRoutePeerSlug() {
-    if (cpIndependentMode()) return cpGetTargetUid();
+    var pageUid = cpGetTargetUid();
+    if (pageUid) return pageUid;
 
     var path = String(location.pathname || "");
     var rel = getRelativePath();
@@ -956,13 +895,13 @@
 
     var myUidStr = String(window.app && app.user ? app.user.uid : state.myUid);
     var uid = u.uid || u.userId || u.id;
-    var username = u.displayname || u.fullname || u.username || u.name || u.title || u.userslug || u.slug || "";
+    var username = u.username || u.displayname || u.name || u.title || u.fullname || u.userslug || u.slug || "";
     var userslug = u.userslug || u.slug || (username ? encodeURIComponent(String(username).toLowerCase().replace(/ /g, "-")) : "");
 
     if (uid && String(uid) !== myUidStr && String(uid) !== "0") state.peerUidCache = String(uid);
     if (username) state.peerUsernameCache = String(username);
     if (userslug) state.peerUserslugCache = String(userslug);
-    if (u.picture || u.uploadedpicture) state.peerPictureCache = u.picture || u.uploadedpicture;
+    if (u.picture || u.uploadedpicture || u.avatar) state.peerPictureCache = u.picture || u.uploadedpicture || u.avatar;
     if (u.icontext || u["icon:text"]) state.peerIconTextCache = u.icontext || u["icon:text"];
     if (u.iconbgColor || u["icon:bgColor"]) state.peerIconBgCache = u.iconbgColor || u["icon:bgColor"];
 
@@ -1013,32 +952,31 @@
 
   async function hydratePeerFromRoute() {
     if (state.peerHydrating) return false;
-    if (state.peerUidCache && state.peerUsernameCache) return true;
+    if (state.peerUidCache && state.peerUsernameCache && state.peerPictureCache) return true;
 
     var targetUid = cpGetTargetUid();
     if (targetUid) {
       state.peerUidCache = String(targetUid);
-      state.peerUsernameCache = state.peerUsernameCache || "";
+      state.peerUsernameCache = state.peerUsernameCache || ("用户" + targetUid);
       state.peerHydrating = true;
       try {
-        var uApi = await cpFetchJSON(cpApiBase() + "/user/" + encodeURIComponent(targetUid));
-        var rec = cpPickUserRecord(uApi) || uApi;
-        if (setPeerFromUser(rec)) {
+        var u = await cpFetchJSON(cpApiBase() + "/user/" + encodeURIComponent(targetUid));
+        var record = cpPickUserRecord(u) || u;
+        if (setPeerFromUser(record)) {
           updateHeaderPeerInfo(null);
           return true;
         }
       } catch (e) {
-        warn("hydrate-peer-wukong-api", e);
+        warn("hydrate-peer-api", e);
       } finally {
         state.peerHydrating = false;
       }
-      if (!state.peerUsernameCache) state.peerUsernameCache = "用户" + targetUid;
       updateHeaderPeerInfo(null);
-      return !!state.peerUidCache;
+      return true;
     }
 
-    var u = getPeerFromAjaxify();
-    if (setPeerFromUser(u)) return true;
+    var u2 = getPeerFromAjaxify();
+    if (setPeerFromUser(u2)) return true;
 
     var slug = getRoutePeerSlug();
     if (!slug) return false;
@@ -1054,9 +992,7 @@
       if (!res.ok) return false;
 
       var json = await res.json();
-      var record = pickUserRecord(json) || json;
-      if (json && json.userData) record = json.userData;
-      if (json && json.users && json.users[0]) record = json.users[0];
+      var record = cpPickUserRecord(json) || pickUserRecord(json) || json;
 
       if (setPeerFromUser(record)) {
         updateHeaderPeerInfo(null);
@@ -1111,13 +1047,9 @@
     var bg = "#72a5f2";
 
     if (uid === state.myUid && window.app && window.app.user) {
-      pic = app.user.picture || app.user.uploadedpicture || state.myPictureCache || "";
-      if (app.user.icontext || app.user["icon:text"]) text = app.user.icontext || app.user["icon:text"];
-      if (app.user.iconbgColor || app.user["icon:bgColor"]) bg = app.user.iconbgColor || app.user["icon:bgColor"];
-    } else if (uid === state.myUid) {
-      pic = state.myPictureCache || "";
-      if (state.myIconTextCache) text = state.myIconTextCache;
-      if (state.myIconBgCache) bg = state.myIconBgCache;
+      pic = app.user.picture || app.user.uploadedpicture || app.user.avatar;
+      if (app.user.icontext) text = app.user.icontext;
+      if (app.user.iconbgColor) bg = app.user.iconbgColor;
     } else {
       var u = null;
 
@@ -1127,33 +1059,23 @@
         });
       }
 
-      if (!u && String(uid || "") === String(state.peerUidCache || "")) {
-        u = {
-          picture: state.peerPictureCache,
-          uploadedpicture: state.peerPictureCache,
-          icontext: state.peerIconTextCache,
-          iconbgColor: state.peerIconBgCache
-        };
-      }
-
       if (!u && state.peerUsernameCache && String(username || "") === String(state.peerUsernameCache)) {
         u = {
           picture: state.peerPictureCache,
-          uploadedpicture: state.peerPictureCache,
           icontext: state.peerIconTextCache,
           iconbgColor: state.peerIconBgCache
         };
       }
 
       if (u) {
-        pic = u.picture || u.uploadedpicture || "";
-        if (u.icontext || u["icon:text"]) text = u.icontext || u["icon:text"];
-        if (u.iconbgColor || u["icon:bgColor"]) bg = u.iconbgColor || u["icon:bgColor"];
+        pic = u.picture || u.uploadedpicture || u.avatar;
+        if (u.icontext) text = u.icontext;
+        if (u.iconbgColor) bg = u.iconbgColor;
       }
     }
 
     if (pic) {
-      return '<img class="avatar" src="' + escAttr(pic) + '" />';
+      return '<img class="avatar" src="' + escAttr(pic) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" />';
     }
 
     if (fallbackHtml && fallbackHtml.indexOf("<img") > -1) return fallbackHtml;
@@ -1161,7 +1083,7 @@
     return (
       '<div class="avatar" style="background:' +
       escAttr(bg) +
-      ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;font-size:22px;font-weight:800;">' +
+      ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;font-size:18px;font-weight:800;">' +
       esc(text) +
       "</div>"
     );
@@ -1172,10 +1094,10 @@
     if (!pInfo) return;
 
     var avatar = byId("cp-peer-avatar");
-    var ajaxUser = cpIndependentMode() ? null : getPeerFromAjaxify();
+    var ajaxUser = getPeerFromAjaxify();
     var name = state.peerUsernameCache || "";
     var userslug = state.peerUserslugCache || "";
-    var uid = state.peerUidCache || cpGetTargetUid() || "";
+    var uid = state.peerUidCache || "";
     var avatarHtml = "";
 
     if (peerMsg) {
@@ -1196,21 +1118,21 @@
 
     if (!name) {
       var routeSlug = getRoutePeerSlug();
-      if (routeSlug && !/^\d+$/.test(routeSlug)) {
+      if (routeSlug) {
         name = routeSlug;
         userslug = userslug || routeSlug;
       }
     }
 
-    if (!name && uid) name = "用户" + uid;
-
     if (name) {
       state.peerUsernameCache = name;
       userslug = userslug || encodeURIComponent(String(name).toLowerCase().replace(/ /g, "-"));
       state.peerUserslugCache = userslug;
-      pInfo.innerHTML = '<a href="' + getRelativePath() + '/user/' + escAttr(userslug || uid) + '/topics" title="访问主页">' + esc(name) + "</a>";
+      pInfo.dataset.ready = "1";
+      pInfo.innerHTML = '<a href="' + getRelativePath() + '/user/' + escAttr(userslug) + '/topics" title="访问主页">' + esc(name) + "</a>";
       if (avatar) avatar.innerHTML = avatarHtml || getAvatarHtml(String(uid || getPeerUid() || ""), name, null);
     } else {
+      pInfo.dataset.ready = "1";
       pInfo.textContent = cpT("chatRoom", "聊天室");
       if (avatar) avatar.innerHTML = getAvatarHtml("", "?", null);
     }
@@ -1296,12 +1218,8 @@
       return !m.mine && m.username;
     });
 
-    var username = isMine
-      ? ((window.app && app.user ? (app.user.username || app.user.displayname) : "") || state.myUsernameCache || "我")
-      : (state.peerUsernameCache || (peerMsg ? peerMsg.username : "") || ("用户" + uid));
-    var userslug = isMine
-      ? (window.app && app.user ? app.user.userslug || "" : "")
-      : (state.peerUserslugCache || (peerMsg ? peerMsg.userslug : ""));
+    var username = isMine ? (window.app && app.user ? app.user.username : "我") : peerMsg ? peerMsg.username : state.peerUsernameCache || "用户" + uid;
+    var userslug = isMine ? (window.app && app.user ? app.user.userslug || "" : "") : peerMsg ? peerMsg.userslug : "";
     var avatarHtml = getAvatarHtml(String(uid), username, peerMsg ? peerMsg.avatarHtml : null);
 
     var type = "text";
@@ -1320,7 +1238,7 @@
       mediaUrl = match[1];
       text = "[视频]";
       displayHtml = "";
-    } else if ((match = text.match(/^\[语音消息\]\((.+?)\)$/)) || (match = text.match(/^\[语音\]\((.+?)\)$/))) {
+    } else if ((match = text.match(/^\[语音消息\]\((.+?)\)$/))) {
       type = "voice";
       audioUrl = match[1];
       text = "[语音]";
@@ -1399,19 +1317,12 @@
       .then(function (res) {
         if (!res || !res.token) return;
 
-        state.myUid = String(res.wkUid || res.uid || (res.user && res.user.uid) || "");
-        if (res.user) {
-          state.myUsernameCache = res.user.username || res.user.displayname || "";
-          state.myPictureCache = res.user.picture || res.user.uploadedpicture || "";
-          state.myIconTextCache = res.user.icontext || res.user["icon:text"] || "";
-          state.myIconBgCache = res.user.iconbgColor || res.user["icon:bgColor"] || "";
-        }
+        state.myUid = String(res.wkUid || res.uid || (res.user && res.user.uid) || state.myUid || "");
 
         var urls = [];
         var cfgUrl = cpRaw(cpPluginConfig().wkSdkUrl);
         if (cfgUrl) urls.push(cfgUrl);
         urls.push("/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1");
-        urls.push("/plugins/nodebb-plugin-cp-wukong-inject/static/vendor/wukongimjssdk.umd.js?v=1");
         urls.push("https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js");
 
         cpLoadScriptSequential(urls, function () {
@@ -1447,18 +1358,11 @@
             var fromUid = String(m.fromUID || m.from_uid || "");
             if (fromUid === state.myUid) return;
 
-            var channelId = cpGetChannelId();
-            var channelType = cpGetChannelType();
             var currentPeerUid = getPeerUid();
-            if (channelType === 1 && (!currentPeerUid || fromUid !== currentPeerUid)) return;
-            if (channelType === 2) {
-              var mChannelId = String(m.channelID || m.channel_id || (m.channel && m.channel.channelID) || "");
-              if (mChannelId && channelId && mChannelId !== channelId) return;
-            }
+            if (cpGetChannelType() === 1 && (!currentPeerUid || fromUid !== currentPeerUid)) return;
 
             var t = payloadObj.text || payloadObj.content || "";
             if (!t) return;
-
             if (isCallSignalText(t)) return;
 
             var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
@@ -1475,7 +1379,7 @@
             state.mergedDirty = true;
             state.msgIndexDirty = true;
 
-            schedulePersistChat(currentPeerUid || channelId);
+            schedulePersistChat(currentPeerUid || cpGetChannelId());
 
             var wasAtBottom = isMainAtBottom();
 
@@ -1503,8 +1407,8 @@
 
           wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
             if (status === 1 && state.mounted && state.initialLoadDone) {
-              var pUid = getPeerUid() || cpGetChannelId();
-              if (pUid && state.localMaxSeq > 0) fetchOfflineMessages(pUid);
+              var pUid = getPeerUid();
+              if ((pUid || cpGetChannelId()) && state.localMaxSeq > 0) fetchOfflineMessages(pUid || cpGetChannelId());
             }
           });
 
@@ -1612,7 +1516,7 @@
       var m = msgs[i];
       var payloadObj = extractWkPayload(m) || {};
       var fromUid = String(m.from_uid || m.fromUID);
-      var isMine = fromUid === String(state.myUid || (window.app && app.user ? app.user.uid : ""));
+      var isMine = fromUid === state.myUid;
       var serverT = payloadObj.text || payloadObj.content || "";
 
       // 历史/离线消息里的通话信令不显示
@@ -1693,14 +1597,13 @@
   }
 
   function sendText(text, originalText) {
+    // 防止误把通话信令当普通消息发送并插入本地气泡
     if (isCallSignalText(text) || isCallSignalText(originalText)) {
       sendCallSignalText(text || originalText);
       return;
     }
 
     var peerUid = getPeerUid();
-    var channelId = cpIndependentMode() ? (cpGetChannelId() || peerUid) : peerUid;
-    var channelType = cpIndependentMode() ? cpGetChannelType() : 1;
 
     if (!cpIndependentMode()) {
       try {
@@ -1730,9 +1633,9 @@
     var wkMsgObj = null;
     var displayText = originalText || text;
 
-    if (channelId && state.wkReady && window.wk) {
+    if (peerUid && state.wkReady && window.wk) {
       try {
-        var channel = new window.wk.Channel(String(channelId), Number(channelType || 1));
+        var channel = new window.wk.Channel(cpGetChannelId() || peerUid, cpGetChannelType());
         var msgContent = new window.wk.MessageText(text);
 
         if (originalText) {
@@ -1760,10 +1663,7 @@
         wkMsgObj = window.wk.WKSDK.shared().chatManager.send(msgContent, channel);
       } catch (e) {
         warn("wk-send", e);
-        toast("悟空发送失败");
       }
-    } else if (cpIndependentMode()) {
-      toast("悟空连接未就绪");
     }
 
     var newMsg = createMessageObj(displayText, true, state.myUid, wkMsgObj, {
@@ -1790,11 +1690,12 @@
     state.mergedDirty = true;
     state.msgIndexDirty = true;
 
-    schedulePersistChat(peerUid || channelId);
+    schedulePersistChat(peerUid);
 
     state.unreadCount = 0;
     updateUnreadBadge();
 
+    // 修复：自己发的消息一定滚到底部
     incrementalRender("bottom");
     requestAnimationFrame(forceScrollToBottom);
 
@@ -1802,7 +1703,7 @@
 
     if (input) {
       input.value = "";
-      input.style.height = "54px";
+      input.style.height = "36px";
     }
 
     updatePrimaryButton();
@@ -1853,14 +1754,15 @@
       updateHeaderPeerInfo(null);
     }
 
-    if (!pUid || state.loadedPeerUid === pUid) return;
+    var loadKey = pUid || cpGetChannelId();
+    if (!loadKey || state.loadedPeerUid === loadKey) return;
 
-    state.loadedPeerUid = pUid;
+    state.loadedPeerUid = loadKey;
 
-    await loadChatFromDB(pUid);
-    await fetchWukongHistory(pUid, 0, { limit: 20 });
+    await loadChatFromDB(loadKey);
+    await fetchWukongHistory(loadKey, 0, { limit: 20 });
 
-    if (state.localMaxSeq > 0) await fetchOfflineMessages(pUid);
+    if (state.localMaxSeq > 0) await fetchOfflineMessages(loadKey);
 
     state.initialLoadDone = true;
 
@@ -1894,7 +1796,7 @@
       })
     );
 
-    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.85 });
+    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.10 });
 
     state.peerUidCache = "";
     state.peerUsernameCache = "";
@@ -2048,19 +1950,20 @@
   }
 
   function injectStyle() {
-    var href = cpRaw(cpPluginConfig().cssUrl) || "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=25";
-    var old = byId("cp-chat-style");
-    if (old && old.tagName && old.tagName.toLowerCase() === "style") old.remove();
+    if (byId("cp-chat-style")) return;
 
-    var link = document.querySelector('link[data-cp-chat-style="1"]');
-    if (!link) {
-      link = document.createElement("link");
-      link.id = "cp-chat-style";
-      link.rel = "stylesheet";
-      link.setAttribute("data-cp-chat-style", "1");
-      document.head.appendChild(link);
+    var href = cpRaw(cpPluginConfig().cssUrl) || "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=26";
+    var existing = document.querySelector('link[href*="wukong-chat.css"]');
+    if (existing) {
+      existing.id = existing.id || "cp-chat-style";
+      return;
     }
-    if (link.getAttribute("href") !== href) link.setAttribute("href", href);
+
+    var link = document.createElement("link");
+    link.id = "cp-chat-style";
+    link.rel = "stylesheet";
+    link.href = href;
+    document.head.appendChild(link);
   }
 
 
@@ -2084,7 +1987,10 @@
     if (byId('cp-header-back')) byId('cp-header-back').setAttribute('aria-label', cpT('back', '返回'));
     if (byId('cp-header-more')) byId('cp-header-more').setAttribute('aria-label', cpT('settings', '设置'));
     if (byId('cp-input')) byId('cp-input').setAttribute('placeholder', cpT('sendMessage', '发送消息...'));
-    setText('cp-peer-info', 'loading', '加载中...');
+    var peerInfoEl = byId('cp-peer-info');
+    if (peerInfoEl && !peerInfoEl.dataset.ready && !peerInfoEl.textContent.trim()) {
+      peerInfoEl.textContent = cpT('loading', '加载中...');
+    }
     var spinner = byId('cp-top-spinner');
     if (spinner) spinner.innerHTML = '<i class="fa fa-circle-o-notch"></i> ' + esc(cpT('loading', '加载中...'));
 
@@ -2152,7 +2058,7 @@
             <div class="cp-header-center" id="cp-peer-info">加载中...</div>
           </div>
           <div class="cp-header-actions">
-            <button id="cp-header-more" aria-label="设置" type="button"><span class="cp-more-dot">⋮</span></button>
+            <button id="cp-header-more" aria-label="设置" class="cp-more-btn">⋮</button>
           </div>
         </header>
 
@@ -2179,7 +2085,7 @@
               <button class="cp-lang-btn" id="cp-src-lang-btn">🇨🇳 中文</button>
               <button class="cp-swap-btn" id="cp-lang-swap">⇄</button>
               <button class="cp-lang-btn" id="cp-tgt-lang-btn">🇲🇲 မြန်မာစာ</button>
-              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><i class="fa-solid fa-language fa fa-language"></i><span class="cp-icon-fallback">译</span></button>
+              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送">译</button>
             </div>
           </div>
 
@@ -2214,7 +2120,7 @@
 
             <div id="cp-rec-inline" class="cp-rec-inline" hidden>
               <button id="cp-rec-cancel" class="cp-rec-btn-icon">
-                <span class="cp-rec-cancel-icon">×</span>
+                <span class="cp-rec-label">取消</span>
               </button>
               <div class="cp-rec-vis">
                 <span class="cp-rec-dot"></span>
@@ -2222,11 +2128,11 @@
                 <div class="cp-rec-bars" id="cp-rec-bars"></div>
               </div>
               <button id="cp-rec-pause" class="cp-rec-btn-icon">
-                <span class="cp-rec-pause-icon">Ⅱ</span>
+                <span class="cp-rec-label cp-rec-pause-label">暂停</span>
               </button>
               <span id="cp-rec-time" style="font-size:16px;color:#4b5563;font-family:sans-serif;font-weight:500;width:38px;text-align:center;">0:00</span>
               <button id="cp-rec-send" class="cp-rec-btn-icon">
-                <span class="cp-rec-send-icon">↑</span>
+                <span class="cp-rec-label">发送</span>
               </button>
             </div>
           </div>
@@ -2380,6 +2286,8 @@
     try { document.body.classList.remove("cp-chat-harmony-booting"); } catch (_) {}
     applyStaticTranslations();
 
+    var nbbRoot = document.getElementById("nodebb-wukong-root");
+    if (nbbRoot) nbbRoot.style.display = "none";
     byId("cp-media-btn").innerHTML = ICON.photo;
     byId("cp-primary-icon").innerHTML = ICON.mic;
 
@@ -2437,7 +2345,7 @@
 
     input.addEventListener("input", function () {
       clearWingmanPanel();
-      this.style.height = "54px";
+      this.style.height = "36px";
       this.style.height = Math.min(this.scrollHeight, 120) + "px";
       updatePrimaryButton();
       updateFooterHeight();
@@ -2447,14 +2355,14 @@
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handlePrimaryAction();
-        this.style.height = "54px";
+        this.style.height = "36px";
         updateFooterHeight();
       }
     });
 
     btnPrimary.addEventListener("click", function () {
       handlePrimaryAction();
-      input.style.height = "54px";
+      input.style.height = "36px";
       updateFooterHeight();
     });
 
@@ -3126,7 +3034,7 @@
 
         if (window.wk && window.wk.WKSDK.shared().chatManager.send) {
           try {
-            var channel = new window.wk.Channel(getPeerUid(), 1);
+            var channel = new window.wk.Channel(cpGetChannelId() || getPeerUid(), cpGetChannelType());
             var revokeContent = new window.wk.MessageText("撤回消息请求");
 
             revokeContent.encode = function () {
@@ -4716,76 +4624,100 @@
     }
   }
 
-  function uploadToNodeBB(file, onProgress) {
-    function postOnce(url, fieldName) {
-      return new Promise(function (resolve, reject) {
-        var fd = new FormData();
-        fd.append(fieldName || "files[]", file, file.name || "cp_" + Date.now());
+  function pickUploadUrl(json) {
+    if (!json) return "";
+    if (typeof json === "string") return json;
 
-        var xhr = new XMLHttpRequest();
-        xhr.open("POST", url);
-        xhr.withCredentials = true;
-
-        if (window.config) xhr.setRequestHeader("x-csrf-token", config.csrf_token || config.csrfToken || "");
-
-        xhr.upload.onprogress = function (e) {
-          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-        };
-
-        xhr.onload = function () {
-          var body = xhr.responseText || "";
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              var json = body ? JSON.parse(body) : {};
-              var urls = cpCollectUploadUrls(json, []);
-              var url = urls[0] || "";
-              if (!url) throw new Error("upload url empty: " + body.slice(0, 180));
-              resolve(cpNormalizeUploadUrl(url));
-            } catch (err) {
-              reject(err);
-            }
-          } else {
-            var message = "upload failed: HTTP " + xhr.status;
-            try {
-              var j = JSON.parse(body);
-              if (j && (j.error || j.message)) message += " " + (j.error || j.message);
-              if (j && j.install) message += " (" + j.install + ")";
-            } catch (_) {
-              if (body) message += " " + body.slice(0, 160);
-            }
-            reject(new Error(message));
-          }
-        };
-
-        xhr.onerror = function () {
-          reject(new Error("network error"));
-        };
-
-        xhr.send(fd);
+    var candidates = [];
+    function add(v) {
+      if (v && typeof v === "string") candidates.push(v);
+    }
+    function scan(obj, depth) {
+      if (!obj || depth > 4) return;
+      if (typeof obj === "string") return add(obj);
+      if (Array.isArray(obj)) {
+        obj.forEach(function (x) { scan(x, depth + 1); });
+        return;
+      }
+      if (typeof obj !== "object") return;
+      ["url", "path", "src", "href", "location", "file", "image", "thumbnail"].forEach(function (k) {
+        add(obj[k]);
+      });
+      ["response", "data", "files", "images", "uploads", "file", "image", "result", "payload"].forEach(function (k) {
+        scan(obj[k], depth + 1);
       });
     }
 
-    var rel = window.config && config.relative_path ? config.relative_path : "";
-    var endpoints = cpIndependentMode()
-      ? [
-          { url: cpApiBase() + "/upload", field: "files[]" },
-          { url: rel + "/api/post/upload", field: "files[]" }
-        ]
-      : [
-          { url: rel + "/api/post/upload", field: "files[]" },
-          { url: cpApiBase() + "/upload", field: "files[]" }
-        ];
+    scan(json, 0);
 
-    var lastErr = null;
-    return endpoints.reduce(function (p, ep) {
-      return p.catch(function (err) {
-        if (err) lastErr = err;
-        return postOnce(ep.url, ep.field);
-      });
-    }, Promise.reject()).catch(function (err) {
-      lastErr = err || lastErr;
-      throw lastErr || new Error("upload failed");
+    var url = candidates.find(function (u) {
+      return /^(https?:\/\/|\/)/i.test(u) || /\/uploads\//i.test(u) || /\.(png|jpe?g|gif|webp|mp4|mov|webm|m4v|mp3|m4a|ogg|wav)(\?|#|$)/i.test(u);
+    }) || candidates[0] || "";
+
+    if (url && !/^https?:\/\//i.test(url) && url.charAt(0) !== "/") url = "/" + url;
+    return url;
+  }
+
+  function uploadOnce(file, endpoint, fieldName, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var fd = new FormData();
+      fd.append(fieldName, file, file.name || "cp_" + Date.now());
+
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", endpoint);
+      xhr.withCredentials = true;
+
+      if (window.config) xhr.setRequestHeader("x-csrf-token", config.csrf_token || config.csrfToken || "");
+
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      };
+
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var json = JSON.parse(xhr.responseText || "{}");
+            var url = pickUploadUrl(json);
+            if (!url) throw new Error("upload url empty");
+            resolve(url);
+          } catch (err) {
+            reject(err);
+          }
+        } else {
+          reject(new Error("upload failed: " + xhr.status + " " + endpoint));
+        }
+      };
+
+      xhr.onerror = function () {
+        reject(new Error("network error: " + endpoint));
+      };
+
+      xhr.send(fd);
     });
+  }
+
+  async function uploadToNodeBB(file, onProgress) {
+    var rel = window.config && config.relative_path ? config.relative_path : "";
+    var endpoints = [
+      rel + cpApiBase() + "/upload",
+      rel + "/api/wukong/upload",
+      rel + "/api/post/upload"
+    ];
+    var fields = ["files[]", "file", "files"];
+    var lastErr = null;
+
+    for (var e = 0; e < endpoints.length; e++) {
+      for (var f = 0; f < fields.length; f++) {
+        try {
+          return await uploadOnce(file, endpoints[e], fields[f], onProgress);
+        } catch (err) {
+          lastErr = err;
+          warn("upload-try", err);
+        }
+      }
+    }
+
+    throw lastErr || new Error("upload failed");
   }
 
   function readFile(file) {
@@ -5258,8 +5190,8 @@
 
       toggleUIForRecording(true);
 
-      var icon = byId("cp-rec-pause");
-      if (icon) icon.innerHTML = '<span class="cp-rec-pause-icon">Ⅱ</span>';
+      var pauseBtn = byId("cp-rec-pause");
+      if (pauseBtn) pauseBtn.innerHTML = '<span class="cp-rec-label cp-rec-pause-label">暂停</span>';
 
       state.rec.mediaRecorder.start(250);
 
@@ -5293,16 +5225,16 @@
       return;
     }
 
-    var btn = byId("cp-rec-pause");
+    var pauseBtn = byId("cp-rec-pause");
 
     if (mr.state === "recording") {
       mr.pause();
       state.rec.paused = true;
-      if (btn) btn.innerHTML = '<span class="cp-rec-pause-icon">▶</span>';
+      if (pauseBtn) pauseBtn.innerHTML = '<span class="cp-rec-label cp-rec-pause-label">继续</span>';
     } else if (mr.state === "paused") {
       mr.resume();
       state.rec.paused = false;
-      if (btn) btn.innerHTML = '<span class="cp-rec-pause-icon">Ⅱ</span>';
+      if (pauseBtn) pauseBtn.innerHTML = '<span class="cp-rec-label cp-rec-pause-label">暂停</span>';
     }
   }
 
