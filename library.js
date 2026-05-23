@@ -54,6 +54,14 @@ const TOPIC_CHANNEL_TYPE = 2;
 const TOPIC_CHANNEL_PREFIX = 'nbb_topic_';
 const USER_PROFILE_CACHE_TTL_MS = Number(process.env.USER_PROFILE_CACHE_TTL_MS || 30 * 24 * 60 * 60 * 1000);
 const PRESENCE_TTL_MS = 45000;
+const MEDIA_TTL_MS = Number(process.env.WK_MEDIA_TTL_MS || 48 * 60 * 60 * 1000);
+const MEDIA_UPLOAD_DIR = path.resolve(PLUGIN_ROOT, '../../public/uploads/wukong-chat');
+const MEDIA_PUBLIC_PREFIX = '/assets/uploads/wukong-chat';
+const MEDIA_CLEANUP_TZ_OFFSET_MS = Number(process.env.WK_MEDIA_CLEANUP_TZ_OFFSET_MS || 8 * 60 * 60 * 1000);
+const MEDIA_CLEANUP_HOUR = Number(process.env.WK_MEDIA_CLEANUP_HOUR || 2);
+const MEDIA_CLEANUP_JITTER_MS = Number(process.env.WK_MEDIA_CLEANUP_JITTER_MS || 60 * 60 * 1000);
+const MEDIA_CLEANUP_ON_START = /^(1|true|yes)$/i.test(String(process.env.WK_MEDIA_CLEANUP_ON_START || 'false'));
+let mediaCleanupTimer = null;
 
 // WuKongIM official user registration/login endpoint is POST /user/token.
 // Keep this enabled by default so NodeBB users are provisioned when they register
@@ -390,6 +398,204 @@ async function ensureWukongTopicChannel(channelId, uid, tempSubscriber = 1) {
   }
 }
 
+
+function getMediaKind(mime) {
+  mime = String(mime || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'voice';
+  return 'file';
+}
+
+function safeMediaExt(file) {
+  const original = String(file && file.originalname || '').toLowerCase();
+  const fromName = path.extname(original).replace(/[^.a-z0-9]/g, '').slice(0, 12);
+  if (fromName) return fromName;
+
+  const mime = String(file && file.mimetype || '').toLowerCase();
+  if (mime.includes('png')) return '.png';
+  if (mime.includes('webp')) return '.webp';
+  if (mime.includes('gif')) return '.gif';
+  if (mime.includes('jpeg') || mime.includes('jpg')) return '.jpg';
+  if (mime.includes('mp4')) return '.mp4';
+  if (mime.includes('webm')) return '.webm';
+  if (mime.includes('quicktime')) return '.mov';
+  if (mime.includes('ogg')) return '.ogg';
+  if (mime.includes('mpeg')) return '.mp3';
+  if (mime.includes('wav')) return '.wav';
+  if (mime.includes('aac')) return '.aac';
+  return '.bin';
+}
+
+function assertAllowedMediaFile(file) {
+  const mime = String(file && file.mimetype || 'application/octet-stream').toLowerCase();
+  const kind = getMediaKind(mime);
+
+  if (!['image', 'video', 'voice'].includes(kind)) {
+    const err = new Error('unsupported_media_type');
+    err.status = 400;
+    err.detail = { mimetype: mime, filename: file && file.originalname };
+    throw err;
+  }
+
+  return kind;
+}
+
+function saveWukongMediaFiles(files, uid) {
+  const now = Date.now();
+  const expiresAt = now + MEDIA_TTL_MS;
+  const day = new Date(now).toISOString().slice(0, 10).replace(/-/g, '');
+  const dir = path.join(MEDIA_UPLOAD_DIR, day);
+
+  fs.mkdirSync(dir, { recursive: true });
+
+  return files.slice(0, 10).map((file) => {
+    const kind = assertAllowedMediaFile(file);
+    const ext = safeMediaExt(file);
+    const name = [
+      String(uid || '0').replace(/[^\d]/g, '') || '0',
+      now,
+      crypto.randomBytes(6).toString('hex'),
+    ].join('_') + ext;
+
+    const abs = path.join(dir, name);
+    fs.writeFileSync(abs, file.buffer);
+
+    const rel = `${MEDIA_PUBLIC_PREFIX}/${day}/${name}`;
+    const meta = {
+      ok: true,
+      url: rel,
+      path: rel,
+      name,
+      filename: file.originalname || name,
+      kind,
+      type: kind,
+      mimetype: file.mimetype || 'application/octet-stream',
+      size: file.size || (file.buffer && file.buffer.length) || 0,
+      created_at: now,
+      createdAt: now,
+      expires_at: expiresAt,
+      expiresAt,
+      ttl_ms: MEDIA_TTL_MS,
+      ttlMs: MEDIA_TTL_MS,
+    };
+
+    try {
+      fs.writeFileSync(abs + '.json', JSON.stringify(meta, null, 2), 'utf8');
+    } catch (err) {
+      console.warn('[wukong-chat] write media sidecar failed:', err.message);
+    }
+
+    return meta;
+  });
+}
+
+function cleanupExpiredWukongMedia() {
+  const now = Date.now();
+  let checked = 0;
+  let deleted = 0;
+
+  function removePair(file) {
+    try {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+        deleted += 1;
+      }
+    } catch (err) {
+      console.warn('[wukong-chat] delete expired media failed:', file, err.message);
+    }
+  }
+
+  if (!fs.existsSync(MEDIA_UPLOAD_DIR)) return { ok: true, checked, deleted, dir: MEDIA_UPLOAD_DIR };
+
+  for (const day of fs.readdirSync(MEDIA_UPLOAD_DIR)) {
+    const dir = path.join(MEDIA_UPLOAD_DIR, day);
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
+
+    for (const entry of fs.readdirSync(dir)) {
+      if (!entry.endsWith('.json')) continue;
+      const metaPath = path.join(dir, entry);
+      checked += 1;
+
+      let meta = null;
+      try {
+        meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      } catch (err) {
+        continue;
+      }
+
+      const expiresAt = Number(meta && (meta.expires_at || meta.expiresAt || 0));
+      if (!expiresAt || expiresAt > now) continue;
+
+      const mediaPath = path.join(dir, entry.replace(/\.json$/, ''));
+      removePair(mediaPath);
+      removePair(metaPath);
+    }
+
+    try {
+      if (!fs.readdirSync(dir).length) fs.rmdirSync(dir);
+    } catch (err) {}
+  }
+
+  return { ok: true, checked, deleted, dir: MEDIA_UPLOAD_DIR };
+}
+
+function getNextBeijingCleanupDelay(nowMs = Date.now()) {
+  const offset = Number.isFinite(MEDIA_CLEANUP_TZ_OFFSET_MS) ? MEDIA_CLEANUP_TZ_OFFSET_MS : 8 * 60 * 60 * 1000;
+  const hour = Math.max(0, Math.min(23, Number.isFinite(MEDIA_CLEANUP_HOUR) ? MEDIA_CLEANUP_HOUR : 2));
+  const jitter = Math.max(0, Math.min(60 * 60 * 1000, Number.isFinite(MEDIA_CLEANUP_JITTER_MS) ? MEDIA_CLEANUP_JITTER_MS : 60 * 60 * 1000));
+
+  // Convert current UTC timestamp to Beijing-local calendar by adding +08:00 offset.
+  const bjNow = new Date(nowMs + offset);
+  let targetUtcMs = Date.UTC(
+    bjNow.getUTCFullYear(),
+    bjNow.getUTCMonth(),
+    bjNow.getUTCDate(),
+    hour,
+    0,
+    0,
+    0
+  ) - offset;
+
+  if (targetUtcMs <= nowMs) {
+    targetUtcMs += 24 * 60 * 60 * 1000;
+  }
+
+  // Randomize inside 02:00-03:00 Beijing time by default.
+  return Math.max(1000, targetUtcMs - nowMs + Math.floor(Math.random() * jitter));
+}
+
+function scheduleNextWukongMediaCleanup() {
+  if (mediaCleanupTimer) clearTimeout(mediaCleanupTimer);
+
+  const delay = getNextBeijingCleanupDelay();
+  mediaCleanupTimer = setTimeout(() => {
+    try {
+      cleanupExpiredWukongMedia();
+    } catch (err) {
+      console.warn('[wukong-chat] media cleanup failed:', err.message);
+    } finally {
+      scheduleNextWukongMediaCleanup();
+    }
+  }, delay);
+
+  if (typeof mediaCleanupTimer.unref === 'function') mediaCleanupTimer.unref();
+}
+
+function startWukongMediaCleanupTimer() {
+  if (mediaCleanupTimer) return;
+
+  if (MEDIA_CLEANUP_ON_START) {
+    try {
+      cleanupExpiredWukongMedia();
+    } catch (err) {
+      console.warn('[wukong-chat] initial media cleanup failed:', err.message);
+    }
+  }
+
+  scheduleNextWukongMediaCleanup();
+}
+
 function cleanupPresence() {
   const now = Date.now();
   for (const [tid, users] of topicPresence.entries()) {
@@ -433,6 +639,12 @@ function registerApiRoutes(router, middleware) {
       prefix: TOPIC_CHANNEL_PREFIX,
       sync_user: SYNC_WUKONG_USER,
       time: new Date().toISOString(),
+      media_ttl_ms: MEDIA_TTL_MS,
+      media_cleanup: {
+        hour_beijing: MEDIA_CLEANUP_HOUR,
+        jitter_ms: MEDIA_CLEANUP_JITTER_MS,
+        on_start: MEDIA_CLEANUP_ON_START,
+      },
     });
   });
 
@@ -627,44 +839,60 @@ function registerApiRoutes(router, middleware) {
 
     const upload = multer({
       storage: multer.memoryStorage(),
-      limits: { fileSize: 80 * 1024 * 1024, files: 10 },
-    }).array('files[]', 10);
+      limits: {
+        fileSize: 80 * 1024 * 1024,
+        files: 10,
+      },
+    }).any();
 
-    upload(req, res, next);
+    upload(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({
+          error: 'upload_parse_failed',
+          message: err.message,
+          code: err.code,
+        });
+      }
+      next();
+    });
   }, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ error: 'unauthorized' });
+
     const files = Array.isArray(req.files) ? req.files : [];
     if (!files.length) return res.status(400).json({ error: 'missing_file' });
 
-    if (typeof FormData === 'undefined' || typeof Blob === 'undefined') {
-      return res.status(500).json({ error: 'missing_formdata_blob_runtime' });
+    let saved;
+    try {
+      saved = saveWukongMediaFiles(files, current.uid);
+    } catch (err) {
+      return res.status(err.status || 500).json({
+        error: err.message || 'upload_failed',
+        detail: err.detail,
+      });
     }
 
-    const form = new FormData();
-    for (const f of files) {
-      form.append(
-        'files[]',
-        new Blob([f.buffer], { type: f.mimetype || 'application/octet-stream' }),
-        f.originalname || `file_${Date.now()}`
-      );
-    }
-
-    const csrf = req.headers['x-csrf-token'] || req.headers['x-xsrf-token'] || '';
-
-    const resp = await fetch(FORUM_URL + '/api/post/upload', {
-      method: 'POST',
-      headers: {
-        Cookie: req.headers.cookie || '',
-        Accept: 'application/json',
-        ...(csrf ? { 'x-csrf-token': csrf } : {}),
+    const first = saved[0] || null;
+    res.json({
+      ok: true,
+      ttl_ms: MEDIA_TTL_MS,
+      ttlMs: MEDIA_TTL_MS,
+      expires_at: first && first.expires_at,
+      expiresAt: first && first.expiresAt,
+      url: first && first.url,
+      path: first && first.path,
+      files: saved,
+      uploads: saved,
+      response: {
+        images: saved,
+        files: saved,
       },
-      body: form,
     });
+  }));
 
-    const text = await resp.text();
-    let data = text;
-    try { data = text ? JSON.parse(text) : null; } catch (err) {}
-
-    res.status(resp.status).send(data);
+  router.post(`${api}/media-cleanup/run`, ensureLogin, asyncHandler(async (req, res) => {
+    const result = cleanupExpiredWukongMedia();
+    res.json(result);
   }));
 
   router.post(`${api}/topic-activity/touch`, ensureLogin, asyncHandler(async (req, res) => {
@@ -969,6 +1197,7 @@ plugin.init = async function init(params) {
 
   registerPageRoutes(router, middleware);
   registerApiRoutes(router, middleware);
+  startWukongMediaCleanupTimer();
 
   console.log('[wukong-chat] routes registered: /wukong, /wukong/:uid, /api/wukong/healthz');
 };
