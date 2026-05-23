@@ -260,27 +260,18 @@
     '  ]\n' +
     '}';
 
-  function cpIcon(name, faClass, fallback) {
-    faClass = faClass || "";
-    fallback = fallback || "";
-    return '<span class="cp-icon-wrap cp-icon-' + escAttr(name) + '">' +
-      '<i class="' + escAttr(faClass) + '" aria-hidden="true"></i>' +
-      '<span class="cp-icon-fallback">' + esc(fallback) + '</span>' +
-    '</span>';
-  }
-
   var ICON = {
-    play: cpIcon("play", "fa-solid fa-play fa fa-play", "▶"),
-    pause: cpIcon("pause", "fa-solid fa-pause fa fa-pause", "Ⅱ"),
-    mic: cpIcon("mic", "fa-solid fa-microphone fa fa-microphone", "🎙"),
-    send: cpIcon("send", "fa-solid fa-arrow-up fa fa-arrow-up", "↑"),
-    photo: cpIcon("photo", "fa-solid fa-image fa fa-image", "＋"),
-    quote: cpIcon("quote", "fa-solid fa-reply fa fa-reply", "↩"),
-    recall: cpIcon("recall", "fa-solid fa-rotate-left fa fa-undo", "↶"),
-    trans: '<i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i>',
-    camera: cpIcon("camera", "fa-solid fa-camera fa fa-camera", "📷"),
-    album: cpIcon("album", "fa-solid fa-images fa fa-picture-o", "🖼"),
-    ai: '<i class="fa-solid fa-language fa fa-language" aria-hidden="true"></i>'
+    play: '<span class="cp-plain-icon cp-icon-play">▶</span>',
+    pause: '<span class="cp-plain-icon cp-icon-pause">Ⅱ</span>',
+    mic: '<span class="cp-plain-icon cp-icon-mic">🎤</span>',
+    send: '<span class="cp-plain-icon cp-icon-send">↑</span>',
+    photo: '<span class="cp-plain-icon cp-icon-photo">＋</span>',
+    quote: '<span class="cp-plain-icon cp-icon-quote">↩</span>',
+    recall: '<span class="cp-plain-icon cp-icon-recall">↶</span>',
+    trans: '<i class="fa-solid fa-language fa fa-language cp-fa-language" aria-hidden="true"></i>',
+    camera: '<span class="cp-plain-icon cp-icon-camera">📷</span>',
+    album: '<span class="cp-plain-icon cp-icon-album">🖼</span>',
+    ai: '<i class="fa-solid fa-language fa fa-language cp-fa-language" aria-hidden="true"></i>'
   };
 
   var waveHeights = [5, 8, 12, 16, 10, 7, 14, 9, 13, 6, 11, 15];
@@ -895,41 +886,37 @@
   function pickUserRecord(obj) {
     if (!obj || typeof obj !== "object") return null;
 
-    if (obj.user && typeof obj.user === "object") return obj.user;
-    if (obj.targetUser && typeof obj.targetUser === "object") return obj.targetUser;
-    if (obj.recipient && typeof obj.recipient === "object") return obj.recipient;
-    if (obj.toUser && typeof obj.toUser === "object") return obj.toUser;
-    if (obj.profile && typeof obj.profile === "object") return obj.profile;
-    if (obj.uid || obj.username || obj.userslug || obj.slug || obj.title || obj.displayname || obj.name) return obj;
+    if (obj.user && typeof obj.user === "object") return pickUserRecord(obj.user) || obj.user;
+    if (obj.userData && typeof obj.userData === "object") return pickUserRecord(obj.userData) || obj.userData;
+    if (obj.data && typeof obj.data === "object") return pickUserRecord(obj.data) || obj.data;
+    if (obj.targetUser && typeof obj.targetUser === "object") return pickUserRecord(obj.targetUser) || obj.targetUser;
+    if (obj.recipient && typeof obj.recipient === "object") return pickUserRecord(obj.recipient) || obj.recipient;
+    if (obj.toUser && typeof obj.toUser === "object") return pickUserRecord(obj.toUser) || obj.toUser;
+    if (obj.profile && typeof obj.profile === "object") return pickUserRecord(obj.profile) || obj.profile;
+    if (Array.isArray(obj.users) && obj.users[0]) return pickUserRecord(obj.users[0]) || obj.users[0];
+    if (Array.isArray(obj.results) && obj.results[0]) return pickUserRecord(obj.results[0]) || obj.results[0];
+
+    if (obj.uid || obj.userId || obj.id || obj.username || obj.userslug || obj.slug || obj.title || obj.displayname || obj.name) return obj;
 
     return null;
   }
 
   function setPeerFromUser(u) {
-    u = pickUserRecord(u) || (u && u.data ? pickUserRecord(u.data) : null) || (u && u.userData ? pickUserRecord(u.userData) : null) || u;
     if (!u || typeof u !== "object") return false;
 
     var myUidStr = String(window.app && app.user ? app.user.uid : state.myUid);
-    var uid = u.uid || u.userId || u.id || u.user_id;
-    var username =
-      u.displayname ||
-      u.fullname ||
-      u.username ||
-      u.name ||
-      u.title ||
-      u.userslug ||
-      u.slug ||
-      (uid ? "用户" + uid : "");
+    u = pickUserRecord(u) || u;
+
+    var uid = u.uid || u.userId || u.id;
+    var username = u.username || u.displayname || u.displayName || u.name || u.title || u.fullname || u.fullName || u.userslug || u.slug || "";
     var userslug = u.userslug || u.slug || (username ? encodeURIComponent(String(username).toLowerCase().replace(/ /g, "-")) : "");
+    var picture = u.picture || u.uploadedpicture || u.uploadedPicture || u.avatar || u.avatarUrl || u.avatarURL || u.image || "";
+    var iconText = u.icontext || u["icon:text"] || u.iconText || (username ? String(username).charAt(0).toUpperCase() : "");
+    var iconBg = u.iconbgColor || u["icon:bgColor"] || u.iconBgColor || u.iconBg || "";
 
     if (uid && String(uid) !== myUidStr && String(uid) !== "0") state.peerUidCache = String(uid);
     if (username) state.peerUsernameCache = String(username);
     if (userslug) state.peerUserslugCache = String(userslug);
-
-    var picture = u.picture || u.uploadedpicture || u.uploadedPicture || u.avatar || u.avatarUrl || u.avatar_url || "";
-    var iconText = u.icontext || u["icon:text"] || u.iconText || (username ? String(username).charAt(0).toUpperCase() : "");
-    var iconBg = u.iconbgColor || u["icon:bgColor"] || u.iconBgColor || u.icon_bg_color || "#72a5f2";
-
     if (picture) state.peerPictureCache = picture;
     if (iconText) state.peerIconTextCache = iconText;
     if (iconBg) state.peerIconBgCache = iconBg;
@@ -990,8 +977,8 @@
       state.peerHydrating = true;
       try {
         var u = await cpFetchJSON(cpApiBase() + "/user/" + encodeURIComponent(targetUid));
-        var record = pickUserRecord(u) || (u && u.data ? pickUserRecord(u.data) : null) || (u && u.user ? pickUserRecord(u.user) : null) || u;
-        if (setPeerFromUser(record)) {
+        u = pickUserRecord(u) || u;
+        if (setPeerFromUser(u)) {
           updateHeaderPeerInfo(null);
           return true;
         }
@@ -1092,7 +1079,7 @@
         });
       }
 
-      if (!u && (state.peerUsernameCache || state.peerUidCache) && (String(username || "") === String(state.peerUsernameCache) || String(uid || "") === String(state.peerUidCache))) {
+      if (!u && state.peerUsernameCache && String(username || "") === String(state.peerUsernameCache)) {
         u = {
           picture: state.peerPictureCache,
           uploadedpicture: state.peerPictureCache,
@@ -1104,9 +1091,10 @@
       }
 
       if (u) {
-        pic = u.picture || u.uploadedpicture || u.uploadedPicture || u.avatar || u.avatarUrl || "";
+        u = pickUserRecord(u) || u;
+        pic = u.picture || u.uploadedpicture || u.uploadedPicture || u.avatar || u.avatarUrl || u.avatarURL || u.image || "";
         if (u.icontext || u["icon:text"] || u.iconText) text = u.icontext || u["icon:text"] || u.iconText;
-        if (u.iconbgColor || u["icon:bgColor"] || u.iconBgColor) bg = u.iconbgColor || u["icon:bgColor"] || u.iconBgColor;
+        if (u.iconbgColor || u["icon:bgColor"] || u.iconBgColor || u.iconBg) bg = u.iconbgColor || u["icon:bgColor"] || u.iconBgColor || u.iconBg;
       }
     }
 
@@ -1164,15 +1152,11 @@
       state.peerUsernameCache = name;
       userslug = userslug || encodeURIComponent(String(name).toLowerCase().replace(/ /g, "-"));
       state.peerUserslugCache = userslug;
-      pInfo.dataset.ready = '1';
       pInfo.innerHTML = '<a href="' + getRelativePath() + '/user/' + escAttr(userslug) + '/topics" title="访问主页">' + esc(name) + "</a>";
       if (avatar) avatar.innerHTML = avatarHtml || getAvatarHtml(String(uid || getPeerUid() || ""), name, null);
     } else {
-      var fallbackUid = cpGetTargetUid() || state.peerUidCache || "";
-      var fallbackName = fallbackUid ? ("用户" + fallbackUid) : cpT("chatRoom", "聊天室");
-      pInfo.dataset.ready = '1';
-      pInfo.textContent = fallbackName;
-      if (avatar) avatar.innerHTML = getAvatarHtml(fallbackUid, fallbackName, null);
+      pInfo.textContent = cpT("chatRoom", "聊天室");
+      if (avatar) avatar.innerHTML = getAvatarHtml("", "?", null);
     }
   }
 
@@ -1675,9 +1659,7 @@
 
     if (peerUid && state.wkReady && window.wk) {
       try {
-        var sendChannelId = cpGetChannelId() || peerUid;
-        var sendChannelType = cpGetChannelType() || 1;
-        var channel = new window.wk.Channel(sendChannelId, sendChannelType);
+        var channel = new window.wk.Channel(peerUid, 1);
         var msgContent = new window.wk.MessageText(text);
 
         if (originalText) {
@@ -1838,7 +1820,7 @@
       })
     );
 
-    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.08 });
+    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.12 });
 
     state.peerUidCache = "";
     state.peerUsernameCache = "";
@@ -2096,7 +2078,7 @@
             <div class="cp-header-center" id="cp-peer-info">加载中...</div>
           </div>
           <div class="cp-header-actions">
-            <button id="cp-header-more" aria-label="设置"><i class="fa fa-ellipsis-v"></i></button>
+            <button id="cp-header-more" aria-label="设置"><span class="cp-plain-icon cp-icon-more">⋮</span></button>
           </div>
         </header>
 
@@ -2123,7 +2105,7 @@
               <button class="cp-lang-btn" id="cp-src-lang-btn">🇨🇳 中文</button>
               <button class="cp-swap-btn" id="cp-lang-swap">⇄</button>
               <button class="cp-lang-btn" id="cp-tgt-lang-btn">🇲🇲 မြန်မာစာ</button>
-              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><i class="fa-solid fa-language fa fa-language"></i></button>
+              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><i class="fa-solid fa-language fa fa-language cp-fa-language" aria-hidden="true"></i></button>
             </div>
           </div>
 
@@ -2158,7 +2140,7 @@
 
             <div id="cp-rec-inline" class="cp-rec-inline" hidden>
               <button id="cp-rec-cancel" class="cp-rec-btn-icon">
-                <i class="fa fa-trash-o" style="font-size:20px;color:#6b7280;"></i>
+                <span class="cp-plain-icon cp-rec-delete-icon">✕</span>
               </button>
               <div class="cp-rec-vis">
                 <span class="cp-rec-dot"></span>
@@ -2166,11 +2148,11 @@
                 <div class="cp-rec-bars" id="cp-rec-bars"></div>
               </div>
               <button id="cp-rec-pause" class="cp-rec-btn-icon">
-                <i class="fa fa-pause-circle" style="font-size:22px;color:#0ea5e9;"></i>
+                <span class="cp-plain-icon cp-rec-pause-icon">Ⅱ</span>
               </button>
               <span id="cp-rec-time" style="font-size:16px;color:#4b5563;font-family:sans-serif;font-weight:500;width:38px;text-align:center;">0:00</span>
               <button id="cp-rec-send" class="cp-rec-btn-icon">
-                <i class="fa fa-paper-plane" style="font-size:20px;color:#0ea5e9;"></i>
+                <span class="cp-plain-icon cp-rec-send-icon">✓</span>
               </button>
             </div>
           </div>
@@ -2824,7 +2806,7 @@
     setValue("cp-relationship-stage", state.cfg.relationshipStage || "刚认识");
     setValue("cp-communication-style", state.cfg.communicationStyle || "自然直接，偶尔幽默");
 
-    var op = state.bg.opacity !== undefined ? state.bg.opacity : 0.85;
+    var op = state.bg.opacity !== undefined ? state.bg.opacity : 0.12;
     setValue("cp-bg-opacity", op);
 
     var bgOpVal = byId("cp-bg-op-val");
@@ -4665,50 +4647,50 @@
     }
   }
 
-  function uploadToNodeBB(file, onProgress) {
-    function extractUploadUrl(json) {
-      if (!json) return "";
+  function extractUploadUrl(json) {
+    if (!json) return "";
 
-      var candidates = [
-        json.url,
-        json.path,
-        json.src,
-        json.location,
-        json.file,
-        json.image,
-        json.uploadedFile,
-        json.uploadedfile,
-        json.data && json.data.url,
-        json.data && json.data.path,
-        json.response && json.response.url,
-        json.response && json.response.path,
-        json.response && json.response.image && json.response.image.url,
-        json.response && json.response.file && json.response.file.url,
-        json.response && json.response.files && json.response.files[0] && (json.response.files[0].url || json.response.files[0].path),
-        json.response && json.response.images && json.response.images[0] && (json.response.images[0].url || json.response.images[0].path),
-        json.files && json.files[0] && (json.files[0].url || json.files[0].path || json.files[0].src),
-        json.images && json.images[0] && (json.images[0].url || json.images[0].path || json.images[0].src),
-        json.uploads && json.uploads[0] && (json.uploads[0].url || json.uploads[0].path || json.uploads[0].src)
-      ];
+    var candidates = [
+      json.url,
+      json.path,
+      json.src,
+      json.location,
+      json.file && (json.file.url || json.file.path || json.file.src),
+      json.image && (json.image.url || json.image.path || json.image.src),
+      json.data && (json.data.url || json.data.path || json.data.src),
+      json.data && json.data.file && (json.data.file.url || json.data.file.path || json.data.file.src),
+      json.data && json.data.image && (json.data.image.url || json.data.image.path || json.data.image.src),
+      json.data && json.data.files && json.data.files[0] && (json.data.files[0].url || json.data.files[0].path || json.data.files[0].src),
+      json.data && json.data.images && json.data.images[0] && (json.data.images[0].url || json.data.images[0].path || json.data.images[0].src),
+      json.response && (json.response.url || json.response.path || json.response.src),
+      json.response && json.response.file && (json.response.file.url || json.response.file.path || json.response.file.src),
+      json.response && json.response.image && (json.response.image.url || json.response.image.path || json.response.image.src),
+      json.response && json.response.files && json.response.files[0] && (json.response.files[0].url || json.response.files[0].path || json.response.files[0].src),
+      json.response && json.response.images && json.response.images[0] && (json.response.images[0].url || json.response.images[0].path || json.response.images[0].src),
+      json.files && json.files[0] && (json.files[0].url || json.files[0].path || json.files[0].src),
+      json.images && json.images[0] && (json.images[0].url || json.images[0].path || json.images[0].src),
+      json.uploads && json.uploads[0] && (json.uploads[0].url || json.uploads[0].path || json.uploads[0].src)
+    ];
 
-      for (var i = 0; i < candidates.length; i++) {
-        var u = candidates[i];
-        if (u && typeof u === "string") {
-          u = u.trim();
-          if (u) {
-            if (!/^https?:\/\//i.test(u) && u.charAt(0) !== "/") u = "/" + u;
-            return u;
-          }
+    for (var i = 0; i < candidates.length; i++) {
+      var u = candidates[i];
+      if (u && typeof u === "string") {
+        u = u.trim();
+        if (u) {
+          if (!/^https?:\/\//i.test(u) && u.charAt(0) !== "/") u = "/" + u;
+          return u;
         }
       }
-
-      return "";
     }
 
+    return "";
+  }
+
+  function uploadToNodeBB(file, onProgress) {
     function tryUpload(fieldName) {
       return new Promise(function (resolve, reject) {
         var fd = new FormData();
-        fd.append(fieldName, file, file.name || "cp_" + Date.now());
+        fd.append(fieldName, file, file.name || ("cp_" + Date.now()));
 
         var xhr = new XMLHttpRequest();
         var url = cpIndependentMode()
@@ -4732,13 +4714,13 @@
             try {
               var json = JSON.parse(xhr.responseText || "{}");
               var url = extractUploadUrl(json);
-              if (!url) throw new Error("upload url empty");
+              if (!url) throw new Error("upload url empty: " + xhr.responseText.slice(0, 240));
               resolve(url);
             } catch (err) {
               reject(err);
             }
           } else {
-            reject(new Error("upload failed: " + xhr.status + " " + xhr.responseText));
+            reject(new Error("upload failed: " + xhr.status + " " + String(xhr.responseText || "").slice(0, 240)));
           }
         };
 
@@ -5117,7 +5099,7 @@
     }
 
     if (bgMask) {
-      bgMask.style.setProperty("--bg-op", state.bg && state.bg.opacity !== undefined ? Math.min(Number(state.bg.opacity) || 0.08, 0.30) : 0.08);
+      bgMask.style.setProperty("--bg-op", state.bg && state.bg.opacity !== undefined ? state.bg.opacity : 0.12);
     }
   }
 
@@ -5213,7 +5195,6 @@
               pBar.style.width = pct * 100 + "%";
             });
 
-            if (!url) throw new Error("voice upload url empty");
             sendText("[语音消息](" + url + ")");
           } catch (e) {
             warn("record-upload", e);
@@ -5227,8 +5208,11 @@
 
       toggleUIForRecording(true);
 
-      var icon = byId("cp-rec-pause").querySelector("i");
-      icon.className = "fa fa-pause-circle";
+      var icon = byId("cp-rec-pause").querySelector("i,span");
+      if (icon) {
+        if (icon.tagName && icon.tagName.toLowerCase() === "i") icon.className = "fa fa-pause-circle";
+        else icon.textContent = "Ⅱ";
+      }
 
       state.rec.mediaRecorder.start(250);
 
@@ -5262,16 +5246,22 @@
       return;
     }
 
-    var icon = byId("cp-rec-pause").querySelector("i");
+    var icon = byId("cp-rec-pause").querySelector("i,span");
 
     if (mr.state === "recording") {
       mr.pause();
       state.rec.paused = true;
-      icon.className = "fa fa-play-circle";
+      if (icon) {
+        if (icon.tagName && icon.tagName.toLowerCase() === "i") icon.className = "fa fa-play-circle";
+        else icon.textContent = "▶";
+      }
     } else if (mr.state === "paused") {
       mr.resume();
       state.rec.paused = false;
-      icon.className = "fa fa-pause-circle";
+      if (icon) {
+        if (icon.tagName && icon.tagName.toLowerCase() === "i") icon.className = "fa fa-pause-circle";
+        else icon.textContent = "Ⅱ";
+      }
     }
   }
 
