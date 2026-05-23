@@ -26,13 +26,217 @@
   function cpSameUid(a, b) {
     a = String(a == null ? "" : a).trim();
     b = String(b == null ? "" : b).trim();
+
     if (!a || !b) return false;
-    return a === b || String(parseInt(a, 10)) === String(parseInt(b, 10));
+    if (a === b) return true;
+
+    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+      return String(Number(a)) === String(Number(b));
+    }
+
+    return false;
   }
 
   function cpIsMineUid(uid) {
     return cpSameUid(uid, getSelfUid());
   }
+
+  var IMAGE_COMPRESS_CONFIG = {
+    maxSide: 1440,
+    maxSizeMB: 0.25,
+    quality: 0.60,
+    minCompressBytes: 120 * 1024,
+    useWebp: true,
+    qualities: [0.60, 0.55, 0.50, 0.45]
+  };
+
+  var IMAGE_COMPRESS_SOCIAL = {
+    maxSide: 1080,
+    maxSizeMB: 0.09,
+    quality: 0.58,
+    minCompressBytes: 70 * 1024,
+    useWebp: true,
+    qualities: [0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22]
+  };
+
+  var AVATAR_COMPRESS_CONFIG = {
+    maxSide: 512,
+    maxSizeMB: 0.06,
+    quality: 0.56,
+    minCompressBytes: 45 * 1024,
+    useWebp: true,
+    qualities: [0.56, 0.48, 0.40, 0.34, 0.28, 0.22]
+  };
+
+  var cpWebpSupportPromise = null;
+
+  function canEncodeWebP() {
+    if (cpWebpSupportPromise) return cpWebpSupportPromise;
+
+    cpWebpSupportPromise = new Promise(function (resolve) {
+      try {
+        var canvas = document.createElement("canvas");
+        canvas.width = 1;
+        canvas.height = 1;
+        canvas.toBlob(function (blob) {
+          resolve(!!(blob && blob.type === "image/webp"));
+        }, "image/webp", 0.8);
+      } catch (_) {
+        resolve(false);
+      }
+    });
+
+    return cpWebpSupportPromise;
+  }
+
+  function cpIsSkippableImageType(file) {
+    var type = String(file && file.type || "").toLowerCase();
+    var name = String(file && file.name || "").toLowerCase();
+    return (
+      type === "image/gif" ||
+      type === "image/svg+xml" ||
+      type === "image/heic" ||
+      type === "image/heif" ||
+      /\.gif$|\.svg$|\.heic$|\.heif$/i.test(name)
+    );
+  }
+
+  function loadImageFromFile(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        resolve(img);
+      };
+
+      img.onerror = function (e) {
+        URL.revokeObjectURL(url);
+        reject(e);
+      };
+
+      img.src = url;
+    });
+  }
+
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise(function (resolve) {
+      canvas.toBlob(function (blob) {
+        resolve(blob);
+      }, type, quality);
+    });
+  }
+
+  function cpMakeCompressedFile(blob, originalFile, outputType) {
+    var originalName = String(originalFile && originalFile.name || "image").replace(/\.[^.]+$/, "");
+    var ext = outputType === "image/webp" ? ".webp" : ".jpg";
+    return new File([blob], originalName + ext, {
+      type: outputType,
+      lastModified: Date.now()
+    });
+  }
+
+  async function compressImageFile(file, config) {
+    config = Object.assign({}, IMAGE_COMPRESS_CONFIG, config || {});
+
+    if (!file || !/^image\//i.test(file.type)) return file;
+    if (file.size < config.minCompressBytes) return file;
+    if (cpIsSkippableImageType(file)) return file;
+
+    var supportsWebp = config.useWebp ? await canEncodeWebP() : false;
+    var outputType = supportsWebp ? "image/webp" : "image/jpeg";
+    var maxBytes = Math.max(1, Number(config.maxSizeMB || 0.25) * 1024 * 1024);
+
+    var img = await loadImageFromFile(file);
+    var sourceW = img.naturalWidth || img.width;
+    var sourceH = img.naturalHeight || img.height;
+    if (!sourceW || !sourceH) return file;
+
+    var scale = Math.min(1, Number(config.maxSide || 1440) / Math.max(sourceW, sourceH));
+    var targetW = Math.max(1, Math.round(sourceW * scale));
+    var targetH = Math.max(1, Math.round(sourceH * scale));
+
+    var canvas = document.createElement("canvas");
+    canvas.width = targetW;
+    canvas.height = targetH;
+
+    var ctx = canvas.getContext("2d", { alpha: outputType === "image/webp" });
+    ctx.drawImage(img, 0, 0, targetW, targetH);
+
+    var qualities = Array.isArray(config.qualities) && config.qualities.length ? config.qualities : [config.quality || 0.6];
+    var bestBlob = null;
+
+    for (var i = 0; i < qualities.length; i++) {
+      var q = Number(qualities[i]);
+      var blob = await canvasToBlob(canvas, outputType, q);
+      if (!blob) continue;
+
+      bestBlob = blob;
+      if (blob.size <= maxBytes) break;
+    }
+
+    if (!bestBlob) return file;
+
+    // Avoid making tiny files bigger.
+    if (bestBlob.size >= file.size && scale >= 1) return file;
+
+    var compressed = cpMakeCompressedFile(bestBlob, file, outputType);
+    compressed._compressedFrom = {
+      size: file.size,
+      width: sourceW,
+      height: sourceH,
+      outputType: outputType,
+      maxSide: config.maxSide,
+      maxSizeMB: config.maxSizeMB
+    };
+
+    return compressed;
+  }
+
+  function ensureWkMsgIdSet() {
+    if (state.wkMsgIds) return state.wkMsgIds;
+
+    state.wkMsgIds = new Set();
+    (state.wkMessages || []).forEach(function (m) {
+      if (m && m.id) state.wkMsgIds.add(String(m.id));
+    });
+
+    return state.wkMsgIds;
+  }
+
+  function cpFastRenderHash(renderArr) {
+    var first = renderArr && renderArr[0];
+    var last = renderArr && renderArr[renderArr.length - 1];
+
+    return [
+      state.renderVersion || 0,
+      renderArr ? renderArr.length : 0,
+      first && first.id,
+      first && first._ver,
+      last && last.id,
+      last && last._ver
+    ].join("|");
+  }
+
+  function setupFooterResizeObserver() {
+    if (state.footerResizeObserver) return;
+
+    var footer = byId("cp-footer");
+    var root = byId("cp-chat-root");
+    if (!footer || !root || typeof ResizeObserver === "undefined") return;
+
+    state.footerResizeObserver = new ResizeObserver(function () {
+      requestAnimationFrame(function () {
+        var h = Math.max(84, Math.ceil(footer.offsetHeight || 84));
+        root.style.setProperty("--cp-footer-h", h + "px");
+        if (state.stickToBottom) forceScrollToBottom();
+      });
+    });
+
+    state.footerResizeObserver.observe(footer);
+  }
+
 
   function cpAutoPlayPreviewVideo(video, mask) {
     if (!video) return;
@@ -108,7 +312,7 @@
 
     for (var i = 0; i < urls.length; i++) {
       try {
-        var res = await fetch(urls[i] + "?v=34", {
+        var res = await fetch(urls[i] + "?v=35", {
           credentials: "same-origin",
           headers: { Accept: "application/json" }
         });
@@ -130,7 +334,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v34";
+  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v35";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -1984,6 +2188,7 @@
 
     injectStyle();
     injectRoot();
+    setupFooterResizeObserver();
     cpNormalizeActionIcons();
     // 先用路由用户名占位，避免标题长时间停留在“加载中...”
     updateHeaderPeerInfo(null);
@@ -3921,12 +4126,21 @@
   }
 
   function observeLazyElements() {
+    if (state.footerResizeObserver) {
+      state.footerResizeObserver.disconnect();
+      state.footerResizeObserver = null;
+    }
+
     if (state.lazyObserver) {
       document.querySelectorAll(".cp-lazy-media").forEach(function (el) {
+        if (el.dataset.observed === "1") return;
+        el.dataset.observed = "1";
         state.lazyObserver.observe(el);
       });
 
       document.querySelectorAll(".cp-lazy-audio").forEach(function (el) {
+        if (el.dataset.observed === "1") return;
+        el.dataset.observed = "1";
         state.lazyObserver.observe(el);
       });
     } else {
@@ -5048,67 +5262,12 @@
   }
 
   async function compressWithCanvas(file, targetType) {
-    var dataUrl = await readFile(file);
-    var img = await loadImage(dataUrl);
-
-    var w = img.naturalWidth || img.width;
-    var h = img.naturalHeight || img.height;
-    var scale = Math.min(1, IMAGE_CONFIG.maxSide / Math.max(w, h));
-
-    w = Math.max(1, Math.round(w * scale));
-    h = Math.max(1, Math.round(h * scale));
-
-    var canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-
-    var ctx = canvas.getContext("2d");
-    if (!ctx || !canvas.toBlob) return null;
-
-    ctx.drawImage(img, 0, 0, w, h);
-
-    var targetBytes = IMAGE_CONFIG.maxSizeMB * 1024 * 1024;
-    var qualities = [IMAGE_CONFIG.quality, 0.52, 0.45, 0.38];
-    var best = null;
-
-    for (var i = 0; i < qualities.length; i++) {
-      var q = qualities[i];
-
-      var blob = await new Promise(function (resolve) {
-        canvas.toBlob(resolve, targetType, q);
-      });
-
-      if (!blob) continue;
-
-      best = blob;
-
-      if (blob.size <= targetBytes) break;
-    }
-
-    return best;
-  }
-
-  async function compressImage(file) {
-    if (!file || !/^image\//i.test(file.type)) return file;
-    if (/image\/(gif|svg\+xml)/i.test(file.type)) return file;
-    if (file.size < IMAGE_CONFIG.minCompressBytes) return file;
-
-    var targetType = IMAGE_CONFIG.useWebp && (await canEncode("image/webp")) ? "image/webp" : "image/jpeg";
-
+    // v35: ObjectURL + Canvas compression. Avoids base64/DataURL memory bloat.
+    // Default profile: max 1440px, target 0.25MB, WebP if supported.
     try {
-      var blob = await compressWithLibrary(file, targetType);
-
-      if (!blob) blob = await compressWithCanvas(file, targetType);
-      if (!blob || blob.size >= file.size * 0.95) return file;
-
-      var baseName = String(file.name || "image-" + Date.now()).replace(/\.[^.]+$/, "");
-
-      return new File([blob], baseName + extForMime(targetType), {
-        type: targetType,
-        lastModified: Date.now()
-      });
-    } catch (err) {
-      warn("compress-image", err);
+      return await compressImageFile(file, IMAGE_COMPRESS_CONFIG);
+    } catch (e) {
+      warn("compress-image", e);
       return file;
     }
   }
