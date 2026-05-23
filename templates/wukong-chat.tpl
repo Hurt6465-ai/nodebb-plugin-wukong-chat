@@ -1,6 +1,6 @@
-<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=20">
+<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=21">
 <link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1">
-<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=19">
+<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=21">
 
 <div id="nodebb-wukong-root" class="nbb-wk-root" data-wukong-root="1">
   <div class="nbb-wk-loading">正在加载悟空聊天...</div>
@@ -21,7 +21,12 @@
     root.setAttribute("data-channel-id", channelId);
     root.setAttribute("data-channel-type", channelType);
   }
-  window.__NBB_WUKONG_PAGE__ = { targetUid: targetUid, tid: tid, channelId: channelId, channelType: channelType };
+  window.__NBB_WUKONG_PAGE__ = {
+    targetUid: targetUid,
+    tid: tid,
+    channelId: channelId,
+    channelType: channelType
+  };
   window.CPChatHarmony = window.CPChatHarmony || {};
   window.CPChatHarmony.config = Object.assign({}, window.CPChatHarmony.config || {}, {
     enabled: true,
@@ -32,7 +37,7 @@
     channelId: channelId,
     channelType: Number(channelType || 1),
     wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1",
-    cssUrl: "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=20",
+    cssUrl: "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=21",
     i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
     defaultSourceLang: "中文",
     defaultTargetLang: "မြန်မာစာ",
@@ -41,4 +46,4 @@
   });
 })();
 </script>
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=20"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=21"></script>
