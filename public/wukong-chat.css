@@ -3086,13 +3086,159 @@ body.cp-has-bg #cp-chat-root .cp-time-sep::after {
 }
 
 
-/* v35 performance/compression: keep visual unchanged; only lightweight containment. */
-#cp-chat-root .cp-progress-wrap,
-#cp-chat-root #cp-upload-progress-wrap {
-  will-change: transform !important;
+/* =========================================================
+   Wukong Chat v36 targeted fixes
+   ========================================================= */
+
+#cp-chat-root .cp-toggle-ai-send {
+  position: relative !important;
+  border: none !important;
+  background: transparent !important;
+  color: #9ca3af !important;
+  font-size: 14px !important;
+  cursor: pointer !important;
+  padding: 4px 4px 4px 14px !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-left: 4px !important;
+  border-left: 1px solid #e5e7eb !important;
+  min-width: 36px !important;
+  width: 36px !important;
+  height: 30px !important;
+  overflow: visible !important;
 }
 
-#cp-chat-root .cp-lazy-media[data-observed="1"],
-#cp-chat-root .cp-lazy-audio[data-observed="1"] {
-  contain: content;
+#cp-chat-root .cp-toggle-ai-send::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 4px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: 5px !important;
+  height: 5px !important;
+  border-radius: 50% !important;
+  background: #9ca3af !important;
+  box-shadow: none !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send.active {
+  color: var(--cp-primary) !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send.active::before {
+  background: #22c55e !important;
+  box-shadow: 0 0 4px #22c55e !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send i.fa-language {
+  font-size: 14px !important;
+  line-height: 1 !important;
+  color: rgb(177, 151, 252) !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send .cp-trans-fallback {
+  display: inline-block !important;
+  margin-left: 1px !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  color: rgb(177, 151, 252) !important;
+  font-weight: 700 !important;
+}
+
+#cp-chat-root .cp-footer {
+  background: transparent !important;
+  background-image: none !important;
+  pointer-events: none !important;
+}
+
+#cp-chat-root .cp-footer > * {
+  pointer-events: auto !important;
+}
+
+#cp-chat-root .cp-translate-bar {
+  background: rgba(255,255,255,.72) !important;
+  border: 1px solid rgba(255,255,255,.64) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+#cp-chat-root .cp-toolbar {
+  background: rgba(255,255,255,.76) !important;
+  border: 1px solid rgba(255,255,255,.68) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+}
+
+#cp-chat-root .cp-main {
+  bottom: calc(var(--cp-footer-h) + env(safe-area-inset-bottom) - 16px) !important;
+  padding-bottom: calc(var(--cp-footer-h) + 8px) !important;
+}
+
+#cp-chat-root .cp-progress-wrap,
+#cp-chat-root #cp-upload-progress-wrap {
+  position: fixed !important;
+  left: 50% !important;
+  top: 38% !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(62vw, 260px) !important;
+  height: 9px !important;
+  z-index: 2147483950 !important;
+  background: rgba(15,23,42,.18) !important;
+  box-shadow: 0 10px 28px rgba(0,0,0,.20) !important;
+  pointer-events: none !important;
+}
+
+#cp-chat-root .cp-avatar-wrap,
+#cp-chat-root .cp-peer-avatar {
+  aspect-ratio: 1 / 1 !important;
+  flex: 0 0 auto !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+}
+
+#cp-chat-root .cp-avatar-wrap .avatar,
+#cp-chat-root .cp-avatar-wrap img,
+#cp-chat-root .cp-peer-avatar .avatar,
+#cp-chat-root .cp-peer-avatar img {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  border-radius: 50% !important;
+  object-fit: cover !important;
+  aspect-ratio: 1 / 1 !important;
+}
+
+#cp-chat-root .cp-fab-v {
+  font-size: 22px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  transform: translateY(-1px) !important;
+}
+
+#cp-chat-root .cp-translation-text {
+  cursor: pointer !important;
+  user-select: none !important;
+}
+
+#cp-chat-root .cp-translation-text::after {
+  content: "  点击折叠" !important;
+  font-size: 11px !important;
+  color: rgba(100,116,139,.65) !important;
+}
+
+#cp-chat-root .cp-menu-item i,
+#cp-chat-root .cp-menu-item svg {
+  display: none !important;
+}
+
+#cp-chat-root .cp-media-pop,
+#cp-chat-root .cp-media-pop * {
+  pointer-events: auto !important;
 }
