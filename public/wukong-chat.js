@@ -59,7 +59,7 @@
 
     for (var i = 0; i < urls.length; i++) {
       try {
-        var res = await fetch(urls[i] + "?v=30", {
+        var res = await fetch(urls[i] + "?v=33", {
           credentials: "same-origin",
           headers: { Accept: "application/json" }
         });
@@ -81,7 +81,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v30";
+  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v33";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -3922,6 +3922,9 @@
         video.muted = true;
         video.playsInline = true;
         video.preload = "metadata";
+        video.controls = false;
+        video.setAttribute("playsinline", "");
+        video.setAttribute("webkit-playsinline", "");
         video.setAttribute("data-original", src);
 
         var videoUrl = localUrl;
@@ -4044,13 +4047,16 @@
 
       var img = actEl.querySelector("img");
       var vid = actEl.querySelector("video");
+      var lazy = actEl.querySelector(".cp-lazy-media");
+      var lazyType = lazy && lazy.getAttribute("data-type");
 
       var mediaUrl =
         (img && (img.getAttribute("data-original") || img.getAttribute("src"))) ||
-        (vid && (vid.getAttribute("data-original") || vid.getAttribute("src")));
+        (vid && (vid.getAttribute("data-original") || vid.getAttribute("src"))) ||
+        (lazy && lazy.getAttribute("data-src"));
 
-      if (img) openPreview({ type: "image", mediaUrl: mediaUrl });
-      else if (vid) openPreview({ type: "video", mediaUrl: mediaUrl });
+      if (img || lazyType === "img") openPreview({ type: "image", mediaUrl: mediaUrl });
+      else if (vid || lazyType === "video") openPreview({ type: "video", mediaUrl: mediaUrl });
 
       return;
     }
@@ -4992,110 +4998,40 @@
   }
 
   async function compressVideo(file, maxSizeThreshold, maxDuration) {
-    maxSizeThreshold = maxSizeThreshold || VIDEO_CONFIG.maxSizeThreshold;
+    // v33: Do not transcode mobile videos in the browser.
+    // The old canvas/MediaRecorder conversion often produced WebM files that
+    // displayed a black preview or could not play in some mobile browsers.
+    // We only validate duration, then upload the original file.
     maxDuration = maxDuration || VIDEO_CONFIG.maxDuration;
 
     if (!file || !/^video\//i.test(file.type)) return file;
-    if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) return file;
 
     var inputUrl = URL.createObjectURL(file);
-
     try {
       var video = document.createElement("video");
-      video.src = inputUrl;
+      video.preload = "metadata";
       video.muted = true;
       video.playsInline = true;
+      video.setAttribute("playsinline", "");
+      video.setAttribute("webkit-playsinline", "");
+      video.src = inputUrl;
 
       await new Promise(function (resolve, reject) {
         video.onloadedmetadata = resolve;
         video.onerror = reject;
+        setTimeout(resolve, 3500);
       });
 
-      if (video.duration > maxDuration) {
+      if (Number.isFinite(video.duration) && video.duration > maxDuration) {
         var tooLong = new Error("视频过长，最多 " + maxDuration + " 秒");
         tooLong.code = "VIDEO_TOO_LONG";
         throw tooLong;
       }
 
-      if (file.size <= maxSizeThreshold) return file;
-      if (video.videoWidth === 0 || video.videoHeight === 0) throw new Error("视频无效");
-
-      var scale = Math.min(1, VIDEO_CONFIG.maxWidth / Math.max(1, video.videoWidth));
-      var width = Math.max(2, Math.round(video.videoWidth * scale));
-      var height = Math.max(2, Math.round(video.videoHeight * scale));
-
-      var canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-
-      var ctx = canvas.getContext("2d");
-      if (!ctx) return file;
-
-      var canvasStream = canvas.captureStream(VIDEO_CONFIG.fps);
-      var audioTracks = [];
-
-      try {
-        if (video.captureStream) audioTracks = Array.prototype.slice.call(video.captureStream().getAudioTracks());
-      } catch (_) {}
-
-      var tracks = Array.prototype.slice.call(canvasStream.getVideoTracks()).concat(audioTracks);
-      var outputStream = new MediaStream(tracks);
-      var mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus") ? "video/webm;codecs=vp8,opus" : "video/webm";
-      var chunks = [];
-
-      var recorder = new MediaRecorder(outputStream, {
-        mimeType: mimeType,
-        videoBitsPerSecond: VIDEO_CONFIG.videoBitsPerSecond,
-        audioBitsPerSecond: VIDEO_CONFIG.audioBitsPerSecond
-      });
-
-      recorder.ondataavailable = function (e) {
-        if (e.data && e.data.size) chunks.push(e.data);
-      };
-
-      var drawing = true;
-
-      var draw = function () {
-        if (!drawing) return;
-
-        try {
-          ctx.drawImage(video, 0, 0, width, height);
-        } catch (_) {}
-
-        if (!video.paused && !video.ended) requestAnimationFrame(draw);
-      };
-
-      var finished = new Promise(function (resolve) {
-        recorder.onstop = resolve;
-      });
-
-      recorder.start(500);
-      await video.play();
-      draw();
-
-      await new Promise(function (resolve) {
-        video.onended = resolve;
-        video.onerror = resolve;
-      });
-
-      drawing = false;
-      recorder.stop();
-
-      await finished;
-
-      var blob = new Blob(chunks, { type: mimeType });
-
-      if (!blob.size || blob.size >= file.size) return file;
-
-      return new File([blob], String(file.name || "video-" + Date.now()).replace(/\.[^.]+$/, ".webm"), {
-        type: blob.type || "video/webm",
-        lastModified: Date.now()
-      });
+      return file;
     } catch (err) {
-      warn("compress-video", err);
-
+      warn("check-video", err);
       if (err && err.code === "VIDEO_TOO_LONG") throw err;
-
       return file;
     } finally {
       URL.revokeObjectURL(inputUrl);
@@ -5132,8 +5068,9 @@
         }
 
         var url = await uploadToNodeBB(uploadFile, function (pct) {
-          pBar.style.width = pct * 100 + "%";
+          pBar.style.width = Math.max(1, Math.min(100, pct * 100)) + "%";
         });
+        pBar.style.width = "100%";
 
         if (!url) { toast("上传失败：没有返回文件地址"); continue; }
 
@@ -5385,24 +5322,33 @@
 
   async function openPreview(msg) {
     var body = byId("cp-preview-body");
-    var localUrl = await getOrFetchMediaBlob(msg.mediaUrl, msg.type);
 
     if (msg.type === "image") {
+      var localUrl = await getOrFetchMediaBlob(msg.mediaUrl, msg.type);
       body.innerHTML =
-        '<img src="' +
+        '<img class="cp-preview-image" src="' +
         escAttr(localUrl) +
-        '" style="max-width:100%;max-height:80vh;border-radius:12px;pointer-events:none;"/>';
+        '" />';
     } else if (msg.type === "video") {
+      // Use the original URL instead of a fetched blob so the browser can use
+      // normal video streaming/range behavior. This fixes many mobile playbacks.
+      var videoUrl = msg.mediaUrl || "";
       body.innerHTML =
-        '<video src="' +
-        escAttr(localUrl) +
-        '" controls autoplay playsinline style="max-width:100%;max-height:80vh;border-radius:12px;"></video>';
+        '<video class="cp-preview-video" src="' +
+        escAttr(videoUrl) +
+        '" controls preload="metadata" playsinline webkit-playsinline></video>';
     }
 
     var mask = byId("cp-preview-mask");
     mask.hidden = false;
-    mask.style.backgroundColor = "rgba(0,0,0,.9)";
+    mask.classList.add("is-open");
+    mask.style.backgroundColor = "rgba(0,0,0,.82)";
     body.style.transform = "";
+
+    var pv = body.querySelector("video");
+    if (pv) {
+      try { pv.load(); } catch (_) {}
+    }
 
     state.previewOpen = true;
 
@@ -5416,11 +5362,17 @@
 
     var mask = byId("cp-preview-mask");
     var body = byId("cp-preview-body");
+    var v = body && body.querySelector("video");
+    if (v) {
+      try { v.pause(); } catch (_) {}
+      try { v.removeAttribute("src"); v.load(); } catch (_) {}
+    }
 
     body.style.transform = "translateY(100vh) scale(.8)";
     mask.style.backgroundColor = "transparent";
 
     setTimeout(function () {
+      mask.classList.remove("is-open");
       mask.hidden = true;
       body.innerHTML = "";
     }, 250);
