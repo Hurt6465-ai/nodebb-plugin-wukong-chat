@@ -16,100 +16,10 @@
       console.log.apply(console, ['[cp-chat-harmony]'].concat(Array.prototype.slice.call(arguments)));
     }
   }
-
-
-  function cpRaw(v) {
-    if (v === undefined || v === null) return "";
-    var s = String(v).trim();
-    if (!s || s === "undefined" || s === "null") return "";
-    if (/^\{[^}]+\}$/.test(s)) return "";
-    return s;
-  }
-
-  function cpDigits(v) {
-    return cpRaw(v).replace(/[^0-9]/g, "");
-  }
-
-  function cpApiBase() {
-    return cpRaw(cpPluginConfig().apiBase) || getRelativePath() + "/api/wukong";
-  }
-
-  function cpPageConfig() {
-    var root = document.getElementById("nodebb-wukong-root");
-    var cfg = window.__NBB_WUKONG_PAGE__ || {};
-    var q = new URLSearchParams(location.search || "");
-    var path = String(location.pathname || "");
-    var rel = getRelativePath();
-    if (rel && path.indexOf(rel) === 0) path = path.slice(rel.length) || "/";
-    var mUser = path.match(/\/wukong\/(\d+)/i);
-
-    var targetUid =
-      cpDigits(root && root.getAttribute("data-target-uid")) ||
-      cpDigits(cfg.targetUid) ||
-      cpDigits(mUser && mUser[1]) ||
-      cpDigits(q.get("uid"));
-
-    var tid =
-      cpDigits(root && root.getAttribute("data-tid")) ||
-      cpDigits(cfg.tid) ||
-      cpDigits(q.get("tid"));
-
-    var channelId =
-      cpRaw(root && root.getAttribute("data-channel-id")) ||
-      cpRaw(cfg.channelId) ||
-      cpRaw(q.get("channel_id"));
-
-    var channelType = Number(
-      cpRaw(root && root.getAttribute("data-channel-type")) ||
-      cpRaw(cfg.channelType) ||
-      cpRaw(q.get("channel_type")) ||
-      0
-    );
-
-    if (tid && !channelId) channelId = "nbb_topic_" + tid;
-    if (!channelId && targetUid) channelId = targetUid;
-    if ([1, 2].indexOf(channelType) === -1) channelType = tid || String(channelId).indexOf("nbb_topic_") === 0 ? 2 : 1;
-
-    return {
-      targetUid: targetUid,
-      tid: tid,
-      channelId: channelId,
-      channelType: channelType
-    };
-  }
-
-  function cpIndependentMode() {
-    var path = String(location.pathname || "");
-    return !!document.getElementById("nodebb-wukong-root") || /(?:^|\/)wukong(?:\/|$)/i.test(path);
-  }
-
-  function cpGetTargetUid() {
-    var c = cpPageConfig();
-    return c.channelType === 1 ? cpDigits(c.targetUid || c.channelId) : "";
-  }
-
-  function cpGetChannelId() {
-    var c = cpPageConfig();
-    return c.channelId || c.targetUid || "";
-  }
-
-  function cpGetChannelType() {
-    return Number(cpPageConfig().channelType || 1) || 1;
-  }
-
-  function cpFetchJSON(url, opts) {
-    return fetch(url, Object.assign({
-      credentials: "include",
-      headers: { accept: "application/json" }
-    }, opts || {})).then(function (res) {
-      if (!res.ok) throw new Error("HTTP " + res.status + " " + url);
-      return res.json();
-    });
-  }
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.9-mobile-telegram-v2";
+  window.__cpNodebbHarmonyVersion = "1.0.3-cache-peer-fastboot";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -240,50 +150,25 @@
     '  ]\n' +
     '}';
 
-  function cpSvgIcon(name, extraClass) {
-    var paths = {
-      play: '<path d="M8 5v14l11-7z"></path>',
-      pause: '<path d="M8 5v14"></path><path d="M16 5v14"></path>',
-      mic: '<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"></path><path d="M5 11a7 7 0 0 0 14 0"></path><path d="M12 18v3"></path><path d="M8 21h8"></path>',
-      send: '<path d="M12 19V5"></path><path d="M5 12l7-7 7 7"></path>',
-      photo: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="8.5" cy="10" r="1.5"></circle><path d="M21 15l-5-5L5 19"></path>',
-      quote: '<path d="M10 17H5a2 2 0 0 1-2-2v-3a7 7 0 0 1 7-7v4a3 3 0 0 0-3 3h3z"></path><path d="M21 17h-5a2 2 0 0 1-2-2v-3a7 7 0 0 1 7-7v4a3 3 0 0 0-3 3h3z"></path>',
-      recall: '<path d="M9 14 4 9l5-5"></path><path d="M4 9h10a6 6 0 1 1-4.2 10.2"></path>',
-      trans: '<path d="M4 5h9"></path><path d="M9 3v2c0 4-2 7-5 9"></path><path d="M5 9c1 2 3 4 6 5"></path><path d="M14 21l4-9 4 9"></path><path d="M15.5 18h5"></path>',
-      camera: '<path d="M4 8h3l2-3h6l2 3h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z"></path><circle cx="12" cy="14" r="3"></circle>',
-      album: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15l3-3 3 3 2-2 3 4"></path>',
-      more: '<circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle>',
-      close: '<path d="M18 6 6 18"></path><path d="M6 6l12 12"></path>',
-      trash: '<path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>',
-      heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"></path>',
-      down: '<path d="M6 9l6 6 6-6"></path>',
-      video: '<rect x="3" y="6" width="13" height="12" rx="2"></rect><path d="M16 10l5-3v10l-5-3z"></path>'
+  function cpSvgIcon(name) {
+    var map = {
+      play: '▶', pause: 'Ⅱ', mic: '🎙', send: '➤', photo: '▧', quote: '↩', recall: '↶', trans: '译', camera: '📷', album: '🖼'
     };
-    var cls = "cp-icon" + (extraClass ? " " + extraClass : "");
-    return '<svg class="' + cls + '" viewBox="0 0 24 24" aria-hidden="true">' + (paths[name] || paths.photo) + '</svg>';
+    return '<span class="cp-fallback-icon cp-i-' + escAttr(name) + '">' + esc(map[name] || name) + '</span>';
   }
 
   var ICON = {
-    play: cpSvgIcon("play"),
-    pause: cpSvgIcon("pause"),
-    mic: cpSvgIcon("mic"),
-    send: cpSvgIcon("send"),
-    photo: cpSvgIcon("photo"),
-    quote: cpSvgIcon("quote"),
-    recall: cpSvgIcon("recall"),
-    trans: cpSvgIcon("trans"),
-    camera: cpSvgIcon("camera"),
-    album: cpSvgIcon("album"),
-    more: cpSvgIcon("more"),
-    close: cpSvgIcon("close"),
-    trash: cpSvgIcon("trash"),
-    heart: cpSvgIcon("heart"),
-    down: cpSvgIcon("down"),
-    video: cpSvgIcon("video"),
-    spinner: '<span class="cp-spinner" aria-hidden="true"></span>',
-    imagePlaceholder: cpSvgIcon("photo", "cp-icon-lg"),
-    videoPlaceholder: cpSvgIcon("video", "cp-icon-lg"),
-    ai: '<span class="cp-ai-glyph">译</span>'
+    play: cpSvgIcon('play'),
+    pause: cpSvgIcon('pause'),
+    mic: cpSvgIcon('mic'),
+    send: cpSvgIcon('send'),
+    photo: cpSvgIcon('photo'),
+    quote: cpSvgIcon('quote'),
+    recall: cpSvgIcon('recall'),
+    trans: cpSvgIcon('trans'),
+    camera: cpSvgIcon('camera'),
+    album: cpSvgIcon('album'),
+    ai: '<span class="cp-fallback-icon cp-i-ai">译</span>'
   };
 
   var waveHeights = [5, 8, 12, 16, 10, 7, 14, 9, 13, 6, 11, 15];
@@ -365,8 +250,6 @@
     localMaxSeq: 0,
     wingmanRequestId: 0,
     translateInflight: {},
-    userProfileCache: {},
-    pendingUserProfileFetch: {},
 
     // 修复：跟踪用户是否在底部（用于自动滚动决策）
     stickToBottom: true,
@@ -382,6 +265,39 @@
 
   function byId(id) {
     return document.getElementById(id);
+  }
+
+
+  function ensureMobileCss() {
+    if (byId("cp-chat-mobile-css")) return;
+
+    var href = "";
+    try {
+      var current = document.currentScript && document.currentScript.src ? document.currentScript.src : "";
+      if (current) href = current.replace(/\/[^\/]*$/, "/wukong-chat.css");
+    } catch (_) {}
+
+    if (!href) href = getRelativePath() + "/plugins/nodebb-plugin-wukong-chat/wukong-chat.css";
+    href += (href.indexOf("?") === -1 ? "?" : "&") + "v=mobile-v5";
+
+    var link = document.createElement("link");
+    link.id = "cp-chat-mobile-css";
+    link.rel = "stylesheet";
+    link.href = href;
+    document.head.appendChild(link);
+  }
+
+  function closeBootMasks() {
+    ["cp-settings-mask", "cp-lang-mask", "cp-context-overlay", "cp-preview-mask", "cp-media-pop"].forEach(function (id) {
+      var el = byId(id);
+      if (!el) return;
+      el.hidden = true;
+      el.setAttribute("hidden", "");
+      el.classList.remove("is-open", "show", "active");
+      el.removeAttribute("data-open");
+    });
+    state.settingsOpen = false;
+    state.previewOpen = false;
   }
 
   function esc(str) {
@@ -876,9 +792,6 @@
   }
 
   function getRoutePeerSlug() {
-    var pageTargetUid = cpGetTargetUid();
-    if (pageTargetUid) return pageTargetUid;
-
     var path = String(location.pathname || "");
     var rel = getRelativePath();
 
@@ -920,93 +833,11 @@
     if (uid && String(uid) !== myUidStr && String(uid) !== "0") state.peerUidCache = String(uid);
     if (username) state.peerUsernameCache = String(username);
     if (userslug) state.peerUserslugCache = String(userslug);
-    if (u.picture || u.uploadedpicture) state.peerPictureCache = u.picture || u.uploadedpicture;
-    if (u.icontext || u["icon:text"]) state.peerIconTextCache = u.icontext || u["icon:text"];
-    if (u.iconbgColor || u["icon:bgColor"]) state.peerIconBgCache = u.iconbgColor || u["icon:bgColor"];
-    if (uid) state.userProfileCache[String(uid)] = {
-      uid: String(uid),
-      username: username,
-      userslug: userslug,
-      displayname: u.displayname || username,
-      picture: u.picture || u.uploadedpicture || "",
-      icontext: u.icontext || u["icon:text"] || "",
-      iconbgColor: u.iconbgColor || u["icon:bgColor"] || ""
-    };
+    if (u.picture) state.peerPictureCache = u.picture;
+    if (u.icontext) state.peerIconTextCache = u.icontext;
+    if (u.iconbgColor) state.peerIconBgCache = u.iconbgColor;
 
     return !!(state.peerUidCache || state.peerUsernameCache || state.peerUserslugCache);
-  }
-
-
-  function applyUserProfileToMessages(uid, profile) {
-    if (!uid || !profile) return;
-    var changed = false;
-    var name = profile.displayname || profile.username || profile.userslug || ("用户" + uid);
-    var slug = profile.userslug || profile.username || String(uid);
-
-    function touchList(list) {
-      for (var i = 0; i < list.length; i++) {
-        var m = list[i];
-        if (!m || String(m.uid) !== String(uid) || m.mine) continue;
-        if (m.username !== name || m.userslug !== slug || !m.avatarHtml) {
-          m.username = name;
-          m.userslug = slug;
-          m.avatarHtml = getAvatarHtml(String(uid), name, null);
-          m._ver = (Number(m._ver) || 0) + 1;
-          changed = true;
-        }
-      }
-    }
-
-    touchList(state.messages || []);
-    touchList(state.wkMessages || []);
-
-    if (String(uid) === String(state.peerUidCache || cpGetTargetUid())) {
-      state.peerUidCache = String(uid);
-      state.peerUsernameCache = name;
-      state.peerUserslugCache = slug;
-      if (profile.picture) state.peerPictureCache = profile.picture;
-      if (profile.icontext) state.peerIconTextCache = profile.icontext;
-      if (profile.iconbgColor) state.peerIconBgCache = profile.iconbgColor;
-      updateHeaderPeerInfo(null);
-    }
-
-    if (changed) {
-      state.renderVersion++;
-      state.mergedDirty = true;
-      state.msgIndexDirty = true;
-      incrementalRender("keep");
-    }
-  }
-
-  function fetchUserProfile(uid) {
-    uid = cpDigits(uid);
-    if (!uid) return Promise.resolve(null);
-    if (state.userProfileCache && state.userProfileCache[uid]) return Promise.resolve(state.userProfileCache[uid]);
-    if (!state.pendingUserProfileFetch) state.pendingUserProfileFetch = {};
-    if (state.pendingUserProfileFetch[uid]) return state.pendingUserProfileFetch[uid];
-
-    state.pendingUserProfileFetch[uid] = cpFetchJSON(cpApiBase() + "/user/" + encodeURIComponent(uid))
-      .then(function (res) {
-        var u = pickUserRecord(res) || (res && res.user) || (res && res.data) || res;
-        if (res && res.userData) u = res.userData;
-        if (res && res.users && res.users[0]) u = res.users[0];
-        if (!u || !(u.uid || u.userId || u.id)) return null;
-        setPeerFromUser(u);
-        var realUid = String(u.uid || u.userId || u.id || uid);
-        var profile = state.userProfileCache[realUid] || u;
-        state.userProfileCache[realUid] = profile;
-        applyUserProfileToMessages(realUid, profile);
-        return profile;
-      })
-      .catch(function (e) {
-        warn("fetch-user-profile", e);
-        return null;
-      })
-      .finally(function () {
-        delete state.pendingUserProfileFetch[uid];
-      });
-
-    return state.pendingUserProfileFetch[uid];
   }
 
   function getPeerFromAjaxify() {
@@ -1055,33 +886,6 @@
     if (state.peerHydrating) return false;
     if (state.peerUidCache && state.peerUsernameCache) return true;
 
-    var targetUid = cpGetTargetUid();
-    if (targetUid) {
-      state.peerUidCache = state.peerUidCache || String(targetUid);
-      var cached = state.userProfileCache && state.userProfileCache[String(targetUid)];
-      if (cached) {
-        setPeerFromUser(cached);
-        updateHeaderPeerInfo(null);
-        return true;
-      }
-      state.peerUsernameCache = state.peerUsernameCache || "用户" + targetUid;
-      state.peerUserslugCache = state.peerUserslugCache || String(targetUid);
-      updateHeaderPeerInfo(null);
-      state.peerHydrating = true;
-      try {
-        var profile = await fetchUserProfile(targetUid);
-        if (profile && setPeerFromUser(profile)) {
-          updateHeaderPeerInfo(null);
-          return true;
-        }
-      } catch (e) {
-        warn("hydrate-peer-uid", e);
-      } finally {
-        state.peerHydrating = false;
-      }
-      return !!state.peerUidCache;
-    }
-
     var u = getPeerFromAjaxify();
     if (setPeerFromUser(u)) return true;
 
@@ -1116,13 +920,7 @@
     return false;
   }
 
-
   function getPeerUid() {
-    var routeTargetUid = cpGetTargetUid();
-    if (routeTargetUid) {
-      state.peerUidCache = state.peerUidCache || String(routeTargetUid);
-      return String(routeTargetUid);
-    }
     if (state.peerUidCache) return state.peerUidCache;
 
     setPeerFromUser(getPeerFromAjaxify());
@@ -1162,11 +960,7 @@
     } else {
       var u = null;
 
-      if (state.userProfileCache && state.userProfileCache[String(uid)]) {
-        u = state.userProfileCache[String(uid)];
-      }
-
-      if (!u && uid && window.ajaxify && ajaxify.data && ajaxify.data.users) {
+      if (uid && window.ajaxify && ajaxify.data && ajaxify.data.users) {
         u = ajaxify.data.users.find(function (x) {
           return String(x.uid) === String(uid);
         });
@@ -1181,9 +975,9 @@
       }
 
       if (u) {
-        pic = u.picture || u.uploadedpicture || "";
-        if (u.icontext || u["icon:text"]) text = u.icontext || u["icon:text"];
-        if (u.iconbgColor || u["icon:bgColor"]) bg = u.iconbgColor || u["icon:bgColor"];
+        pic = u.picture;
+        if (u.icontext) text = u.icontext;
+        if (u.iconbgColor) bg = u.iconbgColor;
       }
     }
 
@@ -1212,14 +1006,6 @@
     var userslug = state.peerUserslugCache || "";
     var uid = state.peerUidCache || "";
     var avatarHtml = "";
-    var targetUid = cpGetTargetUid();
-    if (targetUid && state.userProfileCache && state.userProfileCache[String(targetUid)]) {
-      var pu = state.userProfileCache[String(targetUid)];
-      uid = uid || String(pu.uid || targetUid);
-      name = name || pu.displayname || pu.username || pu.userslug || ("用户" + targetUid);
-      userslug = userslug || pu.userslug || pu.username || String(targetUid);
-      avatarHtml = avatarHtml || getAvatarHtml(uid, name, null);
-    }
 
     if (peerMsg) {
       name = peerMsg.username || name;
@@ -1245,26 +1031,15 @@
       }
     }
 
-    if (!name) {
-      var fallbackUid = cpGetTargetUid() || (cpGetChannelType() === 1 ? cpDigits(cpGetChannelId()) : "");
-      if (fallbackUid) {
-        uid = uid || String(fallbackUid);
-        name = "用户" + fallbackUid;
-        userslug = userslug || String(fallbackUid);
-        if (!state.peerUidCache) state.peerUidCache = String(fallbackUid);
-        setTimeout(function () { fetchUserProfile(fallbackUid); }, 0);
-      }
-    }
-
     if (name) {
       state.peerUsernameCache = name;
       userslug = userslug || encodeURIComponent(String(name).toLowerCase().replace(/ /g, "-"));
       state.peerUserslugCache = userslug;
-      var hrefSlug = userslug || uid || getPeerUid() || "";
-      pInfo.innerHTML = '<a href="' + getRelativePath() + '/user/' + escAttr(hrefSlug) + '/topics" title="访问主页">' + esc(name) + "</a>";
+      pInfo.dataset.ready = '1';
+      pInfo.innerHTML = '<a href="' + getRelativePath() + '/user/' + escAttr(userslug) + '/topics" title="访问主页">' + esc(name) + "</a>";
       if (avatar) avatar.innerHTML = avatarHtml || getAvatarHtml(String(uid || getPeerUid() || ""), name, null);
-      if (targetUid && (!state.userProfileCache || !state.userProfileCache[String(targetUid)])) fetchUserProfile(targetUid);
     } else {
+      pInfo.dataset.ready = '1';
       pInfo.textContent = cpT("chatRoom", "聊天室");
       if (avatar) avatar.innerHTML = getAvatarHtml("", "?", null);
     }
@@ -1350,20 +1125,9 @@
       return !m.mine && m.username;
     });
 
-    var cachedProfile = state.userProfileCache && state.userProfileCache[String(uid)];
-    var username = isMine
-      ? (window.app && app.user ? app.user.username : "我")
-      : (cachedProfile && (cachedProfile.displayname || cachedProfile.username)) ||
-        (payloadObj && (payloadObj.from_name || payloadObj.fromName || payloadObj.username || payloadObj.displayname)) ||
-        (peerMsg ? peerMsg.username : state.peerUsernameCache || "用户" + uid);
-    var userslug = isMine
-      ? (window.app && app.user ? app.user.userslug || "" : "")
-      : (cachedProfile && cachedProfile.userslug) || (peerMsg ? peerMsg.userslug : state.peerUserslugCache || String(uid));
+    var username = isMine ? (window.app && app.user ? app.user.username : "我") : peerMsg ? peerMsg.username : state.peerUsernameCache || "用户" + uid;
+    var userslug = isMine ? (window.app && app.user ? app.user.userslug || "" : "") : peerMsg ? peerMsg.userslug : "";
     var avatarHtml = getAvatarHtml(String(uid), username, peerMsg ? peerMsg.avatarHtml : null);
-
-    if (!isMine && !cachedProfile && uid) {
-      setTimeout(function () { fetchUserProfile(uid); }, 0);
-    }
 
     var type = "text";
     var mediaUrl = "";
@@ -1453,142 +1217,118 @@
     if (window.__wkEngineBooted) return;
     window.__wkEngineBooted = true;
 
-    cpFetchJSON(cpApiBase() + "/token")
-      .then(function (res) {
-        if (!res || !res.token) throw new Error("missing token");
+    $.getJSON("/bridge/token", function (res) {
+      if (!res || !res.token) return;
 
-        state.myUid = String(res.uid || res.wkUid || "");
-        if (res.user) {
-          state.userProfileCache[String(state.myUid)] = res.user;
-        }
+      state.myUid = String(res.uid);
 
-        var sdkUrls = [
-          cpPluginConfig().wkSdkUrl,
-          getRelativePath() + "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js",
-          "https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js"
-        ].filter(Boolean);
+      var s = document.createElement("script");
+      s.src = cpPluginConfig().wkSdkUrl || "https://cdn.jsdelivr.net/npm/wukongimjssdk@latest/lib/wukongimjssdk.umd.js";
+      document.head.appendChild(s);
 
-        var bootSdk = function () {
-          var wk = window.wk;
-          if (!wk || !wk.WKSDK) throw new Error("WKSDK not loaded");
+      s.onload = function () {
+        var wk = window.wk;
+        if (!wk || !wk.WKSDK) return;
 
-          wk.WKSDK.shared().config.uid = state.myUid;
-          wk.WKSDK.shared().config.token = String(res.token);
-          wk.WKSDK.shared().config.addr = cpPluginConfig().wkWsUrl || res.wsAddr || res.addr || res.wkws || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/wkws/");
+        wk.WKSDK.shared().config.uid = state.myUid;
+        wk.WKSDK.shared().config.token = String(res.token);
+        wk.WKSDK.shared().config.addr = cpPluginConfig().wkWsUrl || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/wkws/");
 
-          wk.WKSDK.shared().chatManager.addMessageListener(function (m) {
-            if (!state.mounted) return;
+        wk.WKSDK.shared().chatManager.addMessageListener(function (m) {
+          if (!state.mounted) return;
 
-            var payloadObj = extractWkPayload(m) || {};
+          var payloadObj = extractWkPayload(m) || {};
 
-            if (m.contentType === 1006 || payloadObj.type === 1006) {
-              var targetId = payloadObj.client_msg_no || payloadObj.message_id || payloadObj.clientMsgNo;
+          if (m.contentType === 1006 || payloadObj.type === 1006) {
+            var targetId = payloadObj.client_msg_no || payloadObj.message_id || payloadObj.clientMsgNo;
 
-              var targetMsg = state.wkMessages.find(function (x) {
-                return x.id === targetId || (x.wkMsg && (x.wkMsg.clientMsgNo === targetId || x.wkMsg.messageID === targetId));
-              });
+            var targetMsg = state.wkMessages.find(function (x) {
+              return x.id === targetId || (x.wkMsg && (x.wkMsg.clientMsgNo === targetId || x.wkMsg.messageID === targetId));
+            });
 
-              if (targetMsg) {
-                targetMsg.recalled = true;
-                targetMsg.text = "此消息已被撤回";
-                msgTouch(targetMsg);
-                incrementalRender("keep");
-              }
-
-              return;
-            }
-
-            var fromUid = String(m.fromUID || m.from_uid || "");
-            if (fromUid === state.myUid) return;
-
-            var currentChannelId = cpGetChannelId() || getPeerUid();
-            var incomingChannelId = String(
-              m.channelID || m.channel_id ||
-              (m.channel && (m.channel.channelID || m.channel.channel_id)) ||
-              fromUid || ""
-            );
-
-            if (currentChannelId && incomingChannelId && incomingChannelId !== currentChannelId && fromUid !== currentChannelId) return;
-
-            var t = payloadObj.text || payloadObj.content || "";
-            if (!t) return;
-
-            if (isCallSignalText(t)) return;
-
-            var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
-            newMsg.serverText = t;
-
-            var incomingSeq = m.messageSeq || m.message_seq || 0;
-            if (incomingSeq > state.localMaxSeq) state.localMaxSeq = incomingSeq;
-
-            state.wkMessages.push(newMsg);
-            pruneWkMessages();
-            pruneAllMessagesInMemory();
-
-            state.renderVersion++;
-            state.mergedDirty = true;
-            state.msgIndexDirty = true;
-
-            schedulePersistChat(currentChannelId || getPeerUid());
-
-            var wasAtBottom = isMainAtBottom();
-
-            if (state.cfg.autoTranslateLastMsg) {
-              setTimeout(function () {
-                executePeerTranslateOnly(newMsg);
-              }, 0);
-            }
-
-            if (wasAtBottom) {
-              state.unreadCount = 0;
-              updateUnreadBadge();
-              incrementalRender("bottom");
-              requestAnimationFrame(function () {
-                forceScrollToBottom();
-                setTimeout(markVisibleAsRead, 60);
-              });
-            } else {
-              state.unreadCount++;
-              updateUnreadBadge();
+            if (targetMsg) {
+              targetMsg.recalled = true;
+              targetMsg.text = "此消息已被撤回";
+              msgTouch(targetMsg);
               incrementalRender("keep");
-              if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
             }
-          });
 
-          wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
-            if (status === 1 && state.mounted && state.initialLoadDone) {
-              var pUid = cpGetChannelId() || getPeerUid();
-              if (pUid && state.localMaxSeq > 0) fetchOfflineMessages(pUid);
-            }
-          });
+            return;
+          }
 
-          wk.WKSDK.shared().connectManager.connect();
-          state.wkReady = true;
-        };
+          var fromUid = String(m.fromUID);
+          if (fromUid === state.myUid) return;
 
-        if (window.wk && window.wk.WKSDK) return bootSdk();
+          var currentPeerUid = getPeerUid();
+          if (!currentPeerUid || fromUid !== currentPeerUid) return;
 
-        var idx = 0;
-        var loadNext = function () {
-          if (idx >= sdkUrls.length) throw new Error("wk sdk load failed");
-          var s = document.createElement("script");
-          s.src = sdkUrls[idx++];
-          s.async = true;
-          s.onload = function () {
-            if (window.wk && window.wk.WKSDK) bootSdk();
-            else loadNext();
-          };
-          s.onerror = loadNext;
-          document.head.appendChild(s);
-        };
-        loadNext();
-      })
-      .catch(function (e) {
-        warn("wk-token", e);
-        toast("悟空连接失败");
-      });
+          var t = payloadObj.text || payloadObj.content || "";
+          if (!t) return;
+
+          // 通话信令只用于通话控制，不显示为普通聊天气泡
+          if (isCallSignalText(t)) return;
+
+          var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
+          // 修复：标记接收到的服务器文本
+          newMsg.serverText = t;
+
+          var incomingSeq = m.messageSeq || m.message_seq || 0;
+          if (incomingSeq > state.localMaxSeq) state.localMaxSeq = incomingSeq;
+
+          state.wkMessages.push(newMsg);
+          pruneWkMessages();
+          pruneAllMessagesInMemory();
+
+          state.renderVersion++;
+          state.mergedDirty = true;
+          state.msgIndexDirty = true;
+
+          schedulePersistChat(currentPeerUid);
+
+          // 修复：记录滚动位置，再渲染再决策
+          var wasAtBottom = isMainAtBottom();
+
+          if (state.cfg.autoTranslateLastMsg) {
+            setTimeout(function () {
+              executePeerTranslateOnly(newMsg);
+            }, 0);
+          }
+
+          if (wasAtBottom) {
+            state.unreadCount = 0;
+            updateUnreadBadge();
+            incrementalRender("bottom");
+            // 修复：渲染后强制滚到底
+            requestAnimationFrame(function () {
+              forceScrollToBottom();
+              setTimeout(markVisibleAsRead, 60);
+            });
+          } else {
+            state.unreadCount++;
+            updateUnreadBadge();
+            incrementalRender("keep");
+            if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
+          }
+        });
+
+        wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
+          if (status === 1 && state.mounted && state.initialLoadDone) {
+            var pUid = getPeerUid();
+            if (pUid && state.localMaxSeq > 0) fetchOfflineMessages(pUid);
+          }
+        });
+
+        wk.WKSDK.shared().connectManager.connect();
+        state.wkReady = true;
+      };
+
+      s.onerror = function (e) {
+        warn("wk-sdk-load", e);
+      };
+    }).fail(function (e) {
+      warn("wk-token", e);
+    });
   }
-
 
   async function fetchWukongHistory(peerUid, startSeq, opts) {
     if (!peerUid || state.isPreloading || state.hasNoMoreHistory) return;
@@ -1600,8 +1340,7 @@
     if (byId("cp-top-spinner")) byId("cp-top-spinner").hidden = false;
 
     try {
-      var channelId = cpGetChannelId() || peerUid;
-      var url = cpApiBase() + "/get-history?channel_id=" + encodeURIComponent(channelId) + "&channel_type=" + encodeURIComponent(cpGetChannelType()) + "&limit=" + encodeURIComponent(limit);
+      var url = "/bridge/get-history?login_uid=" + encodeURIComponent(state.myUid) + "&channel_id=" + encodeURIComponent(peerUid) + "&limit=" + encodeURIComponent(limit);
       if (startSeq && startSeq > 0) url += "&start_message_seq=" + encodeURIComponent(startSeq);
 
       var res = await fetch(url);
@@ -1637,13 +1376,11 @@
 
     while (hasMore) {
       try {
-        var channelId = cpGetChannelId() || peerUid;
         var url =
-          cpApiBase() +
-          "/get-history?channel_id=" +
-          encodeURIComponent(channelId) +
-          "&channel_type=" +
-          encodeURIComponent(cpGetChannelType()) +
+          "/bridge/get-history?login_uid=" +
+          encodeURIComponent(state.myUid) +
+          "&channel_id=" +
+          encodeURIComponent(peerUid) +
           "&limit=50&start_message_seq=" +
           encodeURIComponent(startSeq);
 
@@ -1687,7 +1424,7 @@
     for (var i = 0; i < msgs.length; i++) {
       var m = msgs[i];
       var payloadObj = extractWkPayload(m) || {};
-      var fromUid = String(m.from_uid || m.fromUID || m.from || m.sender_uid || "");
+      var fromUid = String(m.from_uid || m.fromUID);
       var isMine = fromUid === state.myUid;
       var serverT = payloadObj.text || payloadObj.content || "";
 
@@ -1723,7 +1460,6 @@
       }
 
       state.wkMessages.push(newMsg);
-      if (!isMine && fromUid) fetchUserProfile(fromUid);
       added = true;
     }
 
@@ -1776,10 +1512,9 @@
       return;
     }
 
-    var peerUid = cpGetChannelId() || getPeerUid();
+    var peerUid = getPeerUid();
 
     try {
-      if (cpIndependentMode()) throw new Error("independent mode: skip native send");
       var nativeInput = document.querySelector('[component="chat/input"]');
       var nativeBtn = document.querySelector('[component="chat/send"]');
 
@@ -1807,7 +1542,7 @@
 
     if (peerUid && state.wkReady && window.wk) {
       try {
-        var channel = new window.wk.Channel(peerUid, cpGetChannelType());
+        var channel = new window.wk.Channel(peerUid, 1);
         var msgContent = new window.wk.MessageText(text);
 
         if (originalText) {
@@ -1900,11 +1635,6 @@
   }
 
   function boot() {
-    if (cpIndependentMode()) {
-      if (!state.mounted) mount();
-      return;
-    }
-
     var chatContainer = document.querySelector('[component="chat/messages"]');
 
     if (chatContainer) {
@@ -1918,7 +1648,7 @@
   }
 
   async function ensurePeerLoaded() {
-    var pUid = cpGetChannelId() || getPeerUid();
+    var pUid = getPeerUid();
 
     if (!pUid) {
       await hydratePeerFromRoute();
@@ -1967,7 +1697,7 @@
       })
     );
 
-    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.06 });
+    state.bg = loadJSON(KEY_BG, { dataUrl: null, opacity: 0.08 });
 
     state.peerUidCache = "";
     state.peerUsernameCache = "";
@@ -1983,7 +1713,7 @@
     state.messages = [];
     state.myUid = String(window.app && window.app.user ? window.app.user.uid : "");
     state.unreadCount = 0;
-    state.renderLimit = window.innerWidth <= 480 ? 36 : 50;
+    state.renderLimit = 50;
     state.lastRenderHash = "";
     state.renderVersion = 0;
     state.isPreloading = false;
@@ -1997,15 +1727,14 @@
     state.initialLoadDone = false;
     state.wingmanRequestId = 0;
     state.translateInflight = {};
-    state.userProfileCache = {};
-    state.pendingUserProfileFetch = {};
     state.stickToBottom = true;
 
-    (window.requestIdleCallback || function (fn) { return setTimeout(fn, 800); })(cleanUpOldMedia);
+    cleanUpOldMedia();
 
     injectStyle();
+    ensureMobileCss();
     injectRoot();
-    closeAllTransientMasks();
+    closeBootMasks();
     // 先用路由用户名占位，避免标题长时间停留在“加载中...”
     updateHeaderPeerInfo(null);
     hydratePeerFromRoute().then(function () {
@@ -2123,52 +1852,1356 @@
     state.initialLoadDone = false;
   }
 
-  function getPluginStaticBase() {
-    var cfgBase = cpPluginConfig().staticBase || cpPluginConfig().assetBase;
-    if (cfgBase) return String(cfgBase).replace(/\/$/, "");
-    return getRelativePath() + "/plugins/nodebb-plugin-wukong-chat/static";
-  }
-
   function injectStyle() {
     if (byId("cp-chat-style")) return;
 
-    var link = document.createElement("link");
-    link.id = "cp-chat-style";
-    link.rel = "stylesheet";
-    link.href = getPluginStaticBase() + "/wukong-chat.css?v=0.20.0-mobile-telegram-v3";
-    document.head.appendChild(link);
-  }
+    var css = `
+      body.cp-shell-on[component="chat/main-wrapper"],
+      body.cp-shell-on .chats-full,
+      body.cp-shell-on .chat-modal,
+      body.cp-shell-on[component="chat/nav-wrapper"] {
+        position:absolute!important;
+        top:-9999px!important;
+        left:-9999px!important;
+        opacity:0!important;
+        pointer-events:none!important;
+        z-index:-1!important;
+      }
 
-  function setMaskOpen(id, open) {
-    var el = byId(id);
-    if (!el) return;
+      #cp-chat-root {
+        position:fixed;
+        inset:0;
+        z-index:2147483000;
+        --cp-other:#fff;
+        --cp-mine:#e0c3fc;
+        --cp-bg:#f1f5f9;
+        --cp-text:#1f2937;
+        --cp-primary:#3b82f6;
+        --cp-danger:#ef4444;
+        --cp-footer-h:118px;
+        font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+        color:var(--cp-text);
+        overflow:hidden;
+        background:var(--cp-bg);
+        -webkit-user-select:none!important;
+        user-select:none!important;
+        -webkit-touch-callout:none!important;
+        touch-action:manipulation;
+      }
 
-    if (open) {
-      el.hidden = false;
-      el.removeAttribute("hidden");
-      el.classList.add("show", "is-open");
-      el.style.removeProperty("display");
-      el.style.removeProperty("visibility");
-      el.style.removeProperty("opacity");
-      el.style.removeProperty("pointer-events");
-    } else {
-      el.classList.remove("show", "is-open", "active");
-      el.removeAttribute("data-open");
-      el.hidden = true;
-      el.setAttribute("hidden", "");
-      el.style.removeProperty("display");
-      el.style.removeProperty("visibility");
-      el.style.removeProperty("opacity");
-      el.style.removeProperty("pointer-events");
-    }
-  }
+      #cp-chat-root *,
+      #cp-chat-root *::before,
+      #cp-chat-root *::after {
+        box-sizing:border-box;
+        -webkit-user-select:none!important;
+        user-select:none!important;
+        -webkit-touch-callout:none!important;
+      }
 
-  function closeAllTransientMasks() {
-    ["cp-settings-mask", "cp-lang-mask", "cp-context-overlay", "cp-preview-mask", "cp-media-pop"].forEach(function (id) {
-      setMaskOpen(id, false);
-    });
-    state.previewOpen = false;
-    state.settingsOpen = false;
+      #cp-chat-root textarea,
+      #cp-chat-root input,
+      #cp-chat-root select {
+        -webkit-user-select:text!important;
+        user-select:text!important;
+        -webkit-touch-callout:default!important;
+      }
+
+      #cp-chat-root *::-webkit-scrollbar { display:none!important; }
+
+      .cp-bg {
+        position:absolute;
+        inset:0;
+        background-size:cover;
+        background-position:center;
+        z-index:0;
+        pointer-events:none;
+      }
+
+      .cp-bg-mask {
+        position:absolute;
+        inset:0;
+        background:rgba(241,245,249,var(--bg-op,.85));
+        z-index:1;
+        pointer-events:none;
+      }
+
+      .cp-header {
+        position:absolute;
+        left:0;
+        right:0;
+        top:0;
+        z-index:20;
+        height:calc(52px + env(safe-area-inset-top));
+        padding:env(safe-area-inset-top) 12px 7px 10px;
+        display:flex;
+        align-items:flex-end;
+        justify-content:flex-start;
+        gap:8px;
+        border-bottom:1px solid rgba(255,255,255,.35);
+        background:rgba(255,255,255,.72);
+        backdrop-filter:blur(10px);
+        box-shadow:0 1px 3px rgba(0,0,0,.02);
+      }
+
+      .cp-header-back {
+        width:32px;
+        height:36px;
+        border:none;
+        background:transparent;
+        color:#111827;
+        font-size:30px;
+        line-height:1;
+        display:grid;
+        place-items:center;
+        cursor:pointer;
+        flex-shrink:0;
+      }
+
+      .cp-header-peer {
+        min-width:0;
+        flex:1;
+        display:flex;
+        align-items:center;
+        gap:9px;
+        padding-bottom:2px;
+      }
+
+      .cp-peer-avatar {
+        width:36px;
+        height:36px;
+        border-radius:40%;
+        overflow:hidden;
+        flex-shrink:0;
+        box-shadow:0 1px 4px rgba(0,0,0,.10);
+        background:#cbd5e1;
+      }
+
+      .cp-peer-avatar .avatar,
+      .cp-peer-avatar img {
+        width:100%!important;
+        height:100%!important;
+        border-radius:40%!important;
+        object-fit:cover;
+      }
+
+      .cp-header-center {
+        flex:1;
+        min-width:0;
+        font-size:18px;
+        text-align:left;
+        font-weight:800;
+        color:#111827;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      }
+
+      .cp-header-center a {
+        color:inherit;
+        text-decoration:none;
+      }
+
+      .cp-header-actions {
+        width:42px;
+        flex-shrink:0;
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        padding-right:6px;
+        padding-bottom:3px;
+      }
+
+      .cp-header-actions button {
+        width:34px;
+        height:34px;
+        border:none;
+        border-radius:50%;
+        background:transparent!important;
+        box-shadow:none!important;
+        display:grid;
+        place-items:center;
+        font-size:18px;
+        color:#4b5563;
+        cursor:pointer;
+        padding:0;
+      }
+
+      .cp-main {
+        position:absolute;
+        left:0;
+        right:0;
+        top:calc(52px + env(safe-area-inset-top));
+        bottom:calc(var(--cp-footer-h) + env(safe-area-inset-bottom));
+        z-index:10;
+        overflow-y:auto;
+        overflow-x:hidden;
+        padding:10px 8px 20px;
+        scroll-behavior:auto;
+        -webkit-overflow-scrolling:touch;
+        overscroll-behavior:contain;
+      }
+
+      .cp-skeleton-spinner {
+        text-align:center;
+        font-size:13px;
+        color:#9ca3af;
+        padding:12px 0;
+        height:40px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        gap:8px;
+      }
+
+      .cp-skeleton-spinner i { animation:fa-spin 1s infinite linear; }
+
+      .cp-fab-bottom {
+        position:absolute;
+        right:16px;
+        bottom:calc(var(--cp-footer-h) + 20px);
+        width:38px;
+        height:38px;
+        border-radius:50%;
+        border:1px solid rgba(0,0,0,.05);
+        background:rgba(255,255,255,.9);
+        backdrop-filter:blur(5px);
+        box-shadow:0 4px 12px rgba(0,0,0,.15);
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:20px;
+        color:var(--cp-primary);
+        cursor:pointer;
+        opacity:0;
+        pointer-events:none;
+        transform:translateY(20px);
+        transition:all .25s cubic-bezier(.2,.8,.2,1);
+        z-index:35;
+      }
+
+      .cp-fab-bottom.show {
+        opacity:1;
+        pointer-events:auto;
+        transform:translateY(0);
+      }
+
+      .cp-fab-badge {
+        position:absolute;
+        top:-4px;
+        right:-4px;
+        background:#ef4444;
+        color:#fff;
+        font-size:10px;
+        font-family:sans-serif;
+        font-weight:bold;
+        padding:2px 5px;
+        border-radius:10px;
+        box-shadow:0 1px 2px rgba(0,0,0,.2);
+      }
+
+      .cp-time-sep {
+        display:flex;
+        justify-content:center;
+        margin:16px 0 10px;
+        pointer-events:none;
+      }
+
+      .cp-time-sep span {
+        background:transparent!important;
+        color:#94a3b8;
+        font-size:11px;
+        font-weight:600;
+        padding:2px 4px;
+        border-radius:0;
+        backdrop-filter:none!important;
+        box-shadow:none!important;
+      }
+
+      .cp-row {
+        display:flex;
+        align-items:flex-end;
+        gap:8px;
+        padding:2px 0;
+        position:relative;
+      }
+
+      .cp-row.mine { justify-content:flex-end; }
+      .cp-row.mine .cp-avatar-wrap { display:none; }
+
+      .cp-avatar-wrap {
+        display:block;
+        flex-shrink:0;
+        width:40px;
+        height:40px;
+        cursor:pointer;
+        border-radius:40%;
+        overflow:hidden;
+        visibility:hidden;
+        z-index:8;
+        position:relative!important;
+        transform:translateZ(0);
+      }
+
+      .cp-row.is-last .cp-avatar-wrap { visibility:visible; }
+
+      .cp-bubble-wrap {
+        max-width:78%;
+        min-width:40px;
+        position:relative!important;
+        z-index:1!important;
+        overflow:visible;
+      }
+
+      .cp-bubble {
+        position:relative!important;
+        padding:6px 10px 8px;
+        font-size:15.5px;
+        line-height:1.45;
+        word-break:break-word;
+        cursor:default;
+        border-radius:15px 15px 13px 15px;
+        z-index:1!important;
+      }
+
+      .cp-row.other .cp-bubble {
+        background:var(--cp-other);
+        color:#000;
+      }
+
+      .cp-row.mine .cp-bubble {
+        background:var(--cp-mine);
+        color:#111;
+      }
+
+      .cp-row.other.has-tail .cp-bubble { border-bottom-left-radius:0; }
+      .cp-row.mine.has-tail .cp-bubble { border-bottom-right-radius:4px; }
+
+      .cp-row.other.has-tail .cp-bubble::before {
+        content:"";
+        position:absolute;
+        bottom:2px;
+        left:-8px;
+        width:20px;
+        height:10px;
+        background:var(--cp-other);
+        border-bottom-right-radius:16px 14px;
+        z-index:0!important;
+        pointer-events:none!important;
+      }
+
+      .cp-row.other.has-tail .cp-bubble::after {
+        content:"";
+        position:absolute;
+        bottom:2px;
+        left:-12px;
+        width:12px;
+        height:20px;
+        background:var(--cp-bg);
+        border-bottom-right-radius:10px;
+        z-index:0!important;
+        pointer-events:none!important;
+      }
+
+      .cp-row.mine.has-tail .cp-bubble::before {
+        content:"";
+        position:absolute;
+        bottom:2px;
+        right:-12px;
+        width:28px;
+        height:19px;
+        background:var(--cp-mine);
+        border-bottom-left-radius:18px 18px;
+        z-index:0!important;
+        pointer-events:none!important;
+      }
+
+      .cp-row.mine.has-tail .cp-bubble::after {
+        content:"";
+        position:absolute;
+        bottom:2px;
+        right:-12px;
+        width:12px;
+        height:20px;
+        background:var(--cp-bg);
+        border-bottom-left-radius:10px;
+        z-index:0!important;
+        pointer-events:none!important;
+      }
+
+      body.cp-has-bg .cp-row.has-tail .cp-bubble::before,
+      body.cp-has-bg .cp-row.has-tail .cp-bubble::after { display:none!important; }
+
+      body.cp-has-bg .cp-row.other.has-tail .cp-bubble {
+        border-bottom-left-radius:18px!important;
+      }
+
+      body.cp-has-bg .cp-row.mine.has-tail .cp-bubble {
+        border-bottom-right-radius:18px!important;
+      }
+
+      .cp-bubble.recalled {
+        opacity:.72;
+        background:#e5e7eb!important;
+        border-radius:8px!important;
+      }
+
+      .cp-bubble.recalled::before,
+      .cp-bubble.recalled::after { display:none!important; }
+
+      .cp-bubble.media-shell {
+        padding:0;
+        background:transparent!important;
+        box-shadow:none;
+        border-radius:8px!important;
+        overflow:hidden;
+      }
+
+      .cp-bubble.media-shell::before,
+      .cp-bubble.media-shell::after { display:none!important; }
+
+      .cp-quote-card {
+        display:flex;
+        background:rgba(59,130,246,.08);
+        border-radius:8px;
+        margin-bottom:6px;
+        overflow:hidden;
+        pointer-events:none;
+      }
+
+      .cp-row.mine .cp-quote-card { background:rgba(0,0,0,.06); }
+
+      .cp-quote-bar {
+        width:3px;
+        min-width:3px;
+        background:var(--cp-primary);
+        border-radius:3px 0 0 3px;
+        flex-shrink:0;
+      }
+
+      .cp-row.mine .cp-quote-bar { background:rgba(0,0,0,.35); }
+
+      .cp-quote-body {
+        padding:5px 10px;
+        min-width:0;
+        overflow:hidden;
+      }
+
+      .cp-quote-name {
+        font-size:12px;
+        font-weight:600;
+        color:var(--cp-primary);
+        line-height:1.3;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      }
+
+      .cp-row.mine .cp-quote-name { color:rgba(0,0,0,.55); }
+
+      .cp-quote-text {
+        font-size:13px;
+        color:rgba(0,0,0,.55);
+        line-height:1.35;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        max-width:220px;
+      }
+
+      .cp-inline-time {
+        float:right;
+        margin:12px 0 0 8px;
+        font-size:10px;
+        opacity:.45;
+        font-variant-numeric:tabular-nums;
+        line-height:1.45;
+        pointer-events:none;
+      }
+
+      .cp-text {
+        white-space:pre-wrap;
+        pointer-events:none;
+      }
+
+      .cp-text a { pointer-events:auto; }
+
+      .cp-text img.emoji {
+        width:1.25em;
+        height:1.25em;
+        vertical-align:-.2em;
+        display:inline-block;
+      }
+
+      .cp-translation-wrap {
+        clear:both;
+        margin-top:6px;
+        padding-top:6px;
+        border-top:1px dashed rgba(0,0,0,.1);
+      }
+
+      .cp-translation-text {
+        font-size:13.5px;
+        white-space:pre-wrap;
+        opacity:.95;
+        color:#374151;
+      }
+
+      .cp-translation-text.is-error {
+        color:#ef4444;
+        cursor:pointer;
+        pointer-events:auto;
+      }
+
+      .cp-quick-trans {
+        position:absolute;
+        right:-34px;
+        top:50%;
+        transform:translateY(-50%);
+        width:28px;
+        height:28px;
+        background:rgba(255,255,255,.98);
+        border-radius:999px;
+        box-shadow:0 2px 8px rgba(0,0,0,.12);
+        display:grid;
+        place-items:center;
+        cursor:pointer;
+        border:1px solid rgba(0,0,0,.04);
+        z-index:14;
+        transition:transform .18s,box-shadow .18s;
+        pointer-events:auto;
+        touch-action:manipulation;
+        -webkit-tap-highlight-color:transparent;
+      }
+
+      .cp-quick-trans:active { transform:translateY(-50%) scale(.92); }
+
+      .cp-media-time {
+        position:absolute;
+        right:6px;
+        bottom:6px;
+        font-size:10px;
+        color:#fff;
+        background:rgba(0,0,0,.5);
+        border-radius:8px;
+        padding:2px 6px;
+        z-index:2;
+        font-variant-numeric:tabular-nums;
+      }
+
+      .cp-media-thumb {
+        display:block;
+        border:0;
+        padding:0;
+        margin:0;
+        background:transparent;
+        cursor:pointer;
+        pointer-events:auto;
+      }
+
+      .cp-media-thumb img {
+        display:block;
+        width:200px;
+        max-height:280px;
+        border-radius:8px;
+        object-fit:cover;
+        object-position:top;
+      }
+
+      .cp-video-wrap {
+        width:200px;
+        max-height:280px;
+        border-radius:8px;
+        overflow:hidden;
+        position:relative;
+        background:#e2e8f0;
+      }
+
+      .cp-video-wrap video {
+        width:100%;
+        height:100%;
+        object-fit:cover;
+        object-position:top;
+        display:block;
+      }
+
+      .cp-video-wrap::after {
+        content:"\\f01d";
+        font-family:FontAwesome;
+        position:absolute;
+        left:50%;
+        top:50%;
+        transform:translate(-50%,-50%);
+        font-size:32px;
+        color:rgba(255,255,255,.8);
+        pointer-events:none;
+        text-shadow:0 2px 4px rgba(0,0,0,.3);
+      }
+
+      .cp-video-mark {
+        position:absolute;
+        right:6px;
+        bottom:6px;
+        font-size:10px;
+        color:#fff;
+        background:rgba(0,0,0,.6);
+        border-radius:8px;
+        padding:2px 6px;
+        z-index:2;
+      }
+
+      .cp-voice {
+        display:flex;
+        align-items:center;
+        gap:6px;
+        min-width:100px;
+        border:0;
+        background:transparent;
+        cursor:pointer;
+        pointer-events:auto;
+        padding:0;
+        color:inherit;
+      }
+
+      .cp-play-circle {
+        width:28px;
+        height:28px;
+        border-radius:50%;
+        display:grid;
+        place-items:center;
+        box-shadow:0 1px 3px rgba(0,0,0,.1);
+        flex-shrink:0;
+        font-size:12px;
+        background:#f1f5f9;
+        color:var(--cp-primary);
+      }
+
+      .cp-wave {
+        display:flex;
+        align-items:center;
+        gap:2px;
+        height:14px;
+        flex:1;
+        opacity:.6;
+      }
+
+      .cp-wave i {
+        width:2px;
+        border-radius:2px;
+        background:currentColor;
+      }
+
+      .cp-voice.playing .cp-wave i {
+        animation:cp-wave-pulse .6s ease-in-out infinite alternate;
+        opacity:1;
+      }
+
+      .cp-voice-info-col {
+        display:flex;
+        flex-direction:column;
+        align-items:flex-end;
+        line-height:1;
+        margin-left:2px;
+      }
+
+      .cp-voice-dur {
+        font-size:13px;
+        font-weight:bold;
+      }
+
+      .cp-voice-time {
+        font-size:9px;
+        opacity:.45;
+        margin-top:3px;
+        font-variant-numeric:tabular-nums;
+      }
+
+      @keyframes cp-wave-pulse {
+        from { transform:scaleY(.4); }
+        to { transform:scaleY(1.5); }
+      }
+
+      @keyframes cp-rec-bar-pulse {
+        from { transform:scaleY(.5); }
+        to { transform:scaleY(1.6); }
+      }
+
+      .cp-lazy-loading {
+        animation:cp-pulse 1.5s infinite;
+        background:rgba(0,0,0,.05);
+        width:180px;
+        height:180px;
+        border-radius:8px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        flex-shrink:0;
+      }
+
+      @keyframes cp-pulse {
+        0% { opacity:.6; }
+        50% { opacity:1; }
+        100% { opacity:.6; }
+      }
+
+      .cp-context-overlay {
+        position:fixed;
+        inset:0;
+        z-index:2147483004;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:20px;
+        background:rgba(15,23,42,.32);
+        backdrop-filter:blur(1px);
+      }
+
+      .cp-context-menu {
+        z-index:2147483005;
+        background:#fff;
+        border-radius:18px;
+        box-shadow:0 8px 30px rgba(0,0,0,.18);
+        padding:6px;
+        width:auto;
+        min-width:166px;
+        max-width:210px;
+        animation:cp-menu-pop-center .16s cubic-bezier(.2,.8,.2,1);
+      }
+
+      @keyframes cp-menu-pop-center {
+        from { transform:scale(.92); opacity:0; }
+        to { transform:scale(1); opacity:1; }
+      }
+
+      .cp-menu-item {
+        padding:12px 14px;
+        font-size:15px;
+        color:#374151;
+        cursor:pointer;
+        border-radius:10px;
+        display:flex;
+        align-items:center;
+        gap:10px;
+        white-space:nowrap;
+      }
+
+      .cp-menu-item:active { background:#e5e7eb; }
+      .cp-menu-item.danger { color:#ef4444; }
+
+      .cp-footer {
+        position:absolute;
+        left:0;
+        right:0;
+        bottom:0;
+        z-index:30;
+        padding:0 12px max(12px,env(safe-area-inset-bottom));
+        background:linear-gradient(to top,rgba(255,255,255,.96),rgba(255,255,255,.80),transparent);
+        display:flex;
+        flex-direction:column;
+        gap:6px;
+      }
+
+      .cp-translate-bar {
+        max-width:100%;
+        margin:2px 4px 0;
+        display:inline-flex;
+        align-items:center;
+        gap:4px;
+        padding:2px 8px;
+        border:1px solid rgba(255,255,255,.6);
+        border-radius:20px;
+        background:rgba(255,255,255,.88);
+        backdrop-filter:blur(8px);
+        box-shadow:0 1px 6px rgba(0,0,0,.04);
+      }
+
+      .cp-lang-btn {
+        background:transparent;
+        border:none;
+        font-size:12px;
+        font-weight:700;
+        color:#374151;
+        cursor:pointer;
+        padding:2px 6px;
+        border-radius:12px;
+        white-space:nowrap;
+      }
+
+      .cp-swap-btn {
+        border:none;
+        background:transparent;
+        color:#9ca3af;
+        font-size:13px;
+        cursor:pointer;
+        padding:0 4px;
+      }
+
+      .cp-toggle-ai-send {
+        position:relative;
+        border:none;
+        background:transparent;
+        color:#9ca3af;
+        font-size:14px;
+        cursor:pointer;
+        padding:4px 4px 4px 14px;
+        border-radius:50%;
+        display:flex;
+        align-items:center;
+        margin-left:4px;
+        border-left:1px solid #e5e7eb;
+      }
+
+      .cp-toggle-ai-send::before {
+        content:"";
+        position:absolute;
+        left:4px;
+        top:50%;
+        transform:translateY(-50%);
+        width:5px;
+        height:5px;
+        border-radius:50%;
+        background:#9ca3af;
+      }
+
+      .cp-toggle-ai-send.active { color:var(--cp-primary); }
+
+      .cp-toggle-ai-send.active::before {
+        background:#22c55e;
+        box-shadow:0 0 4px #22c55e;
+      }
+
+      .cp-wingman-panel {
+        margin:0 4px;
+        padding:7px 9px;
+        border:1px solid rgba(99,102,241,.16);
+        border-radius:16px;
+        background:rgba(255,255,255,.92);
+        backdrop-filter:blur(6px);
+        box-shadow:0 3px 12px rgba(0,0,0,.05);
+      }
+
+      .cp-wingman-analysis {
+        font-size:12.5px;
+        color:#475569;
+        margin-bottom:7px;
+        line-height:1.4;
+        display:flex;
+        align-items:center;
+        gap:6px;
+      }
+
+      .cp-thinking-dot {
+        width:6px;
+        height:6px;
+        border-radius:50%;
+        background:#6366f1;
+        animation:cp-thinking 1s infinite alternate;
+        display:inline-block;
+        flex-shrink:0;
+      }
+
+      @keyframes cp-thinking {
+        from { opacity:.25; transform:scale(.8); }
+        to { opacity:1; transform:scale(1.25); }
+      }
+
+      .cp-smart-replies-bar {
+        display:flex;
+        gap:8px;
+        overflow-x:auto;
+        padding:1px 0;
+        scroll-behavior:smooth;
+        -webkit-overflow-scrolling:touch;
+        scrollbar-width:none;
+        background:transparent;
+        max-width:100%;
+      }
+
+      .cp-smart-replies-bar::-webkit-scrollbar { display:none; }
+
+      .cp-sr-pill {
+        flex-shrink:0;
+        background:#e0e7ff;
+        color:#4338ca;
+        padding:7px 12px;
+        border-radius:16px;
+        font-size:13px;
+        font-weight:600;
+        cursor:pointer;
+        border:1px solid rgba(0,0,0,.05);
+        white-space:normal;
+        line-height:1.35;
+        box-shadow:0 2px 4px rgba(0,0,0,.05);
+        max-width:min(72vw,260px);
+        overflow:visible;
+        text-overflow:clip;
+      }
+
+      .cp-sr-pill {
+        display:-webkit-box;
+        -webkit-line-clamp:2;
+        -webkit-box-orient:vertical;
+        overflow:hidden;
+      }
+
+      .cp-sr-pill:active { background:#c7d2fe; }
+
+      .cp-sr-pill em {
+        font-style:normal;
+        opacity:.72;
+        font-weight:500;
+        margin-left:4px;
+        font-size:11px;
+      }
+
+      .cp-quote-preview {
+        display:flex;
+        align-items:center;
+        gap:8px;
+        background:rgba(255,255,255,.92);
+        backdrop-filter:blur(6px);
+        border-radius:12px;
+        padding:6px 10px;
+        margin:0 4px 4px;
+        border:1px solid rgba(0,0,0,.06);
+        font-size:13px;
+        color:#4b5563;
+      }
+
+      .cp-quote-preview-bar {
+        width:3px;
+        min-height:28px;
+        background:var(--cp-primary);
+        border-radius:3px;
+        flex-shrink:0;
+      }
+
+      .cp-quote-preview-body {
+        flex:1;
+        min-width:0;
+        overflow:hidden;
+      }
+
+      .cp-quote-preview-name {
+        font-size:11px;
+        font-weight:700;
+        color:var(--cp-primary);
+      }
+
+      .cp-quote-preview-text {
+        font-size:12px;
+        color:#6b7280;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      }
+
+      .cp-quote-preview-close {
+        border:none;
+        background:none;
+        font-size:16px;
+        color:#9ca3af;
+        cursor:pointer;
+        padding:0 4px;
+        flex-shrink:0;
+      }
+
+      .cp-toolbar {
+        position:relative;
+        max-width:100%;
+        margin:0;
+        display:flex;
+        align-items:flex-end;
+        padding:6px;
+        border:1px solid rgba(0,0,0,.08);
+        border-radius:28px;
+        background:rgba(255,255,255,.95);
+        box-shadow:0 4px 15px rgba(0,0,0,.06);
+        min-height:50px;
+      }
+
+      .cp-progress-wrap {
+        position:absolute;
+        left:16px;
+        right:16px;
+        top:-5px;
+        height:4px;
+        background:rgba(0,0,0,.06);
+        border-radius:4px;
+        overflow:hidden;
+        pointer-events:none;
+      }
+
+      .cp-progress-bar {
+        height:100%;
+        width:0%;
+        background:var(--cp-primary);
+        transition:width .1s linear;
+      }
+
+      .cp-tool-btn {
+        width:36px;
+        height:36px;
+        border:none;
+        background:transparent;
+        color:#6b7280;
+        cursor:pointer;
+        display:grid;
+        place-items:center;
+        flex-shrink:0;
+        border-radius:50%;
+        margin-bottom:2px;
+      }
+
+      .cp-input-box {
+        flex:1;
+        min-width:0;
+        display:flex;
+        align-items:center;
+      }
+
+      .cp-input-box textarea {
+        width:100%;
+        min-height:36px;
+        max-height:120px;
+        border:none;
+        padding:8px 4px;
+        margin:2px 0;
+        font-size:15px;
+        outline:none;
+        background:transparent;
+        color:#1f2937;
+        resize:none;
+        overflow-y:auto;
+        font-family:inherit;
+        line-height:20px;
+      }
+
+      .cp-primary-btn {
+        width:38px;
+        height:38px;
+        border:none;
+        border-radius:50%;
+        color:#6b7280;
+        cursor:pointer;
+        display:grid;
+        place-items:center;
+        background:transparent;
+        flex-shrink:0;
+        margin-bottom:1px;
+      }
+
+      .cp-primary-btn.send {
+        background:var(--cp-primary);
+        color:#fff;
+        box-shadow:0 2px 8px rgba(37,99,235,.3);
+      }
+
+      .cp-modal-mask {
+        position:absolute;
+        inset:0;
+        z-index:50;
+        background:rgba(0,0,0,.4);
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        backdrop-filter:blur(2px);
+        padding:20px;
+      }
+
+      .cp-modal {
+        width:100%;
+        max-width:420px;
+        max-height:86vh;
+        overflow-y:auto;
+        border-radius:22px;
+        background:#fff;
+        box-shadow:0 10px 40px rgba(0,0,0,.2);
+      }
+
+      .cp-lang-grid {
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:10px;
+        margin-top:14px;
+      }
+
+      .cp-lang-item {
+        display:flex;
+        align-items:center;
+        gap:10px;
+        padding:11px 14px;
+        border-radius:14px;
+        background:#f8fafc;
+        border:1px solid #e2e8f0;
+        cursor:pointer;
+        font-size:15px;
+        color:#334155;
+      }
+
+      .cp-settings-head {
+        position:sticky;
+        top:0;
+        z-index:2;
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        padding:13px 14px;
+        background:rgba(255,255,255,.98);
+        border-bottom:1px solid #eef2f7;
+      }
+
+      .cp-settings-head h3 {
+        margin:0;
+        font-size:17px;
+        font-weight:800;
+      }
+
+      .cp-settings-x {
+        width:32px;
+        height:32px;
+        border:none;
+        border-radius:50%;
+        background:#f1f5f9;
+        color:#64748b;
+        cursor:pointer;
+      }
+
+      .cp-settings-body {
+        padding:12px 14px 16px;
+        max-height:calc(86vh - 60px);
+        overflow-y:auto;
+      }
+
+      .cp-settings-section {
+        margin-bottom:12px;
+        padding:11px;
+        border:1px solid #e2e8f0;
+        border-radius:16px;
+        background:#f8fafc;
+      }
+
+      .cp-settings-section-title {
+        font-size:13px;
+        font-weight:800;
+        color:#334155;
+        margin-bottom:9px;
+      }
+
+      .cp-provider-tabs {
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:8px;
+      }
+
+      .cp-provider-tab {
+        border:1px solid #dbe4ef;
+        border-radius:14px;
+        padding:10px 8px;
+        background:#fff;
+        color:#475569;
+        font-size:14px;
+        font-weight:800;
+        cursor:pointer;
+      }
+
+      .cp-provider-tab.active {
+        color:#fff;
+        border-color:var(--cp-primary);
+        background:linear-gradient(135deg,#3b82f6,#6366f1);
+        box-shadow:0 6px 16px rgba(59,130,246,.22);
+      }
+
+      .cp-ai-pane {
+        display:none;
+        margin-top:8px;
+      }
+
+      .cp-ai-pane.show { display:block; }
+
+      .cp-setting-row {
+        display:flex;
+        gap:9px;
+        align-items:center;
+      }
+
+      .cp-setting-row > * { flex:1; }
+
+      .cp-setting-field {
+        display:block;
+        margin-top:8px;
+      }
+
+      .cp-setting-field span {
+        display:block;
+        font-size:12px;
+        color:#64748b;
+        margin-bottom:5px;
+      }
+
+      .cp-setting-field input,
+      .cp-setting-field select {
+        width:100%;
+        box-sizing:border-box;
+        padding:9px 10px;
+        border:1px solid #dbe4ef;
+        border-radius:12px;
+        background:#fff;
+        color:#111827;
+        outline:none;
+        font-family:inherit;
+      }
+
+      .cp-setting-toggle {
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        gap:10px;
+        background:#fff;
+        border:1px solid #e2e8f0;
+        padding:10px;
+        border-radius:14px;
+        font-size:13px;
+        cursor:pointer;
+      }
+
+      .cp-setting-toggle input {
+        width:18px;
+        height:18px;
+        accent-color:var(--cp-primary);
+      }
+
+      .cp-settings-actions {
+        display:flex;
+        gap:10px;
+        position:sticky;
+        bottom:0;
+        padding-top:8px;
+        background:linear-gradient(to top,#fff 70%,rgba(255,255,255,0));
+      }
+
+      .cp-settings-actions button {
+        flex:1;
+        padding:11px;
+        border-radius:14px;
+        font-weight:800;
+        font-size:15px;
+        cursor:pointer;
+      }
+
+      .cp-settings-secondary {
+        background:#f1f5f9;
+        color:#475569;
+        border:1px solid #cbd5e1;
+      }
+
+      .cp-settings-primary {
+        background:var(--cp-primary);
+        color:#fff;
+        border:none;
+      }
+
+      .cp-rec-inline {
+        display:flex;
+        align-items:center;
+        gap:6px;
+        flex:1;
+        padding:2px 4px;
+        background:transparent;
+        width:100%;
+      }
+
+      .cp-rec-btn-icon {
+        background:none;
+        border:none;
+        padding:4px 8px;
+        cursor:pointer;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+      }
+
+      .cp-rec-vis {
+        flex:1;
+        display:flex;
+        align-items:center;
+        gap:4px;
+        min-width:0;
+      }
+
+      .cp-rec-dot {
+        width:8px;
+        height:8px;
+        background:#ef4444;
+        border-radius:50%;
+        flex-shrink:0;
+        animation:cp-rec-blink 1.5s infinite;
+      }
+
+      .cp-rec-dash {
+        flex:1;
+        height:2px;
+        border-bottom:3px dotted #9ca3af;
+        margin:0 4px;
+        opacity:.8;
+      }
+
+      .cp-rec-bars {
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        gap:3px;
+        height:20px;
+        width:28px;
+        margin-right:4px;
+      }
+
+      .cp-rec-bars i {
+        width:3px;
+        border-radius:2px;
+        background:#9ca3af;
+        animation:cp-rec-bar-pulse .7s ease-in-out infinite alternate;
+      }
+
+      @keyframes cp-rec-blink {
+        0%,100% { opacity:1; }
+        50% { opacity:.3; }
+      }
+
+
+      /* ===== critical visibility fix, keep at the end of injected CSS ===== */
+      #cp-chat-root [hidden],
+      #cp-chat-root .cp-modal-mask[hidden],
+      #cp-chat-root .cp-context-overlay[hidden],
+      #cp-chat-root .cp-preview-mask[hidden],
+      #cp-chat-root .cp-media-pop[hidden],
+      #cp-chat-root #cp-settings-mask[hidden],
+      #cp-chat-root #cp-lang-mask[hidden],
+      #cp-chat-root #cp-wingman-panel[hidden],
+      #cp-chat-root #cp-quote-preview[hidden],
+      #cp-chat-root #cp-upload-progress-wrap[hidden],
+      #cp-chat-root #cp-rec-inline[hidden],
+      #cp-chat-root #cp-fab-badge[hidden],
+      #cp-chat-root #cp-top-spinner[hidden] {
+        display:none!important;
+        visibility:hidden!important;
+        opacity:0!important;
+        pointer-events:none!important;
+      }
+
+      #cp-chat-root .cp-modal-mask.is-open,
+      #cp-chat-root .cp-context-overlay.is-open,
+      #cp-chat-root .cp-preview-mask.is-open {
+        display:flex!important;
+        visibility:visible!important;
+        opacity:1!important;
+        pointer-events:auto!important;
+      }
+    `;
+
+    var st = document.createElement("style");
+    st.id = "cp-chat-style";
+    st.textContent = css;
+    document.head.appendChild(st);
   }
 
 
@@ -2192,9 +3225,12 @@
     if (byId('cp-header-back')) byId('cp-header-back').setAttribute('aria-label', cpT('back', '返回'));
     if (byId('cp-header-more')) byId('cp-header-more').setAttribute('aria-label', cpT('settings', '设置'));
     if (byId('cp-input')) byId('cp-input').setAttribute('placeholder', cpT('sendMessage', '发送消息...'));
-    // Do not reset the chat title to loading here; updateHeaderPeerInfo owns it.
+    var peerInfoEl = byId('cp-peer-info');
+    if (peerInfoEl && !peerInfoEl.dataset.ready && !peerInfoEl.textContent.trim()) {
+      peerInfoEl.textContent = cpT('loading', '加载中...');
+    }
     var spinner = byId('cp-top-spinner');
-    if (spinner) spinner.innerHTML = ICON.spinner + ' ' + esc(cpT('loading', '加载中...'));
+    if (spinner) spinner.innerHTML = '<i class="fa fa-circle-o-notch"></i> ' + esc(cpT('loading', '加载中...'));
 
     var cameraSpan = byId('cp-pick-camera') && byId('cp-pick-camera').querySelector('span:last-child');
     if (cameraSpan) cameraSpan.textContent = cpT('shoot', '拍摄');
@@ -2260,20 +3296,20 @@
             <div class="cp-header-center" id="cp-peer-info">加载中...</div>
           </div>
           <div class="cp-header-actions">
-            <button id="cp-header-more" aria-label="设置">${ICON.more}</button>
+            <button id="cp-header-more" aria-label="设置"><i class="fa fa-ellipsis-v"></i></button>
           </div>
         </header>
 
         <main class="cp-main" id="cp-main">
           <div id="cp-top-spinner" class="cp-skeleton-spinner" hidden>
-            ${ICON.spinner} 加载中...
+            <i class="fa fa-circle-o-notch"></i> 加载中...
           </div>
           <div id="cp-msg-list"></div>
           <div id="cp-bottom-anchor"></div>
         </main>
 
         <button id="cp-fab-bottom" class="cp-fab-bottom" title="回到底部">
-          ${ICON.down}
+          <i class="fa fa-angle-down"></i>
           <span id="cp-fab-badge" class="cp-fab-badge" hidden>0</span>
         </button>
 
@@ -2282,7 +3318,7 @@
         </div>
 
         <footer class="cp-footer" id="cp-footer">
-          <div class="cp-translate-wrap">
+          <div style="text-align:center;">
             <div class="cp-translate-bar" id="cp-translate-bar">
               <button class="cp-lang-btn" id="cp-src-lang-btn">🇨🇳 中文</button>
               <button class="cp-swap-btn" id="cp-lang-swap">⇄</button>
@@ -2322,7 +3358,7 @@
 
             <div id="cp-rec-inline" class="cp-rec-inline" hidden>
               <button id="cp-rec-cancel" class="cp-rec-btn-icon">
-                ${ICON.trash}
+                <i class="fa fa-trash-o" style="font-size:20px;color:#6b7280;"></i>
               </button>
               <div class="cp-rec-vis">
                 <span class="cp-rec-dot"></span>
@@ -2330,20 +3366,20 @@
                 <div class="cp-rec-bars" id="cp-rec-bars"></div>
               </div>
               <button id="cp-rec-pause" class="cp-rec-btn-icon">
-                ${ICON.pause}
+                <i class="fa fa-pause-circle" style="font-size:22px;color:#0ea5e9;"></i>
               </button>
-              <span id="cp-rec-time" class="cp-rec-time">0:00</span>
+              <span id="cp-rec-time" style="font-size:16px;color:#4b5563;font-family:sans-serif;font-weight:500;width:38px;text-align:center;">0:00</span>
               <button id="cp-rec-send" class="cp-rec-btn-icon">
-                ${ICON.send}
+                <i class="fa fa-paper-plane" style="font-size:20px;color:#0ea5e9;"></i>
               </button>
             </div>
           </div>
 
-          <div class="cp-media-pop" id="cp-media-pop" hidden>
-            <button id="cp-pick-camera" class="cp-media-pop-btn">
+          <div class="cp-media-pop" id="cp-media-pop" hidden style="position:absolute;bottom:70px;left:20px;background:#fff;border-radius:16px;padding:8px;box-shadow:0 5px 20px rgba(0,0,0,.15);z-index:40">
+            <button id="cp-pick-camera" style="width:100%;background:none;border:none;padding:12px;text-align:left;display:flex;gap:12px;font-size:15px">
               <span class="mi">${ICON.camera}</span><span>拍摄</span>
             </button>
-            <button id="cp-pick-album" class="cp-media-pop-btn">
+            <button id="cp-pick-album" style="width:100%;background:none;border:none;padding:12px;text-align:left;display:flex;gap:12px;font-size:15px">
               <span class="mi">${ICON.album}</span><span>相册图片/视频</span>
             </button>
           </div>
@@ -2354,10 +3390,10 @@
         <input id="cp-bg-file" type="file" accept="image/*" hidden />
 
         <div class="cp-modal-mask" id="cp-lang-mask" hidden>
-          <div class="cp-modal cp-modal-pad">
-            <div class="cp-lang-head">
-              <h3>选择语言</h3>
-              <button id="cp-lang-close" class="cp-lang-close">✕</button>
+          <div class="cp-modal" style="padding:20px 15px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <h3 style="margin:0;font-size:18px;">选择语言</h3>
+              <button id="cp-lang-close" style="border:none;background:none;font-size:20px;color:#666;cursor:pointer;">✕</button>
             </div>
             <div class="cp-lang-grid" id="cp-lang-grid"></div>
           </div>
@@ -2368,7 +3404,7 @@
             <div class="cp-settings-head">
               <h3>聊天设置</h3>
               <button type="button" class="cp-settings-x" id="cp-settings-close-x" aria-label="关闭">
-                ${ICON.close}
+                <i class="fa fa-times"></i>
               </button>
             </div>
 
@@ -2466,7 +3502,7 @@
                 </label>
               </div>
 
-              <button id="cp-clear-history" class="cp-clear-history-btn">
+              <button id="cp-clear-history" style="width:100%;padding:10px;background:transparent;color:#ef4444;border:1px solid #ef4444;border-radius:12px;font-size:13px;cursor:pointer;margin-bottom:12px;">
                 清空本地聊天记录
               </button>
 
@@ -2603,16 +3639,16 @@
 
     byId("cp-src-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "source";
-      setMaskOpen("cp-lang-mask", true);
+      byId("cp-lang-mask").hidden = false; byId("cp-lang-mask").removeAttribute("hidden"); byId("cp-lang-mask").classList.add("is-open");
     });
 
     byId("cp-tgt-lang-btn").addEventListener("click", function () {
       state.pickingLangFor = "target";
-      setMaskOpen("cp-lang-mask", true);
+      byId("cp-lang-mask").hidden = false; byId("cp-lang-mask").removeAttribute("hidden"); byId("cp-lang-mask").classList.add("is-open");
     });
 
     byId("cp-lang-close").addEventListener("click", function () {
-      setMaskOpen("cp-lang-mask", false);
+      byId("cp-lang-mask").hidden = true; byId("cp-lang-mask").setAttribute("hidden", ""); byId("cp-lang-mask").classList.remove("is-open");
     });
 
     byId("cp-lang-grid").addEventListener("click", function (e) {
@@ -2626,7 +3662,7 @@
 
       syncTranslateBar();
       saveJSON(KEY_CFG, state.cfg);
-      setMaskOpen("cp-lang-mask", false);
+      byId("cp-lang-mask").hidden = true; byId("cp-lang-mask").setAttribute("hidden", ""); byId("cp-lang-mask").classList.remove("is-open");
       clearWingmanPanel();
     });
 
@@ -2870,7 +3906,14 @@
   }
 
   function openSettings() {
-    setMaskOpen("cp-settings-mask", true);
+    var mask = byId("cp-settings-mask");
+    if (!mask) return;
+
+    mask.hidden = false;
+    mask.removeAttribute("hidden");
+    mask.classList.add("is-open");
+    mask.dataset.open = "1";
+
     if (!state.settingsOpen) {
       state.settingsOpen = true;
       try {
@@ -2880,11 +3923,19 @@
   }
 
   function closeSettings(fromPopState) {
+    var mask = byId("cp-settings-mask");
     var wasOpen = !!state.settingsOpen;
-    state.settingsOpen = false;
-    setMaskOpen("cp-settings-mask", false);
 
-    if (!fromPopState && wasOpen) {
+    state.settingsOpen = false;
+
+    if (mask) {
+      mask.hidden = true;
+      mask.setAttribute("hidden", "");
+      mask.classList.remove("is-open", "show", "active");
+      delete mask.dataset.open;
+    }
+
+    if (wasOpen && !fromPopState) {
       try {
         history.back();
       } catch (_) {}
@@ -2991,7 +4042,7 @@
     setValue("cp-relationship-stage", state.cfg.relationshipStage || "刚认识");
     setValue("cp-communication-style", state.cfg.communicationStyle || "自然直接，偶尔幽默");
 
-    var op = state.bg.opacity !== undefined ? Math.min(Number(state.bg.opacity), 0.10) : 0.06;
+    var op = state.bg.opacity !== undefined ? state.bg.opacity : 0.08;
     setValue("cp-bg-opacity", op);
 
     var bgOpVal = byId("cp-bg-op-val");
@@ -3042,7 +4093,7 @@
     state.cfg.ai.model = value("cp-ai-model", state.cfg.ai.model || "gpt-4o-mini").trim() || "gpt-4o-mini";
     state.cfg.ai.temperature = 0.2;
 
-    state.bg.opacity = parseFloat(value("cp-bg-opacity", state.bg.opacity !== undefined ? state.bg.opacity : 0.85));
+    state.bg.opacity = parseFloat(value("cp-bg-opacity", state.bg.opacity !== undefined ? state.bg.opacity : 0.08));
 
     saveJSON(KEY_CFG, state.cfg);
     saveJSON(KEY_BG, state.bg);
@@ -3105,7 +4156,7 @@
     if (!unreadList.length) return;
 
     try {
-      var ch = new window.wk.Channel(cpGetChannelId() || getPeerUid(), cpGetChannelType());
+      var ch = new window.wk.Channel(getPeerUid(), 1);
       window.wk.WKSDK.shared().receiptManager.addReceiptMessages(ch, unreadList);
     } catch (e) {
       warn("mark-read", e);
@@ -3180,14 +4231,14 @@
 
     if (msg.mine) html += '<div class="cp-menu-item danger" data-action="recall">' + ICON.recall + " 撤回</div>";
 
-    html += '<div class="cp-menu-item danger" data-action="delete">' + ICON.trash + ' 删除</div>';
+    html += '<div class="cp-menu-item danger" data-action="delete"><i class="fa fa-trash"></i> 删除</div>';
 
     menu.innerHTML = html;
-    setMaskOpen("cp-context-overlay", true);
+    byId("cp-context-overlay").hidden = false; byId("cp-context-overlay").removeAttribute("hidden"); byId("cp-context-overlay").classList.add("is-open");
   }
 
   function hideContextMenu() {
-    setMaskOpen("cp-context-overlay", false);
+    byId("cp-context-overlay").hidden = true; byId("cp-context-overlay").setAttribute("hidden", ""); byId("cp-context-overlay").classList.remove("is-open");
     state.contextMsg = null;
   }
 
@@ -3225,7 +4276,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            channel_id: cpGetChannelId() || getPeerUid(),
+            channel_id: getPeerUid(),
             message_seq: seq,
             client_msg_no: clientMsgNo
           })
@@ -3237,7 +4288,7 @@
 
         if (window.wk && window.wk.WKSDK.shared().chatManager.send) {
           try {
-            var channel = new window.wk.Channel(cpGetChannelId() || getPeerUid(), cpGetChannelType());
+            var channel = new window.wk.Channel(getPeerUid(), 1);
             var revokeContent = new window.wk.MessageText("撤回消息请求");
 
             revokeContent.encode = function () {
@@ -3324,7 +4375,6 @@
   }
 
   function mountNativeObserver() {
-    if (cpIndependentMode()) return;
     if (!state.mounted) return;
 
     var root = document.querySelector('[component="chat/messages"]');
@@ -3345,7 +4395,6 @@
   }
 
   function scheduleSync() {
-    if (cpIndependentMode()) return;
     if (state.syncScheduled) return;
 
     state.syncScheduled = true;
@@ -3357,7 +4406,6 @@
   }
 
   function syncFromNative() {
-    if (cpIndependentMode()) return;
     var rootRows = Array.prototype.slice.call(document.querySelectorAll('[component="chat/messages"] [component="chat/message"]'));
 
     if (!rootRows.length) {
@@ -3724,7 +4772,7 @@
       }
 
       var isMediaType = m.type === "image" || m.type === "video" || m.type === "gallery";
-      var showTail = false;
+      var showTail = isLastInGroup && !m.recalled && !isMediaType;
 
       var bubbleClass =
         "cp-bubble" +
@@ -3775,7 +4823,7 @@
               '<div class="cp-lazy-media cp-lazy-loading" data-type="img" data-src="' +
                 escAttr(m.mediaUrl || "") +
               '">' +
-                '' + ICON.imagePlaceholder + '' +
+                '<i class="fa fa-image fa-2x" style="color:#cbd5e1"></i>' +
               "</div>" +
             "</button>" +
             '<span class="cp-media-time">' + esc(timeStr) + "</span>";
@@ -3785,7 +4833,7 @@
               '<div class="cp-lazy-media cp-lazy-loading" data-type="video" data-src="' +
                 escAttr(m.mediaUrl || "") +
               '">' +
-                '' + ICON.videoPlaceholder + '' +
+                '<i class="fa fa-video-camera fa-2x" style="color:#cbd5e1"></i>' +
               "</div>" +
               '<span class="cp-video-mark">视频</span>' +
             "</button>" +
@@ -3801,7 +4849,7 @@
                 '<div class="cp-lazy-media cp-lazy-loading" data-type="img" data-src="' +
                   escAttr(it.url || "") +
                   '" style="width:92px;height:92px;">' +
-                  '' + ICON.imagePlaceholder + '' +
+                  '<i class="fa fa-image" style="color:#cbd5e1"></i>' +
                 "</div>" +
               "</button>"
             );
@@ -3960,13 +5008,11 @@
 
   function observeLazyElements() {
     if (state.lazyObserver) {
-      document.querySelectorAll(".cp-lazy-media:not([data-cp-observed])").forEach(function (el) {
-        el.setAttribute("data-cp-observed", "1");
+      document.querySelectorAll(".cp-lazy-media").forEach(function (el) {
         state.lazyObserver.observe(el);
       });
 
-      document.querySelectorAll(".cp-lazy-audio:not([data-cp-observed])").forEach(function (el) {
-        el.setAttribute("data-cp-observed", "1");
+      document.querySelectorAll(".cp-lazy-audio").forEach(function (el) {
         state.lazyObserver.observe(el);
       });
     } else {
@@ -4072,16 +5118,9 @@
       e.preventDefault();
       e.stopPropagation();
 
-      var qMsg = getMsgById(quickBtn.getAttribute("data-id"));
-      if (qMsg && qMsg.translation && qMsg.translationOpen && !/^翻译失败/.test(qMsg.translation || "")) {
-        qMsg.translationOpen = false;
-        msgTouch(qMsg);
-        incrementalRender("keep");
-      } else {
-        executePeerTranslateAndWingman(qMsg, {
-          forceOpen: true
-        });
-      }
+      executePeerTranslateAndWingman(getMsgById(quickBtn.getAttribute("data-id")), {
+        forceOpen: true
+      });
 
       return;
     }
@@ -4721,7 +5760,7 @@
     panel.hidden = false;
 
     analysis.innerHTML =
-      ICON.heart + '<span>' +
+      '<i class="fa fa-heart-o" style="color:#6366f1"></i><span>' +
       esc(analysisText || "可以正常接话。") +
       "</span>";
 
@@ -4796,7 +5835,7 @@
     var icon = byId("cp-primary-icon");
 
     btn.disabled = true;
-    icon.innerHTML = '' + ICON.spinner + '';
+    icon.innerHTML = '<i class="fa fa-spinner fa-spin"></i>';
 
     try {
       var translated = await translateByProvider(text, state.cfg.sourceLang, state.cfg.targetLang, getProvider());
@@ -4842,19 +5881,13 @@
   function uploadToNodeBB(file, onProgress) {
     return new Promise(function (resolve, reject) {
       var fd = new FormData();
-      fd.append("files[]", file, file.name || "upload.bin");
+      fd.append("files[]", file, file.name || "cp_" + Date.now());
 
       var xhr = new XMLHttpRequest();
-      xhr.open("POST", cpApiBase() + "/upload");
+      xhr.open("POST", (window.config && config.relative_path ? config.relative_path : "") + "/api/post/upload");
       xhr.withCredentials = true;
-      xhr.setRequestHeader("Accept", "application/json");
 
-      var csrf = (window.config && (config.csrf_token || config.csrfToken)) ||
-        (window.ajaxify && ajaxify.data && (ajaxify.data.csrf_token || ajaxify.data.csrfToken)) || "";
-      if (csrf) {
-        xhr.setRequestHeader("x-csrf-token", csrf);
-        xhr.setRequestHeader("x-xsrf-token", csrf);
-      }
+      if (window.config) xhr.setRequestHeader("x-csrf-token", config.csrf_token || config.csrfToken || "");
 
       xhr.upload.onprogress = function (e) {
         if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
@@ -4863,18 +5896,15 @@
       xhr.onload = function () {
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
-            var json = JSON.parse(xhr.responseText || "{}");
+            var json = JSON.parse(xhr.responseText);
 
             var url =
-              (json && json.url) ||
-              (json && json.path) ||
-              (json && json.response && json.response.images && json.response.images[0] && (json.response.images[0].url || json.response.images[0].path)) ||
-              (json && json.response && json.response.files && json.response.files[0] && (json.response.files[0].url || json.response.files[0].path)) ||
+              (json && json.response && json.response.images && json.response.images[0] && json.response.images[0].url) ||
               (json && json.files && json.files[0] && (json.files[0].url || json.files[0].path)) ||
-              (json && json.images && json.images[0] && (json.images[0].url || json.images[0].path)) ||
               "";
 
             if (url && !/^https?:\/\//i.test(url) && url.charAt(0) !== "/") url = "/" + url;
+
             if (!url) throw new Error("upload url empty");
 
             resolve(url);
@@ -4882,7 +5912,7 @@
             reject(err);
           }
         } else {
-          reject(new Error("upload failed: " + xhr.status + " " + (xhr.responseText || "")));
+          reject(new Error("upload failed: " + xhr.status));
         }
       };
 
@@ -4893,7 +5923,6 @@
       xhr.send(fd);
     });
   }
-
 
   function readFile(file) {
     return new Promise(function (resolve, reject) {
@@ -5177,11 +6206,6 @@
 
         if (!url) continue;
 
-        if (!state.wkReady || !window.wk) {
-          toast("悟空未连接，稍后重试");
-          continue;
-        }
-
         if ((uploadFile.type || rawFile.type || "").indexOf("image/") === 0) {
           sendText("![](" + url + ")");
         } else if ((uploadFile.type || rawFile.type || "").indexOf("video/") === 0) {
@@ -5261,9 +6285,10 @@
     }
 
     if (bgMask) {
-      var op = state.bg && state.bg.opacity !== undefined ? Number(state.bg.opacity) : 0.06;
-      if (state.bg && state.bg.dataUrl) op = Math.min(op, 0.10);
-      bgMask.style.setProperty("--bg-op", String(op));
+      var op = state.bg && state.bg.opacity !== undefined ? Number(state.bg.opacity) : 0.08;
+      if (!Number.isFinite(op)) op = 0.08;
+      if (state.bg && state.bg.dataUrl) op = Math.min(op, 0.16);
+      bgMask.style.setProperty("--bg-op", op);
     }
   }
 
@@ -5359,8 +6384,6 @@
               pBar.style.width = pct * 100 + "%";
             });
 
-            if (!url) throw new Error("voice upload url empty");
-            if (!state.wkReady || !window.wk) throw new Error("悟空未连接");
             sendText("[语音消息](" + url + ")");
           } catch (e) {
             warn("record-upload", e);
@@ -5374,7 +6397,8 @@
 
       toggleUIForRecording(true);
 
-      byId("cp-rec-pause").innerHTML = ICON.pause;
+      var icon = byId("cp-rec-pause").querySelector("i");
+      icon.className = "fa fa-pause-circle";
 
       state.rec.mediaRecorder.start(250);
 
@@ -5408,14 +6432,16 @@
       return;
     }
 
+    var icon = byId("cp-rec-pause").querySelector("i");
+
     if (mr.state === "recording") {
       mr.pause();
       state.rec.paused = true;
-      byId("cp-rec-pause").innerHTML = ICON.play;
+      icon.className = "fa fa-play-circle";
     } else if (mr.state === "paused") {
       mr.resume();
       state.rec.paused = false;
-      byId("cp-rec-pause").innerHTML = ICON.pause;
+      icon.className = "fa fa-pause-circle";
     }
   }
 
