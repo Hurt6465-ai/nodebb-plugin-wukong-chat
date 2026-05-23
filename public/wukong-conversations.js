@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v1 */
+/* Wukong independent conversation list v3 - mobile first */
 (function () {
   "use strict";
 
@@ -15,17 +15,29 @@
     rooms: [],
     users: {},
     query: "",
+    tab: "direct",
     loading: false,
     error: false,
     sdkReady: false,
-    syncTimer: 0,
     pollTimer: 0,
     raf: 0,
     menuRoom: null,
     hiddenRooms: {},
     pinnedRooms: {},
-    remarks: {}
+    remarks: {},
+    touchX: 0,
+    touchY: 0
   };
+
+  function ensureViewport() {
+    var meta = D.querySelector('meta[name="viewport"]');
+    if (!meta) {
+      meta = D.createElement("meta");
+      meta.name = "viewport";
+      D.head.appendChild(meta);
+    }
+    meta.content = "width=device-width, initial-scale=1.0, viewport-fit=cover";
+  }
 
   function rel() {
     return (W.config && config.relative_path) || "";
@@ -39,7 +51,7 @@
       i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
       syncIntervalConnected: 45000,
       syncIntervalFallback: 30000,
-      maxConversations: 300
+      maxConversations: 500
     }, (W.NBBWukongConversations && W.NBBWukongConversations.config) || {});
   }
 
@@ -68,7 +80,7 @@
   async function loadI18n() {
     var loc = locale();
     try {
-      var res = await fetch(cfg.i18nBase.replace(/\/+$/, "") + "/wukong-conversations." + loc + ".json?v=1", {
+      var res = await fetch(cfg.i18nBase.replace(/\/+$/, "") + "/wukong-conversations." + loc + ".json?v=3", {
         credentials: "same-origin",
         headers: { Accept: "application/json" }
       });
@@ -77,7 +89,7 @@
   }
 
   function storageKey() {
-    return "nbb_wukong_conversations_v1:" + (state.uid || "0");
+    return "nbb_wukong_conversations_v3:" + (state.uid || "0");
   }
 
   function loadLocal() {
@@ -154,7 +166,7 @@
   }
 
   function typeOf(item, channelId) {
-    return Number(get(item, ["channel_type", "channelType", "channelType"], channelId.indexOf("nbb_topic_") === 0 ? 2 : 1)) || 1;
+    return Number(get(item, ["channel_type", "channelType"], channelId.indexOf("nbb_topic_") === 0 ? 2 : 1)) || 1;
   }
 
   function timestampOf(item) {
@@ -235,7 +247,7 @@
   async function sync(reason) {
     if (state.loading) return;
     state.loading = true;
-    setStatus(t("syncing", "同步中...") + (reason ? " " + reason : ""));
+    setStatus(t("syncing", "同步中..."));
     try {
       await ensureToken();
       var data = await fetchJson(cfg.apiBase + "/conversation/sync", {
@@ -243,7 +255,7 @@
         body: JSON.stringify({ uid: state.uid, version: 0, msg_count: 1 })
       });
       var list = extractList(data).map(normalizeRoom).filter(Boolean);
-      mergeRooms(list, true);
+      mergeRooms(list);
       await hydrateUsers();
       state.error = false;
       setStatus(state.sdkReady ? t("connected", "已连接") : t("offline", "离线同步"));
@@ -261,23 +273,27 @@
     return String(room.channelType) + ":" + String(room.channelId || room.id);
   }
 
-  function mergeRooms(list, replace) {
+  function mergeRooms(list) {
     var map = {};
-    if (!replace) {
-      state.rooms.forEach(function (r) { map[roomKey(r)] = r; });
-    }
+    state.rooms.forEach(function (r) { map[roomKey(r)] = r; });
 
     list.forEach(function (r) {
       var k = roomKey(r);
       var old = map[k];
+
       if (old) {
-        Object.assign(old, r);
+        // Important: Wukong conversation/sync may return no preview payload.
+        // Do not erase text received from realtime SDK or previous history.
+        if (!r.text && old.text) r.text = old.text;
+        if (!r.ts && old.ts) r.ts = old.ts;
+        if (!r.unread && old.unread) r.unread = old.unread;
+        map[k] = Object.assign(old, r);
       } else {
         map[k] = r;
       }
     });
 
-    state.rooms = Object.keys(map).map(function (k) { return map[k]; }).slice(0, cfg.maxConversations || 300);
+    state.rooms = Object.keys(map).map(function (k) { return map[k]; }).slice(0, cfg.maxConversations || 500);
   }
 
   function patchRoomFromMessage(msg) {
@@ -293,19 +309,21 @@
 
     if (!channelId) return false;
 
+    var text = parsePayloadText(payloadOf(msg) || msg.payload || msg.content || msg.text || "");
     var room = normalizeRoom(Object.assign({}, msg, {
       channel_id: channelId,
       channel_type: type,
-      last_msg: payloadOf(msg) || msg.payload || msg.content || msg.text || "",
+      last_msg: text,
       timestamp: now(),
       unread: fromUid && fromUid !== self ? 1 : 0
     }));
     if (!room) return false;
+    if (text) room.text = text;
 
     var existing = state.rooms.filter(function (r) { return roomKey(r) === roomKey(room); })[0];
     if (existing) {
       existing.ts = room.ts;
-      existing.text = room.text;
+      if (room.text) existing.text = room.text;
       if (room.unread) existing.unread = Number(existing.unread || 0) + 1;
     } else {
       state.rooms.unshift(room);
@@ -331,6 +349,7 @@
       users.forEach(function (u) {
         if (u && u.uid) state.users[String(u.uid)] = u;
       });
+      scheduleRender();
     } catch (_) {}
   }
 
@@ -339,13 +358,18 @@
     return (state.remarks[uid] || (u && (u.displayname || u.username || u.userslug)) || ("User-" + uid));
   }
 
+  function userSearchText(uid) {
+    var u = state.users[String(uid)] || {};
+    return [uid, u.username, u.displayname, u.userslug, u.fullname, state.remarks[uid]].join(" ");
+  }
+
   function avatar(uid) {
     var u = state.users[String(uid)];
     if (u && u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
     var name = userName(uid);
     var txt = String((u && (u.icontext || u.username)) || name || "?").charAt(0).toUpperCase();
     var bg = (u && u.iconbgColor) || "#dbeafe";
-    return '<span style="background:' + esc(bg) + ';width:100%;height:100%;display:grid;place-items:center;border-radius:50%;">' + esc(txt) + '</span>';
+    return '<span style="background:' + esc(bg) + ';display:grid;place-items:center;">' + esc(txt) + '</span>';
   }
 
   function roomName(room) {
@@ -376,10 +400,23 @@
 
   function getFiltered() {
     var q = String(state.query || "").trim().toLowerCase();
+
     return state.rooms.filter(function (room) {
       if (state.hiddenRooms[roomKey(room)]) return false;
+      if (state.tab === "direct" && room.isTopic) return false;
+      if (state.tab === "rooms" && !room.isTopic) return false;
       if (!q) return true;
-      return (roomName(room) + " " + room.text).toLowerCase().indexOf(q) !== -1;
+
+      var s = [
+        roomName(room),
+        room.text,
+        room.channelId,
+        room.id,
+        room.isTopic ? t("chatrooms", "聊天室") : t("messages", "消息"),
+        !room.isTopic ? userSearchText(room.id) : ""
+      ].join(" ").toLowerCase();
+
+      return s.indexOf(q) !== -1;
     }).sort(function (a, b) {
       var pa = state.pinnedRooms[roomKey(a)] ? 1 : 0;
       var pb = state.pinnedRooms[roomKey(b)] ? 1 : 0;
@@ -388,22 +425,34 @@
     });
   }
 
+  function updateTabs() {
+    if (!els.tabs) return;
+    els.tabs.querySelectorAll(".wkconv-tab").forEach(function (btn) {
+      var active = btn.getAttribute("data-tab") === state.tab;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    if (els.search) {
+      els.search.placeholder = state.tab === "rooms" ? t("searchRooms", "搜索聊天室") : t("searchMessages", "搜索消息");
+    }
+  }
+
   function render() {
     if (!els.list) return;
+    updateTabs();
 
     var rooms = getFiltered();
 
     if (state.error && !rooms.length) {
       els.list.innerHTML =
-        '<div class="wkconv-error"><div><strong>' + esc(t("errorTitle", "加载失败")) + '</strong>' +
-        '<button class="wkconv-refresh" data-act="retry" style="margin:12px auto 0;">↻</button></div></div>';
+        '<div class="wkconv-error"><div><strong>' + esc(t("errorTitle", "加载失败")) + '</strong></div></div>';
       return;
     }
 
     if (!rooms.length) {
-      els.list.innerHTML =
-        '<div class="wkconv-empty"><div><strong>' + esc(t("emptyTitle", "暂无会话")) + '</strong>' +
-        '<div>' + esc(t("emptyDesc", "打开个人主页，点击聊天即可开始。")) + '</div></div></div>';
+      var title = state.tab === "rooms" ? t("emptyRoomsTitle", "暂无聊天室") : t("emptyTitle", "暂无消息");
+      var desc = state.tab === "rooms" ? t("emptyRoomsDesc", "以后板块帖子聊天室会显示在这里。") : t("emptyDesc", "打开个人主页，点击聊天即可开始。");
+      els.list.innerHTML = '<div class="wkconv-empty"><div><strong>' + esc(title) + '</strong><div>' + esc(desc) + '</div></div></div>';
       return;
     }
 
@@ -416,7 +465,7 @@
         '<div class="wkconv-avatar">' + (room.isTopic ? '<span>#</span>' : avatar(room.id)) + '</div>' +
         '<div class="wkconv-main">' +
           '<div class="wkconv-top"><div class="wkconv-name">' + esc(name) + '</div><div class="wkconv-time">' + esc(fmtTime(room.ts)) + '</div></div>' +
-          '<div class="wkconv-bottom"><span class="wkconv-pin">置顶</span><div class="wkconv-preview">' + esc(room.text || "") + '</div><div class="wkconv-badge">' + esc(unread > 99 ? "99+" : unread) + '</div></div>' +
+          '<div class="wkconv-bottom"><span class="wkconv-pin">' + esc(t("pinned", "置顶")) + '</span><div class="wkconv-preview">' + esc(room.text || "") + '</div><div class="wkconv-badge">' + esc(unread > 99 ? "99+" : unread) + '</div></div>' +
         '</div>' +
       '</li>';
     }).join("");
@@ -438,20 +487,6 @@
     if (!room) return;
     room.unread = 0;
     location.href = openUrl(room);
-  }
-
-  function toast(msg) {
-    var old = D.querySelector(".wkconv-toast");
-    if (old) old.remove();
-    var el = D.createElement("div");
-    el.className = "wkconv-toast";
-    el.textContent = msg;
-    D.body.appendChild(el);
-    requestAnimationFrame(function () { el.classList.add("show"); });
-    setTimeout(function () {
-      el.classList.remove("show");
-      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 220);
-    }, 1900);
   }
 
   function openMenu(room) {
@@ -558,37 +593,46 @@
     if (els.status) els.status.textContent = text || "";
   }
 
+  function setTab(tab) {
+    if (tab !== "direct" && tab !== "rooms") return;
+    if (state.tab === tab) return;
+    state.tab = tab;
+    state.query = "";
+    if (els.search) els.search.value = "";
+    render();
+  }
+
   function bind() {
     els.search.addEventListener("input", function () {
       state.query = this.value || "";
       scheduleRender();
     });
 
-    els.refresh.addEventListener("click", function () {
-      sync("manual");
+    els.tabs.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-tab]");
+      if (btn) setTab(btn.getAttribute("data-tab"));
     });
 
-    els.newChat.addEventListener("click", function () {
-      var uid = prompt(t("enterUid", "输入 NodeBB 用户 UID"), "");
-      uid = String(uid || "").trim();
-      if (!/^\d+$/.test(uid)) {
-        if (uid) toast(t("invalidUid", "请输入有效 UID"));
-        return;
+    els.listWrap.addEventListener("touchstart", function (e) {
+      var p = e.touches && e.touches[0];
+      if (!p) return;
+      state.touchX = p.clientX;
+      state.touchY = p.clientY;
+    }, { passive: true });
+
+    els.listWrap.addEventListener("touchend", function (e) {
+      var p = e.changedTouches && e.changedTouches[0];
+      if (!p) return;
+      var dx = p.clientX - state.touchX;
+      var dy = p.clientY - state.touchY;
+      if (Math.abs(dx) > 58 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+        setTab(dx < 0 ? "rooms" : "direct");
       }
-      location.href = rel() + cfg.chatBase + "/" + encodeURIComponent(uid);
-    });
-
-    els.back.addEventListener("click", function () {
-      if (history.length > 1) history.back();
-      else location.href = rel() + "/";
-    });
+    }, { passive: true });
 
     els.list.addEventListener("click", function (e) {
       var item = e.target.closest(".wkconv-item");
-      if (!item) {
-        if (e.target.closest('[data-act="retry"]')) sync("retry");
-        return;
-      }
+      if (!item) return;
       openRoom(findRoomByKey(item.getAttribute("data-key")));
     });
 
@@ -652,13 +696,12 @@
     root.innerHTML =
       '<div id="wkconv-app" class="wkconv-shell">' +
         '<header class="wkconv-header">' +
-          '<div class="wkconv-head-row">' +
-            '<button class="wkconv-back" type="button">‹</button>' +
-            '<div class="wkconv-title"><h1>' + esc(t("title", "悟空会话")) + '</h1><div class="wkconv-status">' + esc(t("loading", "正在加载会话...")) + '</div></div>' +
-            '<button class="wkconv-refresh" type="button">↻</button>' +
-            '<button class="wkconv-new" type="button">＋</button>' +
+          '<div class="wkconv-tabs" role="tablist">' +
+            '<button class="wkconv-tab is-active" data-tab="direct" role="tab" type="button">' + esc(t("messages", "消息")) + '</button>' +
+            '<button class="wkconv-tab" data-tab="rooms" role="tab" type="button">' + esc(t("chatrooms", "聊天室")) + '</button>' +
+            '<div class="wkconv-status">' + esc(t("loading", "正在加载消息...")) + '</div>' +
           '</div>' +
-          '<div class="wkconv-search-wrap"><span class="wkconv-search-icon">⌕</span><input class="wkconv-search" type="search" placeholder="' + esc(t("search", "搜索会话")) + '"></div>' +
+          '<div class="wkconv-search-wrap"><span class="wkconv-search-icon">⌕</span><input class="wkconv-search" type="search" placeholder="' + esc(t("searchMessages", "搜索消息")) + '"></div>' +
         '</header>' +
         '<main class="wkconv-list-wrap"><ul class="wkconv-list"></ul></main>' +
       '</div>' +
@@ -667,11 +710,10 @@
     els = {
       app: D.getElementById("wkconv-app"),
       status: root.querySelector(".wkconv-status"),
+      tabs: root.querySelector(".wkconv-tabs"),
       search: root.querySelector(".wkconv-search"),
+      listWrap: root.querySelector(".wkconv-list-wrap"),
       list: root.querySelector(".wkconv-list"),
-      back: root.querySelector(".wkconv-back"),
-      refresh: root.querySelector(".wkconv-refresh"),
-      newChat: root.querySelector(".wkconv-new"),
       menuMask: root.querySelector(".wkconv-menu-mask"),
       menuTitle: root.querySelector(".wkconv-menu-title"),
       menuList: root.querySelector(".wkconv-menu-list")
@@ -679,6 +721,7 @@
   }
 
   async function boot() {
+    ensureViewport();
     cfg = c();
     root = D.getElementById("nodebb-wukong-conversations-root");
     if (!root) return;
@@ -693,8 +736,9 @@
     startPoll();
 
     W.WukongConversations = {
-      version: "v1",
+      version: "v3-mobile-tabs",
       sync: sync,
+      setTab: setTab,
       dump: function () { return state; }
     };
   }
