@@ -75,6 +75,83 @@
     return !!p;
   }
 
+
+  function digestFromMsgContent(content) {
+    try {
+      if (!content) return "";
+      if (typeof content === "string") return previewFromText(content);
+      if (content.conversationDigest) return previewFromText(content.conversationDigest);
+      if (content._conversationDigest) return previewFromText(content._conversationDigest);
+      if (content.text) return previewFromText(content.text);
+      if (content.content) return previewFromText(content.content);
+      var type = String(content.type || content.contentType || content.content_type || "").toLowerCase();
+      var url = String(content.url || content.remoteUrl || content.path || "");
+      if (type.indexOf("image") !== -1 || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url)) return "[图片]";
+      if (type.indexOf("video") !== -1 || /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url)) return "[视频]";
+      if (type.indexOf("voice") !== -1 || type.indexOf("audio") !== -1 || /\.(mp3|wav|ogg|aac|m4a)(\?|$)/i.test(url)) return "[语音]";
+    } catch (_) {}
+    return "";
+  }
+
+  function getSelfUid() {
+    return String(
+      (window.app && app.user && app.user.uid) ||
+      (window.ajaxify && ajaxify.data && ajaxify.data.loggedInUser && ajaxify.data.loggedInUser.uid) ||
+      ""
+    ).trim();
+  }
+
+  function installSdkSendHook() {
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      try {
+        var sdk = window.wk && window.wk.WKSDK && window.wk.WKSDK.shared && window.wk.WKSDK.shared();
+        var cm = sdk && sdk.chatManager;
+        if (!cm || typeof cm.send !== "function") {
+          if (tries > 80) clearInterval(timer);
+          return;
+        }
+        if (cm.__nbbConvUpsertWrapped) {
+          clearInterval(timer);
+          return;
+        }
+        var rawSend = cm.send;
+        cm.send = function (content, channel) {
+          var ret = rawSend.apply(this, arguments);
+          try {
+            var text = digestFromMsgContent(content);
+            var ch = channelInfo();
+            if (channel && channel.channelID) ch.channelId = String(channel.channelID || ch.channelId || "");
+            if (channel && channel.channelType) ch.channelType = Number(channel.channelType || ch.channelType || 1);
+            if (text && ch.channelId) {
+              fetch(apiBase() + "/conversations/upsert", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json", Accept: "application/json" },
+                body: JSON.stringify({
+                  channel_id: ch.channelId,
+                  channel_type: ch.channelType,
+                  ts: Date.now(),
+                  text: text,
+                  incoming: false,
+                  is_self: true,
+                  last_from_uid: getSelfUid(),
+                  last_from_name: "我"
+                })
+              }).catch(function () {});
+            }
+          } catch (_) {}
+          return ret;
+        };
+        cm.__nbbConvUpsertWrapped = true;
+        clearInterval(timer);
+      } catch (_) {
+        if (tries > 80) clearInterval(timer);
+      }
+    }, 250);
+  }
+
   function installDomObserver() {
     var root = document.getElementById("nodebb-wukong-root") || document.body;
     if (!root || !window.MutationObserver) return;
@@ -108,6 +185,6 @@
   // Expose a direct call for the main chat script if it wants to use it later.
   window.NBBWukongConversationUpsert = upsert;
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", installDomObserver, { once: true });
-  else installDomObserver();
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { installDomObserver(); installSdkSendHook(); }, { once: true });
+  else { installDomObserver(); installSdkSendHook(); }
 })();
