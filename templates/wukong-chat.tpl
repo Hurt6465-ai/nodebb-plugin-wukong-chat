@@ -42,4 +42,5 @@
   });
 })();
 </script>
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=42"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat-conversation-upsert.js?v=2"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=43"></script>
