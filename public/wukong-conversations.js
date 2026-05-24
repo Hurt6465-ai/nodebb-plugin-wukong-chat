@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v5 - event driven */
+/* Wukong independent conversation list v6 - virtual list + drawer */
 (function () {
   "use strict";
 
@@ -8,6 +8,8 @@
   var els = {};
   var cfg = {};
   var i18n = {};
+  var ro = null;
+
   var state = {
     uid: "",
     token: "",
@@ -26,10 +28,21 @@
     remarks: {},
     touchX: 0,
     touchY: 0,
+    edgeTouchX: 0,
+    edgeTouchY: 0,
     messageListener: null,
     conversationListener: null,
     connectListener: null,
-    lastSyncAt: 0
+    lastSyncAt: 0,
+    visibleRooms: [],
+    heightMap: {},
+    virtual: {
+      start: 0,
+      end: 0,
+      top: 0,
+      bottom: 0,
+      avg: 58
+    }
   };
 
   function ensureViewport() {
@@ -54,7 +67,9 @@
       wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1",
       i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
       maxConversations: 500,
-      openTopicPage: true
+      openTopicPage: true,
+      virtualOverscan: 10,
+      defaultRowHeight: 58
     }, (W.NBBWukongConversations && W.NBBWukongConversations.config) || {});
   }
 
@@ -83,7 +98,7 @@
   async function loadI18n() {
     var loc = locale();
     try {
-      var res = await fetch(cfg.i18nBase.replace(/\/+$/, "") + "/wukong-conversations." + loc + ".json?v=5", {
+      var res = await fetch(cfg.i18nBase.replace(/\/+$/, "") + "/wukong-conversations." + loc + ".json?v=6", {
         credentials: "same-origin",
         headers: { Accept: "application/json" }
       });
@@ -92,7 +107,7 @@
   }
 
   function storageKey() {
-    return "nbb_wukong_conversations_v5:" + (state.uid || "0");
+    return "nbb_wukong_conversations_v6:" + (state.uid || "0");
   }
 
   function loadLocal() {
@@ -104,6 +119,7 @@
       state.rooms = Array.isArray(data.rooms) ? data.rooms : [];
       state.users = data.users || {};
       state.topics = data.topics || {};
+      state.heightMap = data.heightMap || {};
     } catch (_) {}
   }
 
@@ -115,7 +131,8 @@
         remarks: state.remarks,
         rooms: state.rooms.slice(0, cfg.maxConversations || 500),
         users: state.users,
-        topics: state.topics
+        topics: state.topics,
+        heightMap: state.heightMap
       }));
     } catch (_) {}
   }
@@ -244,7 +261,7 @@
   }
 
   function roomKey(room) {
-    return String(room.channel_type || room.channelType || room.channelType || 1) + ":" + String(room.channel_id || room.channelId || room.id || "");
+    return String(room.channel_type || room.channelType || 1) + ":" + String(room.channel_id || room.channelId || room.id || "");
   }
 
   function mergeServerList(data) {
@@ -489,7 +506,7 @@
   function flagEmoji(value) {
     var raw = String(value || "").trim();
     if (!raw) return "";
-    if (/\p{Regional_Indicator}/u.test(raw) || /[\u{1F1E6}-\u{1F1FF}]/u.test(raw)) return raw;
+    if (/[\u{1F1E6}-\u{1F1FF}]/u.test(raw)) return raw;
     var s = raw.toLowerCase();
     var map = {
       cn: "🇨🇳", china: "🇨🇳", "中国": "🇨🇳", chinese: "🇨🇳", zh: "🇨🇳",
@@ -534,6 +551,16 @@
     return '<span style="background:' + esc(bg) + ';display:grid;place-items:center;">' + esc(txt) + '</span>';
   }
 
+  function topicPoster(room) {
+    var tid = topicTid(room);
+    return (state.topics[tid] && state.topics[tid].poster) || {};
+  }
+
+  function topicPosterName(room) {
+    var poster = topicPoster(room);
+    return poster.displayname || poster.username || poster.userslug || "";
+  }
+
   function roomName(room) {
     if (state.remarks[roomKey(room)]) return state.remarks[roomKey(room)];
     if (room.is_topic || room.isTopic) {
@@ -544,23 +571,29 @@
   }
 
   function roomAvatar(room) {
-    if (room.is_topic || room.isTopic) {
-      var tid = topicTid(room);
-      var topic = state.topics[tid] || {};
-      return avatarHtmlForUser(topic.poster || {}, "#");
-    }
-    var uid = room.peer_uid || room.id;
-    return avatarHtmlForUser(state.users[String(uid)] || {}, userName(uid));
+    if (room.is_topic || room.isTopic) return avatarHtmlForUser(topicPoster(room), "#");
+    return avatarHtmlForUser(state.users[String(room.peer_uid || room.id)] || {}, userName(room.peer_uid || room.id));
   }
 
   function roomFlag(room) {
-    if (room.is_topic || room.isTopic) return "";
+    if (room.is_topic || room.isTopic) return userFlag(topicPoster(room));
     return userFlag(state.users[String(room.peer_uid || room.id)]);
   }
 
   function roomOnline(room) {
-    if (room.is_topic || room.isTopic) return false;
+    if (room.is_topic || room.isTopic) return isOnlineUser(topicPoster(room));
     return isOnlineUser(state.users[String(room.peer_uid || room.id)]);
+  }
+
+  function previewText(room) {
+    if (room.is_topic || room.isTopic) {
+      var poster = topicPosterName(room);
+      var parts = [t("roomLabel", "聊天室")];
+      if (poster) parts.push(poster);
+      if (room.text) parts.push(room.text);
+      return parts.join(" · ");
+    }
+    return room.text || "";
   }
 
   function openUrl(room) {
@@ -599,6 +632,84 @@
     });
   }
 
+  function estimateHeight(key) {
+    return Number(state.heightMap[key] || state.virtual.avg || cfg.defaultRowHeight || 58);
+  }
+
+  function computeVirtual(rooms) {
+    var scrollTop = els.listWrap ? els.listWrap.scrollTop : 0;
+    var viewport = els.listWrap ? els.listWrap.clientHeight : 600;
+    var overscan = Number(cfg.virtualOverscan || 10);
+    var avg = Number(state.virtual.avg || cfg.defaultRowHeight || 58);
+    var startPx = Math.max(0, scrollTop - overscan * avg);
+    var endPx = scrollTop + viewport + overscan * avg;
+
+    var y = 0;
+    var start = 0;
+    var end = rooms.length;
+
+    for (var i = 0; i < rooms.length; i++) {
+      var h = estimateHeight(roomKey(rooms[i]));
+      if (y + h < startPx) start = i + 1;
+      if (y <= endPx) end = i + 1;
+      y += h;
+    }
+
+    var top = 0;
+    for (var a = 0; a < start; a++) top += estimateHeight(roomKey(rooms[a]));
+
+    var visibleHeight = 0;
+    for (var b = start; b < end; b++) visibleHeight += estimateHeight(roomKey(rooms[b]));
+
+    state.virtual.start = start;
+    state.virtual.end = Math.max(start, end);
+    state.virtual.top = top;
+    state.virtual.bottom = Math.max(0, y - top - visibleHeight);
+  }
+
+  function updateAverageHeight() {
+    var keys = Object.keys(state.heightMap);
+    if (!keys.length) return;
+    var sum = 0;
+    var count = 0;
+    keys.slice(-120).forEach(function (k) {
+      var h = Number(state.heightMap[k]);
+      if (h > 30 && h < 180) {
+        sum += h;
+        count++;
+      }
+    });
+    if (count) state.virtual.avg = Math.round(sum / count);
+  }
+
+  function observeRenderedHeights() {
+    if (!W.ResizeObserver || !els.items) return;
+    if (ro) ro.disconnect();
+
+    ro = new ResizeObserver(function (entries) {
+      var changed = false;
+      entries.forEach(function (entry) {
+        var el = entry.target;
+        var key = el.getAttribute("data-key");
+        var h = Math.ceil(entry.contentRect.height || el.offsetHeight || 0);
+        if (!key || !h) return;
+        if (Math.abs(Number(state.heightMap[key] || 0) - h) > 1) {
+          state.heightMap[key] = h;
+          changed = true;
+        }
+      });
+      if (changed) {
+        updateAverageHeight();
+        saveLocal();
+        scheduleRender();
+      }
+    });
+
+    els.items.querySelectorAll(".wkconv-item").forEach(function (el) {
+      ro.observe(el);
+    });
+  }
+
   function updateTabs() {
     if (!els.tabs) return;
     els.tabs.querySelectorAll(".wkconv-tab").forEach(function (btn) {
@@ -609,41 +720,59 @@
   }
 
   function render() {
-    if (!els.list) return;
+    if (!els.items) return;
     updateTabs();
 
     var rooms = getFiltered();
+    state.visibleRooms = rooms;
+    computeVirtual(rooms);
 
     if (state.error && !rooms.length) {
-      els.list.innerHTML = '<div class="wkconv-error"><div><strong>' + esc(t("errorTitle", "加载失败")) + '</strong></div></div>';
+      els.topSpacer.style.height = "0px";
+      els.bottomSpacer.style.height = "0px";
+      els.items.innerHTML = '<div class="wkconv-error"><div><strong>' + esc(t("errorTitle", "加载失败")) + '</strong></div></div>';
       return;
     }
 
     if (!rooms.length) {
+      els.topSpacer.style.height = "0px";
+      els.bottomSpacer.style.height = "0px";
       var title = state.tab === "rooms" ? t("emptyRoomsTitle", "暂无聊天室") : t("emptyTitle", "暂无消息");
       var desc = state.tab === "rooms" ? t("emptyRoomsDesc", "后续板块帖子聊天室会显示在这里。") : t("emptyDesc", "打开个人主页，点击聊天即可开始。");
-      els.list.innerHTML = '<div class="wkconv-empty"><div><strong>' + esc(title) + '</strong><div>' + esc(desc) + '</div></div></div>';
+      els.items.innerHTML = '<div class="wkconv-empty"><div><strong>' + esc(title) + '</strong><div>' + esc(desc) + '</div></div></div>';
       return;
     }
 
-    els.list.innerHTML = rooms.map(function (room) {
+    var slice = rooms.slice(state.virtual.start, state.virtual.end);
+    els.topSpacer.style.height = state.virtual.top + "px";
+    els.bottomSpacer.style.height = state.virtual.bottom + "px";
+
+    els.items.innerHTML = slice.map(function (room) {
       var key = roomKey(room);
       var pinned = !!state.pinnedRooms[key];
       var unread = Number(room.unread || 0);
+      var isTopic = room.is_topic || room.isTopic;
       var name = roomName(room);
       var flag = roomFlag(room);
       var online = roomOnline(room);
-      return '<li class="wkconv-item' + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + (online ? " is-online" : "") + '" data-key="' + esc(key) + '">' +
+      var titleHtml = isTopic ?
+        '<span class="wkconv-topic-prefix">#</span>' + esc(name) :
+        esc(name);
+
+      return '<div class="wkconv-item' + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + (online ? " is-online" : "") + '" data-key="' + esc(key) + '">' +
         '<div class="wkconv-avatar">' +
           '<div class="wkconv-avatar-inner">' + roomAvatar(room) + '</div>' +
+          (isTopic ? '<span class="wkconv-topic-badge">#</span>' : '') +
           '<span class="wkconv-online"></span><span class="wkconv-flag">' + esc(flag) + '</span>' +
         '</div>' +
         '<div class="wkconv-main">' +
-          '<div class="wkconv-top"><div class="wkconv-name">' + esc(name) + '</div><div class="wkconv-time">' + esc(fmtTime(room.ts)) + '</div></div>' +
-          '<div class="wkconv-bottom"><span class="wkconv-pin">' + esc(t("pinned", "置顶")) + '</span><div class="wkconv-preview">' + esc(room.text || "") + '</div><div class="wkconv-badge">' + esc(unread > 99 ? "99+" : unread) + '</div></div>' +
+          '<div class="wkconv-top"><div class="wkconv-name">' + titleHtml + '</div><div class="wkconv-time">' + esc(fmtTime(room.ts)) + '</div></div>' +
+          '<div class="wkconv-bottom"><span class="wkconv-pin">' + esc(t("pinned", "置顶")) + '</span><div class="wkconv-preview">' + esc(previewText(room)) + '</div><div class="wkconv-badge">' + esc(unread > 99 ? "99+" : unread) + '</div></div>' +
         '</div>' +
-      '</li>';
+      '</div>';
     }).join("");
+
+    observeRenderedHeights();
   }
 
   function scheduleRender() {
@@ -664,6 +793,11 @@
     location.href = openUrl(room);
   }
 
+  function setBlur(on) {
+    if (!els.app) return;
+    els.app.classList.toggle("is-blurred", !!on);
+  }
+
   function openMenu(room) {
     if (!room) return;
     state.menuRoom = room;
@@ -680,11 +814,23 @@
       '<button class="danger" data-menu="hide">' + esc(hidden ? t("restore", "恢复会话") : t("hide", "删除会话")) + '</button>' +
       '<button data-menu="cancel">' + esc(t("cancel", "取消")) + '</button>';
     els.menuMask.setAttribute("data-open", "1");
+    setBlur(true);
   }
 
   function closeMenu() {
     els.menuMask.removeAttribute("data-open");
     state.menuRoom = null;
+    setBlur(false);
+  }
+
+  function openDrawer() {
+    els.drawerMask.setAttribute("data-open", "1");
+    setBlur(true);
+  }
+
+  function closeDrawer() {
+    els.drawerMask.removeAttribute("data-open");
+    setBlur(false);
   }
 
   function setStatus(text) {
@@ -695,7 +841,60 @@
     if (tab !== "direct" && tab !== "rooms") return;
     if (state.tab === tab) return;
     state.tab = tab;
+    if (els.listWrap) els.listWrap.scrollTop = 0;
     render();
+  }
+
+  function currentUser() {
+    return (W.app && app.user) || (W.ajaxify && ajaxify.data && ajaxify.data.loggedInUser) || {};
+  }
+
+  function resolveHref(href) {
+    var u = currentUser();
+    var relative = rel();
+    var userslug = encodeURIComponent(String(u.userslug || u.slug || u.username || u.uid || ""));
+    return String(href || "#")
+      .replace(/\{relative_path\}/g, relative)
+      .replace(/\{uid\}/g, encodeURIComponent(String(u.uid || "")))
+      .replace(/\{userslug\}/g, userslug)
+      .replace(/\{username\}/g, encodeURIComponent(String(u.username || "")))
+      .replace(/\/+/g, function (m, offset, s) {
+        return offset > 0 && s.charAt(offset - 1) !== ":" ? "/" : m;
+      });
+  }
+
+  function drawerIconHtml(icon) {
+    icon = String(icon || "").trim();
+    if (!icon) return '<span class="wkconv-drawer-icon">•</span>';
+    if (icon.indexOf("fa-") !== -1) return '<i class="' + esc(icon) + '"></i>';
+    return '<span class="wkconv-drawer-icon">' + esc(icon) + '</span>';
+  }
+
+  function drawerAvatarHtml() {
+    var u = currentUser();
+    if (u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
+    return esc(String(u.username || u.uid || "?").charAt(0).toUpperCase());
+  }
+
+  function renderDrawerLinks() {
+    var u = currentUser();
+    var links = W.NBBWukongConversationSidebarLinks || [
+      { id: "profile", labelKey: "profile", label: "个人主页", icon: "fa-regular fa-user", href: "{relative_path}/user/{userslug}" },
+      { id: "settings", labelKey: "settings", label: "设置", icon: "fa-solid fa-gear", href: "{relative_path}/user/{userslug}/settings" },
+      { id: "messages", labelKey: "messages", label: "消息", icon: "fa-regular fa-comments", href: "{relative_path}/wukong/conversations" }
+    ];
+
+    els.drawerHead.innerHTML =
+      '<div class="wkconv-drawer-avatar">' + drawerAvatarHtml() + '</div>' +
+      '<div class="wkconv-drawer-name">' + esc(u.displayname || u.username || u.userslug || "") + '</div>';
+
+    els.drawerLinks.innerHTML = links.map(function (link) {
+      var label = t(link.labelKey || "", link.label || link.id || "");
+      return '<a class="wkconv-drawer-link" href="' + esc(resolveHref(link.href || "#")) + '">' +
+        drawerIconHtml(link.icon) +
+        '<span class="wkconv-drawer-text">' + esc(label) + '</span>' +
+      '</a>';
+    }).join("");
   }
 
   function bind() {
@@ -703,6 +902,32 @@
       var btn = e.target.closest("[data-tab]");
       if (btn) setTab(btn.getAttribute("data-tab"));
     });
+
+    els.drawerOpen.addEventListener("click", openDrawer);
+    els.drawerMask.addEventListener("click", function (e) {
+      if (e.target === els.drawerMask) closeDrawer();
+    });
+
+    D.addEventListener("touchstart", function (e) {
+      var p = e.touches && e.touches[0];
+      if (!p) return;
+      state.edgeTouchX = p.clientX;
+      state.edgeTouchY = p.clientY;
+    }, { passive: true });
+
+    D.addEventListener("touchend", function (e) {
+      var p = e.changedTouches && e.changedTouches[0];
+      if (!p) return;
+      var dx = p.clientX - state.edgeTouchX;
+      var dy = p.clientY - state.edgeTouchY;
+      if (state.edgeTouchX < 28 && dx > 70 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+        openDrawer();
+      }
+    }, { passive: true });
+
+    els.listWrap.addEventListener("scroll", function () {
+      scheduleRender();
+    }, { passive: true });
 
     els.listWrap.addEventListener("touchstart", function (e) {
       var p = e.touches && e.touches[0];
@@ -721,14 +946,14 @@
       }
     }, { passive: true });
 
-    els.list.addEventListener("click", function (e) {
+    els.items.addEventListener("click", function (e) {
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
       openRoom(findRoomByKey(item.getAttribute("data-key")));
     });
 
     var longTimer = 0;
-    els.list.addEventListener("touchstart", function (e) {
+    els.items.addEventListener("touchstart", function (e) {
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
       longTimer = setTimeout(function () {
@@ -737,12 +962,12 @@
     }, { passive: true });
 
     ["touchend", "touchmove", "touchcancel"].forEach(function (name) {
-      els.list.addEventListener(name, function () {
+      els.items.addEventListener(name, function () {
         clearTimeout(longTimer);
       }, { passive: true });
     });
 
-    els.list.addEventListener("contextmenu", function (e) {
+    els.items.addEventListener("contextmenu", function (e) {
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
       e.preventDefault();
@@ -799,22 +1024,39 @@
             '<button class="wkconv-tab is-active" data-tab="direct" role="tab" type="button">' + esc(t("messages", "消息")) + '</button>' +
             '<button class="wkconv-tab" data-tab="rooms" role="tab" type="button">' + esc(t("chatrooms", "聊天室")) + '</button>' +
             '<div class="wkconv-status">' + esc(t("loading", "正在加载消息...")) + '</div>' +
+            '<button class="wkconv-drawer-open" type="button" aria-label="menu"><span></span></button>' +
           '</div>' +
         '</header>' +
-        '<main class="wkconv-list-wrap"><ul class="wkconv-list"></ul></main>' +
+        '<main class="wkconv-list-wrap">' +
+          '<div class="wkconv-list" role="list">' +
+            '<div class="wkconv-spacer wkconv-top-spacer"></div>' +
+            '<div class="wkconv-items"></div>' +
+            '<div class="wkconv-spacer wkconv-bottom-spacer"></div>' +
+          '</div>' +
+        '</main>' +
       '</div>' +
-      '<div class="wkconv-menu-mask"><div class="wkconv-menu"><div class="wkconv-menu-title"></div><div class="wkconv-menu-list"></div></div></div>';
+      '<div class="wkconv-menu-mask"><div class="wkconv-menu"><div class="wkconv-menu-title"></div><div class="wkconv-menu-list"></div></div></div>' +
+      '<div class="wkconv-drawer-mask"><aside class="wkconv-drawer"><div class="wkconv-drawer-head"></div><nav class="wkconv-drawer-links"></nav></aside></div>';
 
     els = {
       app: D.getElementById("wkconv-app"),
       status: root.querySelector(".wkconv-status"),
       tabs: root.querySelector(".wkconv-tabs"),
+      drawerOpen: root.querySelector(".wkconv-drawer-open"),
       listWrap: root.querySelector(".wkconv-list-wrap"),
       list: root.querySelector(".wkconv-list"),
+      topSpacer: root.querySelector(".wkconv-top-spacer"),
+      bottomSpacer: root.querySelector(".wkconv-bottom-spacer"),
+      items: root.querySelector(".wkconv-items"),
       menuMask: root.querySelector(".wkconv-menu-mask"),
       menuTitle: root.querySelector(".wkconv-menu-title"),
-      menuList: root.querySelector(".wkconv-menu-list")
+      menuList: root.querySelector(".wkconv-menu-list"),
+      drawerMask: root.querySelector(".wkconv-drawer-mask"),
+      drawerHead: root.querySelector(".wkconv-drawer-head"),
+      drawerLinks: root.querySelector(".wkconv-drawer-links")
     };
+
+    renderDrawerLinks();
   }
 
   async function boot() {
@@ -827,6 +1069,7 @@
     await loadI18n();
     await ensureToken().catch(function () {});
     loadLocal();
+    updateAverageHeight();
     mountHtml();
     bind();
     render();
@@ -835,9 +1078,10 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v5-event-driven",
+      version: "v6-virtual-drawer",
       sync: syncList,
       setTab: setTab,
+      openDrawer: openDrawer,
       dump: function () { return state; }
     };
   }
