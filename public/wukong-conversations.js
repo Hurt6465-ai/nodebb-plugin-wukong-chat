@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v9 - compact drawer + better preview */
+/* Wukong independent conversation list v10 - stable unread preview virtual list */
 (function () {
   "use strict";
 
@@ -37,6 +37,7 @@
     conversationListener: null,
     connectListener: null,
     lastSyncAt: 0,
+    eventSeen: {},
     visibleRooms: [],
     heightMap: {},
     virtual: {
@@ -299,6 +300,7 @@
       if (!r.text && old.text) r.text = old.text;
       if (!r.ts && old.ts) r.ts = old.ts;
       map[key] = Object.assign({}, old, r);
+      if (r.unread_abs) map[key].unread = Number(r.unread || 0);
     });
 
     state.rooms = Object.keys(map).map(function (k) { return map[k]; }).slice(0, cfg.maxConversations || 500);
@@ -351,8 +353,28 @@
       incoming: incoming,
       last_from_uid: fromUid || (incoming ? "" : self),
       last_from_name: incoming ? userName(fromUid) : "我",
-      is_self: !incoming
+      is_self: !incoming,
+      event_id: String(get(m, ["messageID", "messageId", "clientMsgNo", "client_msg_no", "clientSeq", "client_seq", "messageSeq"], "")) || ""
     };
+  }
+
+
+  function roomEventId(room) {
+    if (!room) return "";
+    if (room.event_id) return String(room.event_id);
+    var bucket = room.ts ? Math.floor(Number(room.ts) / 5000) : 0;
+    return [room.channel_type || 1, room.channel_id || "", room.incoming ? "in" : "out", room.last_from_uid || "", bucket, room.text || ""].join("|");
+  }
+
+  function rememberEvent(eventId) {
+    if (!eventId) return false;
+    var n = now();
+    var existed = !!state.eventSeen[eventId];
+    state.eventSeen[eventId] = n;
+    Object.keys(state.eventSeen).forEach(function (k) {
+      if (n - state.eventSeen[k] > 2 * 60 * 1000) delete state.eventSeen[k];
+    });
+    return existed;
   }
 
   function upsertLocalRoom(room, saveRemote) {
@@ -366,20 +388,34 @@
       }
     }
 
+    var eventId = roomEventId(room);
+    var duplicate = rememberEvent(eventId);
+    var isSelf = !!room.is_self || (!!room.last_from_uid && String(room.last_from_uid) === String(state.uid || ""));
+    var nextUnread = old ? Number(old.unread || 0) : 0;
+
+    if (isSelf) {
+      nextUnread = 0;
+    } else if (room.unread_abs) {
+      nextUnread = Number(room.unread || 0);
+    } else if (room.incoming && Number(room.unread || 0) > 0 && !duplicate) {
+      nextUnread += Number(room.unread || 0);
+    }
+
     if (old) {
       old.ts = room.ts || old.ts || now();
       if (room.text) old.text = room.text;
       if (room.last_from_uid) old.last_from_uid = room.last_from_uid;
       if (room.last_from_name) old.last_from_name = room.last_from_name;
-      old.unread = room.is_self ? 0 : (Number(old.unread || 0) + Number(room.unread || 0));
+      old.unread = Math.max(0, nextUnread);
+      if (room.participant_uids) old.participant_uids = room.participant_uids;
     } else {
-      state.rooms.unshift(Object.assign({}, room, { unread: room.is_self ? 0 : Number(room.unread || 0) }));
+      state.rooms.unshift(Object.assign({}, room, { unread: Math.max(0, nextUnread) }));
     }
 
     saveLocal();
     render();
 
-    if (saveRemote) {
+    if (saveRemote && !duplicate) {
       fetchJson(cfg.apiBase + "/conversations/upsert", {
         method: "POST",
         body: JSON.stringify({
@@ -388,7 +424,10 @@
           ts: room.ts,
           text: room.text,
           incoming: room.incoming,
-          is_self: !!room.is_self,
+          is_self: !!isSelf,
+          unread: room.unread_abs ? Number(room.unread || 0) : undefined,
+          unread_abs: !!room.unread_abs,
+          event_id: eventId,
           last_from_uid: room.last_from_uid || "",
           last_from_name: room.last_from_name || ""
         })
@@ -461,7 +500,7 @@
           var cm = W.wk.ConversationManager.shared();
           state.conversationListener = function (conversation) {
             var room = normalizeConversationWrap(conversation);
-            if (room) upsertLocalRoom(room, true);
+            if (room) upsertLocalRoom(room, false);
           };
           if (cm && typeof cm.addConversationListener === "function") {
             cm.addConversationListener(state.conversationListener);
@@ -512,8 +551,11 @@
       ts: ts || now(),
       text: text || "",
       unread: Number(c.unread || 0) || 0,
+      unread_abs: true,
+      event_id: String(get(last, ["messageID", "messageId", "clientMsgNo", "client_msg_no", "clientSeq", "client_seq", "messageSeq"], "")) || "",
       last_from_uid: String(get(last, ["fromUID", "fromUid", "from_uid"], "")),
-      last_from_name: ""
+      last_from_name: String(get(last, ["fromName", "from_name"], "")),
+      is_self: String(get(last, ["fromUID", "fromUid", "from_uid"], "")) === String(state.uid || "")
     };
   }
 
@@ -602,7 +644,12 @@
     if (Array.isArray(topic.members)) topic.members.forEach(addUser);
     if (Array.isArray(topic.users)) topic.users.forEach(addUser);
     if (Array.isArray(topic.avatars)) topic.avatars.forEach(addUser);
-    if (!users.length && topic.poster) addUser(topic.poster);
+    if (Array.isArray(room.participant_uids)) {
+      room.participant_uids.forEach(function (uid) {
+        addUser(state.users[String(uid)] || { uid: uid, username: String(uid) });
+      });
+    }
+    if (topic.poster) addUser(topic.poster);
 
     var seen = {};
     users = users.filter(function (u) {
@@ -613,7 +660,8 @@
       return true;
     }).slice(0, 4);
 
-    while (users.length < 4) users.push({ icontext: "", iconbgColor: users.length % 2 ? "#dbeafe" : "#e0f2fe" });
+    var fallbackTexts = ["聊", "天", "室", "友"];
+    while (users.length < 4) users.push({ icontext: fallbackTexts[users.length], iconbgColor: ["#dbeafe", "#e0f2fe", "#ede9fe", "#dcfce7"][users.length % 4] });
 
     return '<div class="wkconv-group-avatar">' + users.slice(0, 4).map(function (u) {
       if (u && u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
@@ -634,7 +682,7 @@
   }
 
   function roomOnline(room) {
-    if (room.is_topic || room.isTopic) return isOnlineUser(topicPoster(room));
+    if (room.is_topic || room.isTopic) return false;
     return isOnlineUser(state.users[String(room.peer_uid || room.id)]);
   }
 
@@ -650,7 +698,8 @@
     if (room.is_topic || room.isTopic) {
       return fromName && text ? (fromName + ": " + text) : (text || t("roomLabel", "聊天室"));
     }
-    return fromName === "我" && text ? ("我: " + text) : text;
+    if ((fromName === "我" || fromUid === self || room.is_self) && text) return "我: " + text;
+    return text;
   }
 
   function openUrl(room) {
@@ -1202,7 +1251,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v7-virtual-drawer-clean",
+      version: "v10-stable-unread-preview",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
