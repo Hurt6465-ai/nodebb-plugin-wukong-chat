@@ -41,7 +41,7 @@
       end: 0,
       top: 0,
       bottom: 0,
-      avg: 58
+      avg: 66
     }
   };
 
@@ -69,7 +69,7 @@
       maxConversations: 500,
       openTopicPage: true,
       virtualOverscan: 10,
-      defaultRowHeight: 58
+      defaultRowHeight: 66
     }, (W.NBBWukongConversations && W.NBBWukongConversations.config) || {});
   }
 
@@ -570,13 +570,47 @@
     return userName(room.peer_uid || room.id);
   }
 
+  function groupAvatarHtml(room) {
+    var tid = topicTid(room);
+    var topic = state.topics[tid] || {};
+    var users = [];
+
+    if (Array.isArray(topic.members)) users = topic.members.slice(0);
+    if (Array.isArray(topic.users)) users = users.concat(topic.users);
+    if (Array.isArray(topic.avatars)) {
+      users = users.concat(topic.avatars.map(function (x) {
+        return typeof x === "string" ? { picture: x } : x;
+      }));
+    }
+    if (topic.poster) users.unshift(topic.poster);
+
+    var seen = {};
+    users = users.filter(function (u) {
+      var key = String((u && (u.uid || u.picture || u.username)) || Math.random());
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    }).slice(0, 4);
+
+    while (users.length < 4) {
+      users.push({ icontext: "#", iconbgColor: users.length % 2 ? "#dbeafe" : "#e0f2fe" });
+    }
+
+    return '<div class="wkconv-group-avatar">' + users.slice(0, 4).map(function (u) {
+      if (u && u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
+      var txt = String((u && (u.icontext || u.username)) || "#").charAt(0).toUpperCase();
+      var bg = (u && u.iconbgColor) || "#dbeafe";
+      return '<span style="background:' + esc(bg) + ';">' + esc(txt) + '</span>';
+    }).join("") + '</div>';
+  }
+
   function roomAvatar(room) {
-    if (room.is_topic || room.isTopic) return avatarHtmlForUser(topicPoster(room), "#");
+    if (room.is_topic || room.isTopic) return groupAvatarHtml(room);
     return avatarHtmlForUser(state.users[String(room.peer_uid || room.id)] || {}, userName(room.peer_uid || room.id));
   }
 
   function roomFlag(room) {
-    if (room.is_topic || room.isTopic) return userFlag(topicPoster(room));
+    if (room.is_topic || room.isTopic) return "";
     return userFlag(state.users[String(room.peer_uid || room.id)]);
   }
 
@@ -587,11 +621,7 @@
 
   function previewText(room) {
     if (room.is_topic || room.isTopic) {
-      var poster = topicPosterName(room);
-      var parts = [t("roomLabel", "聊天室")];
-      if (poster) parts.push(poster);
-      if (room.text) parts.push(room.text);
-      return parts.join(" · ");
+      return room.text || t("roomLabel", "聊天室");
     }
     return room.text || "";
   }
@@ -908,6 +938,23 @@
       if (e.target === els.drawerMask) closeDrawer();
     });
 
+    if (els.edgeSwipe) {
+      els.edgeSwipe.addEventListener("touchstart", function (e) {
+        var p = e.touches && e.touches[0];
+        if (!p) return;
+        state.edgeTouchX = p.clientX;
+        state.edgeTouchY = p.clientY;
+      }, { passive: true });
+
+      els.edgeSwipe.addEventListener("touchend", function (e) {
+        var p = e.changedTouches && e.changedTouches[0];
+        if (!p) return;
+        var dx = p.clientX - state.edgeTouchX;
+        var dy = p.clientY - state.edgeTouchY;
+        if (dx > 42 && Math.abs(dx) > Math.abs(dy) * 1.15) openDrawer();
+      }, { passive: true });
+    }
+
     D.addEventListener("touchstart", function (e) {
       var p = e.touches && e.touches[0];
       if (!p) return;
@@ -920,7 +967,7 @@
       if (!p) return;
       var dx = p.clientX - state.edgeTouchX;
       var dy = p.clientY - state.edgeTouchY;
-      if (state.edgeTouchX < 28 && dx > 70 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+      if (state.edgeTouchX < 60 && dx > 55 && Math.abs(dx) > Math.abs(dy) * 1.25) {
         openDrawer();
       }
     }, { passive: true });
@@ -1036,7 +1083,8 @@
         '</main>' +
       '</div>' +
       '<div class="wkconv-menu-mask"><div class="wkconv-menu"><div class="wkconv-menu-title"></div><div class="wkconv-menu-list"></div></div></div>' +
-      '<div class="wkconv-drawer-mask"><aside class="wkconv-drawer"><div class="wkconv-drawer-head"></div><nav class="wkconv-drawer-links"></nav></aside></div>';
+      '<div class="wkconv-drawer-mask"><aside class="wkconv-drawer"><div class="wkconv-drawer-head"></div><nav class="wkconv-drawer-links"></nav></aside></div>' +
+      '<div class="wkconv-edge-swipe" aria-hidden="true"></div>';
 
     els = {
       app: D.getElementById("wkconv-app"),
@@ -1052,6 +1100,7 @@
       menuTitle: root.querySelector(".wkconv-menu-title"),
       menuList: root.querySelector(".wkconv-menu-list"),
       drawerMask: root.querySelector(".wkconv-drawer-mask"),
+      edgeSwipe: root.querySelector(".wkconv-edge-swipe"),
       drawerHead: root.querySelector(".wkconv-drawer-head"),
       drawerLinks: root.querySelector(".wkconv-drawer-links")
     };
@@ -1078,7 +1127,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v6-virtual-drawer",
+      version: "v7-virtual-drawer-clean",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
