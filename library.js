@@ -425,6 +425,25 @@ function normalizeConversationItem(item, currentUid) {
   const text = conversationPayloadText(conversationPayload(item));
   const ts = conversationTimestamp(item) || Date.now();
   const unread = clampInt(firstNonEmpty(item.unread, item.unread_count, item.unreadCount, item.unread_cnt, 0), 0, 999999, 0);
+  const lastFromUid = String(firstNonEmpty(
+    item.from_uid,
+    item.fromUid,
+    item.fromUID,
+    item.last_from_uid,
+    item.lastFromUid,
+    item.sender_uid,
+    item.senderUid,
+    ''
+  )).trim();
+  const lastFromName = String(firstNonEmpty(
+    item.from_name,
+    item.fromName,
+    item.last_from_name,
+    item.lastFromName,
+    item.sender_name,
+    item.senderName,
+    ''
+  )).trim();
 
   return {
     key: conversationRoomKey(channelId, channelType),
@@ -436,7 +455,65 @@ function normalizeConversationItem(item, currentUid) {
     ts,
     unread,
     text,
+    last_from_uid: lastFromUid,
+    last_from_name: lastFromName,
   };
+}
+
+
+async function getTopicPostIds(tid, limit = 12) {
+  tid = String(tid || '').trim();
+  if (!/^\d+$/.test(tid) || !db) return [];
+
+  const key = `tid:${tid}:posts`;
+  const stop = Math.max(0, Number(limit || 12) - 1);
+  try {
+    if (typeof db.getSortedSetRevRange === 'function') {
+      const pids = await db.getSortedSetRevRange(key, 0, stop);
+      return (pids || []).map(x => String(x)).filter(Boolean);
+    }
+    if (typeof db.getSortedSetRange === 'function') {
+      const pids = await db.getSortedSetRange(key, 0, stop);
+      return (pids || []).map(x => String(x)).filter(Boolean).reverse();
+    }
+  } catch (err) {
+    console.warn('[wukong-chat] get topic post ids failed:', tid, err.message);
+  }
+  return [];
+}
+
+async function getTopicParticipantUsers(tid, posterUid, limit = 4) {
+  const seen = new Set();
+  const uids = [];
+
+  function addUid(uid) {
+    uid = String(uid || '').trim();
+    if (!/^\d+$/.test(uid) || seen.has(uid)) return;
+    seen.add(uid);
+    uids.push(uid);
+  }
+
+  addUid(posterUid);
+
+  if (posts && typeof posts.getPostFields === 'function') {
+    const pids = await getTopicPostIds(tid, 16);
+    for (const pid of pids) {
+      if (uids.length >= limit) break;
+      try {
+        const fields = await posts.getPostFields(pid, ['uid']);
+        addUid(fields && fields.uid);
+      } catch (err) {
+        // Keep this best-effort. A broken post should not break the list.
+      }
+    }
+  }
+
+  const users = [];
+  for (const uid of uids.slice(0, limit)) {
+    const u = await fetchNodeBBUserPublic(uid);
+    if (u) users.push(u);
+  }
+  return users;
 }
 
 async function getTopicPublic(tid) {
@@ -458,14 +535,16 @@ async function getTopicPublic(tid) {
 
     const posterUid = String(fields.uid || '').trim();
     const poster = posterUid ? await fetchNodeBBUserPublic(posterUid) : null;
+    const members = await getTopicParticipantUsers(tid, posterUid, 4);
 
     return {
       tid: String(fields.tid),
       cid: String(fields.cid || ''),
-      title: firstNonEmpty(fields.title, `聊天室 #${tid}`),
+      title: firstNonEmpty(fields.title, `聊天室 ${tid}`),
       slug: firstNonEmpty(fields.slug),
       uid: posterUid,
       poster,
+      members,
       timestamp: Number(fields.timestamp || 0),
       lastposttime: Number(fields.lastposttime || 0),
     };
@@ -538,6 +617,11 @@ async function buildConversationListForUser(current, rawData) {
     if (topic) {
       topicMap[tid] = topic;
       if (topic.poster && topic.poster.uid) users[String(topic.poster.uid)] = topic.poster;
+      if (Array.isArray(topic.members)) {
+        for (const member of topic.members) {
+          if (member && member.uid) users[String(member.uid)] = member;
+        }
+      }
     }
   }
 
@@ -563,6 +647,9 @@ function normalizeConversationUpsertBody(body, currentUid) {
   if (!channelId) return null;
   if (!isTopic && !peerUid) return null;
 
+  const lastFromUid = String(firstNonEmpty(body.last_from_uid, body.lastFromUid, body.from_uid, body.fromUid, body.fromUID, '')).trim();
+  const lastFromName = String(firstNonEmpty(body.last_from_name, body.lastFromName, body.from_name, body.fromName, '')).trim();
+
   return {
     key: conversationRoomKey(channelId, channelType),
     channel_id: channelId,
@@ -573,6 +660,9 @@ function normalizeConversationUpsertBody(body, currentUid) {
     ts: Number(body.ts || body.timestamp || Date.now()) || Date.now(),
     text: conversationPayloadText(firstNonEmpty(body.text, body.last_msg, body.lastMsg, body.payload, '')),
     incoming: !!body.incoming,
+    last_from_uid: lastFromUid,
+    last_from_name: lastFromName,
+    is_self: /^(1|true|yes)$/i.test(String(body.is_self || body.self || '')),
   };
 }
 
@@ -594,12 +684,16 @@ function upsertConversationForUser(uid, room) {
   if (!room.text && old.text) next.text = old.text;
 
   // Own messages must still update the last-message preview, but must not add unread.
-  if (!room.incoming) {
+  if (!room.incoming || room.is_self) {
     next.unread = 0;
     userState.readAt[room.key] = Math.max(Number(userState.readAt[room.key] || 0), roomTs);
   }
 
+  if (!next.last_from_uid && old.last_from_uid) next.last_from_uid = old.last_from_uid;
+  if (!next.last_from_name && old.last_from_name) next.last_from_name = old.last_from_name;
+
   delete next.incoming;
+  delete next.is_self;
   userState.rooms[room.key] = next;
   userState.updatedAt = Date.now();
   writeConversationState(store);
