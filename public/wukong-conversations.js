@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v4 - mobile, no SDK connect */
+/* Wukong independent conversation list v5 - mobile, NodeBB profile-first, windowed list */
 (function () {
   "use strict";
 
@@ -25,7 +25,9 @@
     remarks: {},
     roomSnapshots: {},
     touchX: 0,
-    touchY: 0
+    touchY: 0,
+    virtualItemHeight: 64,
+    virtualBuffer: 8
   };
 
   function ensureViewport() {
@@ -89,7 +91,7 @@
   }
 
   function storageKey() {
-    return "nbb_wukong_conversations_v4:" + (state.uid || "0");
+    return "nbb_wukong_conversations_v5:" + (state.uid || "0");
   }
 
   function loadLocal() {
@@ -100,6 +102,7 @@
       state.remarks = data.remarks || {};
       state.roomSnapshots = data.roomSnapshots || {};
       state.topics = data.topics || {};
+      state.users = data.users || {};
       var snapshots = state.roomSnapshots || {};
       state.rooms = Object.keys(snapshots).map(function (k) { return snapshots[k]; }).filter(Boolean);
     } catch (_) {}
@@ -116,7 +119,18 @@
           isTopic: r.isTopic,
           ts: r.ts,
           unread: r.unread,
-          text: r.text
+          text: r.text,
+          name: r.name,
+          username: r.username,
+          avatarUrl: r.avatarUrl,
+          icontext: r.icontext,
+          iconbgColor: r.iconbgColor,
+          country: r.country,
+          countryCode: r.countryCode,
+          countryFlagUrl: r.countryFlagUrl,
+          language_flag: r.language_flag,
+          publisher: r.publisher,
+          topicTitle: r.topicTitle
         };
       });
 
@@ -125,7 +139,8 @@
         pinnedRooms: state.pinnedRooms,
         remarks: state.remarks,
         roomSnapshots: snapshots,
-        topics: state.topics
+        topics: state.topics,
+        users: state.users
       }));
     } catch (_) {}
   }
@@ -141,6 +156,60 @@
       if (val !== undefined && val !== null && String(val).trim() !== "") return val;
     }
     return fallback;
+  }
+
+  function isUrlLike(value) {
+    return /^https?:\/\//i.test(String(value || ""));
+  }
+
+  function normalizeLanguageFlag(value) {
+    return String(value || "").trim();
+  }
+
+
+  function getDeep(obj, paths, fallback) {
+    for (var i = 0; i < paths.length; i++) {
+      var parts = String(paths[i]).split(".");
+      var cur = obj;
+      for (var j = 0; j < parts.length; j++) {
+        if (!cur || cur[parts[j]] === undefined || cur[parts[j]] === null) {
+          cur = undefined;
+          break;
+        }
+        cur = cur[parts[j]];
+      }
+      if (cur !== undefined && cur !== null && String(cur).trim() !== "") return cur;
+    }
+    return fallback;
+  }
+
+  function normalizeProfile(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    var uid = String(get(raw, ["uid", "id"], "") || "").trim();
+    return {
+      uid: uid,
+      username: String(get(raw, ["username", "userslug"], "") || ""),
+      userslug: String(get(raw, ["userslug", "username"], "") || ""),
+      displayname: String(get(raw, ["displayname", "displayName", "name", "username"], "") || ""),
+      picture: String(get(raw, ["picture", "avatarUrl", "avatar", "uploadedpicture"], "") || ""),
+      avatarUrl: String(get(raw, ["avatarUrl", "picture", "avatar", "uploadedpicture"], "") || ""),
+      icontext: String(get(raw, ["icontext", "iconText", "icon:text", "username"], "") || ""),
+      iconbgColor: String(get(raw, ["iconbgColor", "iconBgColor", "icon:bgColor"], "#dbeafe") || "#dbeafe"),
+      status: String(get(raw, ["status", "presence", "onlineStatus"], "") || ""),
+      online: raw.online === true || raw.isOnline === true,
+      language_flag: normalizeLanguageFlag(get(raw, ["language_flag"], "")),
+      country: normalizeLanguageFlag(get(raw, ["language_flag"], "")),
+      countryCode: normalizeLanguageFlag(get(raw, ["language_flag"], "")),
+      countryFlagUrl: isUrlLike(get(raw, ["language_flag"], "")) ? normalizeLanguageFlag(get(raw, ["language_flag"], "")) : ""
+    };
+  }
+
+  function conversationProfile(item) {
+    return normalizeProfile(getDeep(item, ["nbbUser", "nodebbUser", "user", "peer", "profile", "targetUser", "member"], null));
+  }
+
+  function publisherProfile(item) {
+    return normalizeProfile(getDeep(item, ["publisher", "lastPublisher", "author", "lastUser", "sender", "fromUser"], null));
   }
 
   function parseJsonMaybe(value) {
@@ -213,17 +282,33 @@
     var channelId = channelOf(item);
     if (!channelId) return null;
     var channelType = typeOf(item, channelId);
-    var id = channelType === 2 ? channelId : channelId.replace(/[^\d]/g, "");
+    var isTopic = channelType === 2 || channelId.indexOf("nbb_topic_") === 0;
+    var id = isTopic ? channelId : channelId.replace(/[^\d]/g, "");
     if (!id) id = channelId;
+
+    var profile = conversationProfile(item);
+    var publisher = publisherProfile(item);
+    var topic = getDeep(item, ["topic"], null) || {};
 
     return {
       id: String(id),
       channelId: channelId,
       channelType: channelType,
-      isTopic: channelType === 2 || channelId.indexOf("nbb_topic_") === 0,
+      isTopic: isTopic,
       ts: timestampOf(item) || now(),
       unread: unreadOf(item),
       text: parsePayloadText(payloadOf(item)),
+      name: String(get(item, ["displayName", "displayname", "name", "username", "title"], "") || (profile && profile.displayname) || (profile && profile.username) || ""),
+      username: String(get(item, ["username", "userslug"], "") || (profile && profile.username) || ""),
+      avatarUrl: String(get(item, ["avatarUrl", "picture", "avatar", "logo"], "") || (profile && (profile.avatarUrl || profile.picture)) || ""),
+      icontext: String(get(item, ["icontext", "iconText", "icon:text"], "") || (profile && profile.icontext) || ""),
+      iconbgColor: String(get(item, ["iconbgColor", "iconBgColor", "icon:bgColor"], "") || (profile && profile.iconbgColor) || "#dbeafe"),
+      language_flag: normalizeLanguageFlag(get(item, ["language_flag"], "") || (profile && profile.language_flag) || ""),
+      country: normalizeLanguageFlag(get(item, ["language_flag"], "") || (profile && profile.language_flag) || ""),
+      countryCode: normalizeLanguageFlag(get(item, ["language_flag"], "") || (profile && profile.language_flag) || ""),
+      countryFlagUrl: isUrlLike(get(item, ["language_flag"], "") || (profile && profile.language_flag)) ? normalizeLanguageFlag(get(item, ["language_flag"], "") || (profile && profile.language_flag) || "") : "",
+      publisher: publisher || item.publisher || null,
+      topicTitle: String(get(topic, ["title", "name"], "") || get(item, ["topicTitle", "title"], "") || ""),
       raw: item
     };
   }
@@ -316,7 +401,7 @@
       if (old) {
         if (!r.text && old.text) r.text = old.text;
         if (!r.ts && old.ts) r.ts = old.ts;
-        if (!r.unread && old.unread) r.unread = old.unread;
+        // Do not preserve old unread when server says 0. Server is the truth.
         map[k] = Object.assign(old, r);
       } else {
         map[k] = r;
@@ -400,9 +485,13 @@
     return "";
   }
 
-  function userCountry(u) {
+  function userLanguageFlag(u) {
     if (!u) return "";
-    return u.country || u.nationality || u.locationCountry || u["profile:country"] || u["custom:country"] || u.location || "";
+    return u.language_flag || "";
+  }
+
+  function userCountry(u) {
+    return userLanguageFlag(u);
   }
 
   function isOnlineUser(u) {
@@ -411,27 +500,40 @@
     return u.online === true || u.isOnline === true || st === "online";
   }
 
-  function userName(uid) {
-    var u = state.users[String(uid)];
-    return (state.remarks[uid] || (u && (u.displayname || u.username || u.userslug)) || ("User-" + uid));
+  function userName(uid, room) {
+    var u = state.users[String(uid)] || null;
+    return (
+      (room && room.name) ||
+      state.remarks[uid] ||
+      (u && (u.displayname || u.username || u.userslug)) ||
+      (uid ? ("User-" + uid) : t("unknown", "未知用户"))
+    );
   }
 
-  function avatar(uid) {
-    var u = state.users[String(uid)];
-    if (u && u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
-    var name = userName(uid);
-    var txt = String((u && (u.icontext || u.username)) || name || "?").charAt(0).toUpperCase();
-    var bg = (u && u.iconbgColor) || "#dbeafe";
+  function avatarFromProfile(profile, fallbackName) {
+    if (profile && (profile.avatarUrl || profile.picture)) {
+      return '<img src="' + esc(profile.avatarUrl || profile.picture) + '" alt="">';
+    }
+    var name = String(fallbackName || (profile && (profile.icontext || profile.username || profile.displayname)) || "?");
+    var txt = name.charAt(0).toUpperCase();
+    var bg = (profile && profile.iconbgColor) || "#dbeafe";
     return '<span style="background:' + esc(bg) + ';display:grid;place-items:center;">' + esc(txt) + '</span>';
+  }
+
+  function avatar(uid, room) {
+    if (room && room.isTopic && room.publisher) return avatarFromProfile(room.publisher, room.publisher.displayname || room.publisher.username || roomName(room));
+    if (room && room.avatarUrl) return '<img src="' + esc(room.avatarUrl) + '" alt="">';
+    var u = state.users[String(uid)];
+    return avatarFromProfile(u, userName(uid, room));
   }
 
   function roomName(room) {
     if (state.remarks[roomKey(room)]) return state.remarks[roomKey(room)];
     if (room.isTopic) {
       var tid = topicTid(room);
-      return (state.topics[tid] && state.topics[tid].title) || (t("topic", "聊天室") + " #" + tid);
+      return room.topicTitle || (state.topics[tid] && state.topics[tid].title) || (t("topic", "聊天室") + " #" + tid);
     }
-    return userName(room.id);
+    return userName(room.id, room);
   }
 
   function openUrl(room) {
@@ -496,18 +598,40 @@
       return;
     }
 
-    els.list.innerHTML = rooms.map(function (room) {
+    var itemHeight = state.virtualItemHeight || 64;
+    var scrollTop = els.listWrap ? els.listWrap.scrollTop : 0;
+    var viewport = els.listWrap ? els.listWrap.clientHeight : 0;
+    var useVirtual = rooms.length > 80 && viewport > 0;
+    var start = 0;
+    var end = rooms.length;
+    var topPad = 0;
+    var bottomPad = 0;
+
+    if (useVirtual) {
+      start = Math.max(0, Math.floor(scrollTop / itemHeight) - state.virtualBuffer);
+      end = Math.min(rooms.length, Math.ceil((scrollTop + viewport) / itemHeight) + state.virtualBuffer);
+      topPad = start * itemHeight;
+      bottomPad = Math.max(0, (rooms.length - end) * itemHeight);
+    }
+
+    var visibleRooms = rooms.slice(start, end);
+    var html = '';
+    if (topPad) html += '<li class="wkconv-spacer" style="height:' + topPad + 'px"></li>';
+    html += visibleRooms.map(function (room) {
       var key = roomKey(room);
       var pinned = !!state.pinnedRooms[key];
       var unread = Number(room.unread || 0);
       var name = roomName(room);
       var u = room.isTopic ? null : state.users[String(room.id)];
-      var flag = !room.isTopic ? flagEmoji(userCountry(u)) : "";
+      var pub = room.publisher || null;
+      var flagSource = room.isTopic ? (pub && (pub.language_flag || pub.countryFlagUrl || pub.countryCode || pub.country)) : (room.language_flag || room.countryFlagUrl || room.countryCode || room.country || userLanguageFlag(u));
+      var flag = isUrlLike(flagSource) ? "" : (flagEmoji(flagSource) || String(flagSource || ""));
+      var flagImg = isUrlLike(flagSource) ? '<img src="' + esc(flagSource) + '" alt="">' : esc(flag);
       var online = !room.isTopic && isOnlineUser(u);
-      return '<li class="wkconv-item' + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + (online ? " is-online" : "") + '" data-key="' + esc(key) + '">' +
+      return '<li class="wkconv-item' + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + (online ? " is-online" : "") + (room.isTopic ? " is-topic" : "") + '" data-key="' + esc(key) + '">' +
         '<div class="wkconv-avatar">' +
-          '<div class="wkconv-avatar-inner">' + (room.isTopic ? '<span>#</span>' : avatar(room.id)) + '</div>' +
-          '<span class="wkconv-online"></span><span class="wkconv-flag">' + esc(flag) + '</span>' +
+          '<div class="wkconv-avatar-inner">' + avatar(room.id, room) + '</div>' +
+          '<span class="wkconv-online"></span><span class="wkconv-flag">' + flagImg + '</span>' +
         '</div>' +
         '<div class="wkconv-main">' +
           '<div class="wkconv-top"><div class="wkconv-name">' + esc(name) + '</div><div class="wkconv-time">' + esc(fmtTime(room.ts)) + '</div></div>' +
@@ -515,6 +639,8 @@
         '</div>' +
       '</li>';
     }).join("");
+    if (bottomPad) html += '<li class="wkconv-spacer" style="height:' + bottomPad + 'px"></li>';
+    els.list.innerHTML = html;
   }
 
   function scheduleRender() {
@@ -601,6 +727,10 @@
       if (Math.abs(dx) > 58 && Math.abs(dx) > Math.abs(dy) * 1.4) {
         setTab(dx < 0 ? "rooms" : "direct");
       }
+    }, { passive: true });
+
+    els.listWrap.addEventListener("scroll", function () {
+      if (state.rooms.length > 80) scheduleRender();
     }, { passive: true });
 
     els.list.addEventListener("click", function (e) {
@@ -704,13 +834,18 @@
 
     await ensureToken().catch(function () {});
     loadLocal();
-    render();
+    // Do not immediately render incomplete local snapshots that only contain raw
+    // WuKong ids. If cached profiles exist, render instantly; otherwise keep the
+    // loading state until the first server-enriched sync returns.
+    if (Object.keys(state.users || {}).length || state.rooms.some(function (r) { return r.name || r.avatarUrl || (r.publisher && (r.publisher.avatarUrl || r.publisher.picture)); })) {
+      render();
+    }
 
     sync();
     startPoll();
 
     W.WukongConversations = {
-      version: "v4-mobile-no-sdk",
+      version: "v5-profile-first-windowed",
       sync: sync,
       setTab: setTab,
       dump: function () { return state; }
