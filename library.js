@@ -28,11 +28,19 @@ try {
 
 const user = require.main.require('./src/user');
 
+let topics = null;
+try {
+  topics = require.main.require('./src/topics');
+} catch (err) {
+  console.warn('[wukong-chat] topics module unavailable:', err.message);
+}
+
 const plugin = {};
 
 const PLUGIN_ROOT = __dirname;
 const ACTIVITY_FILE = path.join(PLUGIN_ROOT, 'topic-chat-activity.json');
 const NOTIFY_FILE = path.join(PLUGIN_ROOT, 'topic-chat-notify.json');
+const CONVERSATION_STATE_FILE = path.join(PLUGIN_ROOT, 'wukong-conversations-state.json');
 
 const DEFAULT_FORUM_URL = 'https://bbs.886.best';
 const DEFAULT_WK_HOST = 'http://172.17.0.1:5001';
@@ -165,6 +173,327 @@ function writeNotify(list) {
   writeJsonFile(NOTIFY_FILE, (list || []).slice(-5000));
 }
 
+function readConversationState() {
+  const data = readJsonFile(CONVERSATION_STATE_FILE, {});
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { users: {} };
+  data.users = data.users && typeof data.users === 'object' && !Array.isArray(data.users) ? data.users : {};
+  return data;
+}
+
+function writeConversationState(data) {
+  const safe = data && typeof data === 'object' ? data : { users: {} };
+  safe.users = safe.users && typeof safe.users === 'object' && !Array.isArray(safe.users) ? safe.users : {};
+  writeJsonFile(CONVERSATION_STATE_FILE, safe);
+}
+
+function getConversationUserState(store, uid) {
+  const id = String(uid || '').trim();
+  if (!store.users[id] || typeof store.users[id] !== 'object') {
+    store.users[id] = {
+      rooms: {},
+      readAt: {},
+      updatedAt: Date.now(),
+    };
+  }
+  const st = store.users[id];
+  st.rooms = st.rooms && typeof st.rooms === 'object' && !Array.isArray(st.rooms) ? st.rooms : {};
+  st.readAt = st.readAt && typeof st.readAt === 'object' && !Array.isArray(st.readAt) ? st.readAt : {};
+  return st;
+}
+
+function conversationRoomKey(channelId, channelType) {
+  return `${normalizeChannelType(channelType, 1)}:${String(channelId || '').trim()}`;
+}
+
+function conversationExtractList(data) {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.conversations)) return data.conversations;
+  if (data && Array.isArray(data.list)) return data.list;
+  if (data && Array.isArray(data.data)) return data.data;
+  if (data && data.data && Array.isArray(data.data.conversations)) return data.data.conversations;
+  if (data && data.data && Array.isArray(data.data.list)) return data.data.list;
+  return [];
+}
+
+function parseMaybeJson(value) {
+  if (value && typeof value === 'object') return value;
+  if (typeof value !== 'string') return value;
+  const s = value.trim();
+  if (!s) return '';
+  if (s.startsWith('{') || s.startsWith('[')) {
+    try {
+      return JSON.parse(s);
+    } catch (err) {
+      return value;
+    }
+  }
+  return value;
+}
+
+function conversationPayloadText(value) {
+  const raw = parseMaybeJson(value);
+  if (raw && typeof raw === 'object') {
+    const type = firstNonEmpty(raw.type, raw.content_type, raw.contentType, '');
+    const text = firstNonEmpty(raw.text, raw.content, raw.body, raw.msg, raw.message, '');
+    const url = firstNonEmpty(raw.url, raw.remoteUrl, raw.remote_url, raw.path, raw.src, '');
+
+    if (String(type) === '1006' || raw.revoke || raw.recalled) return '此消息已被撤回';
+    if (/image/i.test(String(type)) || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(String(url))) return '[图片]';
+    if (/video/i.test(String(type)) || /\.(mp4|webm|mov|m4v)(\?|$)/i.test(String(url))) return '[视频]';
+    if (/voice|audio/i.test(String(type)) || /\.(mp3|wav|ogg|aac|m4a)(\?|$)/i.test(String(url))) return '[语音]';
+    return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  }
+
+  const s = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  if (/!\[[^\]]*\]\([^)]+\)/.test(s)) return '[图片]';
+  if (/\[(?:视频|video)\]\([^)]+\)/i.test(s)) return '[视频]';
+  if (/\[(?:语音消息|voice|audio)\]\([^)]+\)/i.test(s)) return '[语音]';
+  return s.slice(0, 200);
+}
+
+function conversationChannelId(item) {
+  let channel = firstNonEmpty(item.channel_id, item.channelId, item.channelID, item.channel, '');
+  if (channel && typeof channel === 'object') {
+    channel = firstNonEmpty(channel.channel_id, channel.channelId, channel.channelID, channel.id, '');
+  }
+  return String(channel || '').trim();
+}
+
+function conversationTimestamp(item) {
+  let n = Number(firstNonEmpty(
+    item.last_msg_at,
+    item.lastMsgAt,
+    item.last_message_at,
+    item.timestamp,
+    item.updated_at,
+    item.updatedAt,
+    item.time,
+    item.created_at,
+    item.createdAt,
+    item.lastTimestamp,
+    item.last_timestamp,
+    0
+  ));
+  if (n && n < 10000000000) n *= 1000;
+  return n || 0;
+}
+
+function conversationPayload(item) {
+  return firstNonEmpty(
+    item.last_msg,
+    item.lastMsg,
+    item.last_message,
+    item.lastMessage,
+    item.message,
+    item.payload,
+    item.content,
+    item.text,
+    item.body,
+    item.msg,
+    ''
+  );
+}
+
+function normalizeConversationItem(item, currentUid) {
+  const channelId = conversationChannelId(item);
+  if (!channelId) return null;
+
+  const defaultType = channelId.startsWith(TOPIC_CHANNEL_PREFIX) ? TOPIC_CHANNEL_TYPE : 1;
+  const channelType = normalizeChannelType(firstNonEmpty(item.channel_type, item.channelType, defaultType), defaultType);
+  const isTopic = channelType === TOPIC_CHANNEL_TYPE || channelId.startsWith(TOPIC_CHANNEL_PREFIX);
+  const peerUid = isTopic ? '' : channelId.replace(/[^\d]/g, '');
+  const tid = isTopic ? topicIdFromChannelId(channelId) : '';
+  const text = conversationPayloadText(conversationPayload(item));
+  const ts = conversationTimestamp(item) || Date.now();
+  const unread = clampInt(firstNonEmpty(item.unread, item.unread_count, item.unreadCount, item.unread_cnt, 0), 0, 999999, 0);
+
+  return {
+    key: conversationRoomKey(channelId, channelType),
+    channel_id: channelId,
+    channel_type: channelType,
+    is_topic: isTopic,
+    peer_uid: peerUid,
+    tid,
+    ts,
+    unread,
+    text,
+  };
+}
+
+async function getTopicPublic(tid) {
+  tid = String(tid || '').trim();
+  if (!/^\d+$/.test(tid) || !topics || !topics.getTopicFields) return null;
+
+  try {
+    const fields = await topics.getTopicFields(tid, [
+      'tid',
+      'uid',
+      'cid',
+      'title',
+      'slug',
+      'timestamp',
+      'lastposttime',
+    ]);
+
+    if (!fields || !fields.tid) return null;
+
+    const posterUid = String(fields.uid || '').trim();
+    const poster = posterUid ? await fetchNodeBBUserPublic(posterUid) : null;
+
+    return {
+      tid: String(fields.tid),
+      cid: String(fields.cid || ''),
+      title: firstNonEmpty(fields.title, `聊天室 #${tid}`),
+      slug: firstNonEmpty(fields.slug),
+      uid: posterUid,
+      poster,
+      timestamp: Number(fields.timestamp || 0),
+      lastposttime: Number(fields.lastposttime || 0),
+    };
+  } catch (err) {
+    console.warn('[wukong-chat] get topic failed:', tid, err.message);
+    return null;
+  }
+}
+
+async function buildConversationListForUser(current, rawData) {
+  const uid = String(current.uid);
+  const store = readConversationState();
+  const userState = getConversationUserState(store, uid);
+  const incoming = conversationExtractList(rawData).map(item => normalizeConversationItem(item, uid)).filter(Boolean);
+
+  for (const room of incoming) {
+    const old = userState.rooms[room.key] && typeof userState.rooms[room.key] === 'object' ? userState.rooms[room.key] : {};
+
+    if (!room.text && old.text) room.text = old.text;
+    if (!room.ts && old.ts) room.ts = old.ts;
+
+    const readAt = Number(userState.readAt[room.key] || 0);
+    if (readAt && Number(room.ts || 0) <= readAt) room.unread = 0;
+    if (!room.unread && old.unread && Number(room.ts || 0) > readAt) room.unread = old.unread;
+
+    userState.rooms[room.key] = {
+      ...old,
+      ...room,
+      updated_at: Date.now(),
+    };
+  }
+
+  userState.updatedAt = Date.now();
+
+  const rooms = Object.values(userState.rooms)
+    .filter(room => room && room.channel_id)
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))
+    .slice(0, 500);
+
+  const directUids = rooms
+    .filter(room => !room.is_topic && /^\d+$/.test(String(room.peer_uid || '')))
+    .map(room => String(room.peer_uid))
+    .filter((x, i, arr) => arr.indexOf(x) === i)
+    .slice(0, 100);
+
+  const topicTids = rooms
+    .filter(room => room.is_topic && /^\d+$/.test(String(room.tid || '')))
+    .map(room => String(room.tid))
+    .filter((x, i, arr) => arr.indexOf(x) === i)
+    .slice(0, 100);
+
+  const users = {};
+  for (const directUid of directUids) {
+    const u = await fetchNodeBBUserPublic(directUid);
+    if (u) users[directUid] = u;
+  }
+
+  const topicMap = {};
+  for (const tid of topicTids) {
+    const topic = await getTopicPublic(tid);
+    if (topic) {
+      topicMap[tid] = topic;
+      if (topic.poster && topic.poster.uid) users[String(topic.poster.uid)] = topic.poster;
+    }
+  }
+
+  writeConversationState(store);
+
+  return {
+    ok: true,
+    rooms,
+    users,
+    topics: topicMap,
+    serverTime: Date.now(),
+  };
+}
+
+function normalizeConversationUpsertBody(body, currentUid) {
+  const channelId = String(firstNonEmpty(body.channel_id, body.channelId, '')).trim();
+  const defaultType = channelId.startsWith(TOPIC_CHANNEL_PREFIX) ? TOPIC_CHANNEL_TYPE : 1;
+  const channelType = normalizeChannelType(firstNonEmpty(body.channel_type, body.channelType, defaultType), defaultType);
+  const isTopic = channelType === TOPIC_CHANNEL_TYPE || channelId.startsWith(TOPIC_CHANNEL_PREFIX);
+  const peerUid = isTopic ? '' : channelId.replace(/[^\d]/g, '');
+  const tid = isTopic ? topicIdFromChannelId(channelId) : '';
+
+  if (!channelId) return null;
+  if (!isTopic && !peerUid) return null;
+
+  return {
+    key: conversationRoomKey(channelId, channelType),
+    channel_id: channelId,
+    channel_type: channelType,
+    is_topic: isTopic,
+    peer_uid: peerUid,
+    tid,
+    ts: Number(body.ts || body.timestamp || Date.now()) || Date.now(),
+    text: conversationPayloadText(firstNonEmpty(body.text, body.last_msg, body.lastMsg, body.payload, '')),
+    incoming: !!body.incoming,
+  };
+}
+
+function upsertConversationForUser(uid, room) {
+  const store = readConversationState();
+  const userState = getConversationUserState(store, uid);
+  const old = userState.rooms[room.key] && typeof userState.rooms[room.key] === 'object' ? userState.rooms[room.key] : {};
+  const readAt = Number(userState.readAt[room.key] || 0);
+
+  const next = {
+    ...old,
+    ...room,
+    unread: room.incoming && Number(room.ts || 0) > readAt ? Number(old.unread || 0) + 1 : Number(old.unread || 0),
+    updated_at: Date.now(),
+  };
+
+  if (!room.text && old.text) next.text = old.text;
+  if (!next.incoming && Number(next.ts || 0) <= readAt) next.unread = 0;
+
+  delete next.incoming;
+  userState.rooms[room.key] = next;
+  userState.updatedAt = Date.now();
+  writeConversationState(store);
+
+  return next;
+}
+
+function markConversationRead(uid, channelId, channelType) {
+  const store = readConversationState();
+  const userState = getConversationUserState(store, uid);
+  const key = conversationRoomKey(channelId, channelType);
+  const nowTs = Date.now();
+
+  userState.readAt[key] = nowTs;
+  if (userState.rooms[key]) {
+    userState.rooms[key].unread = 0;
+    userState.rooms[key].read_at = nowTs;
+    userState.rooms[key].updated_at = nowTs;
+  }
+
+  userState.updatedAt = nowTs;
+  writeConversationState(store);
+
+  return userState.rooms[key] || { key, channel_id: channelId, channel_type: channelType, unread: 0, read_at: nowTs };
+}
+
+
+
 async function fetchJson(url, options = {}, timeoutMs = 8000) {
   if (typeof fetch !== 'function') {
     throw new Error('global_fetch_not_available');
@@ -256,8 +585,6 @@ async function getNodeBBUserByUid(uid) {
     'icon:bgColor',
     'status',
     'language',
-    // Custom NodeBB user field used by this forum for the user's country / flag.
-    // It may be a two-letter country code (for emoji flags), an emoji, or an image URL.
     'language_flag',
   ]);
 
@@ -275,9 +602,6 @@ async function getNodeBBUserByUid(uid) {
     status: firstNonEmpty(fields.status),
     language: firstNonEmpty(fields.language),
     language_flag: firstNonEmpty(fields.language_flag),
-    country: firstNonEmpty(fields.language_flag),
-    countryCode: firstNonEmpty(fields.language_flag),
-    countryFlagUrl: /^https?:\/\//i.test(String(firstNonEmpty(fields.language_flag))) ? firstNonEmpty(fields.language_flag) : '',
   };
 }
 
@@ -314,148 +638,6 @@ async function fetchNodeBBUserPublic(uid) {
   });
 
   return u;
-}
-
-
-function getObjectValue(obj, keys, fallback = '') {
-  for (const key of keys) {
-    if (!obj || obj[key] === undefined || obj[key] === null) continue;
-    const value = obj[key];
-    if (typeof value === 'string' && !value.trim()) continue;
-    return value;
-  }
-  return fallback;
-}
-
-function extractConversationList(data) {
-  if (Array.isArray(data)) return { list: data, path: 'root' };
-  if (!data || typeof data !== 'object') return { list: [], path: '' };
-
-  if (Array.isArray(data.conversations)) return { list: data.conversations, path: 'conversations' };
-  if (Array.isArray(data.list)) return { list: data.list, path: 'list' };
-  if (Array.isArray(data.data)) return { list: data.data, path: 'data' };
-  if (data.data && Array.isArray(data.data.conversations)) return { list: data.data.conversations, path: 'data.conversations' };
-  if (data.data && Array.isArray(data.data.list)) return { list: data.data.list, path: 'data.list' };
-
-  return { list: [], path: '' };
-}
-
-function setConversationList(data, pathName, list) {
-  if (Array.isArray(data)) return list;
-  const out = data && typeof data === 'object' ? { ...data } : {};
-
-  if (pathName === 'conversations') out.conversations = list;
-  else if (pathName === 'list') out.list = list;
-  else if (pathName === 'data') out.data = list;
-  else if (pathName === 'data.conversations') out.data = { ...(out.data || {}), conversations: list };
-  else if (pathName === 'data.list') out.data = { ...(out.data || {}), list };
-
-  // Also expose a normalized top-level list for old clients. This does not remove
-  // the original WuKongIM response shape.
-  out.conversations = list;
-  return out;
-}
-
-function channelIdOfConversation(item) {
-  let ch = getObjectValue(item, ['channel_id', 'channelId', 'channelID', 'channel'], '');
-  if (ch && typeof ch === 'object') ch = getObjectValue(ch, ['channel_id', 'channelId', 'channelID', 'id'], '');
-  return String(ch || '').trim();
-}
-
-function channelTypeOfConversation(item, channelId) {
-  const raw = getObjectValue(item, ['channel_type', 'channelType'], '');
-  const n = toInt(raw, channelId && String(channelId).startsWith(TOPIC_CHANNEL_PREFIX) ? TOPIC_CHANNEL_TYPE : 1);
-  return normalizeChannelType(n, 1);
-}
-
-function publicUserForConversation(u) {
-  if (!u) return null;
-  return {
-    uid: String(u.uid),
-    username: u.username || '',
-    userslug: u.userslug || '',
-    displayname: u.displayname || u.username || '',
-    avatarUrl: u.picture || '',
-    picture: u.picture || '',
-    icontext: u.icontext || '',
-    iconbgColor: u.iconbgColor || '#72a5f2',
-    status: u.status || '',
-    country: u.country || '',
-    countryCode: u.countryCode || '',
-    countryFlagUrl: u.countryFlagUrl || '',
-    language_flag: u.language_flag || '',
-  };
-}
-
-async function enrichConversationSyncData(data, currentUid) {
-  const found = extractConversationList(data);
-  if (!found.list.length) return data;
-
-  const activity = readActivity();
-
-  const enriched = [];
-  for (const item of found.list) {
-    if (!item || typeof item !== 'object') {
-      enriched.push(item);
-      continue;
-    }
-
-    const channelId = channelIdOfConversation(item);
-    const channelType = channelTypeOfConversation(item, channelId);
-    const row = { ...item };
-
-    if (channelType === 1) {
-      // In this deployment WuKong uid == NodeBB uid. Enrich direct chats here so
-      // the mobile list does not briefly render raw WuKong IDs or letter avatars.
-      const peerUid = channelId.replace(/[^0-9]/g, '');
-      if (peerUid && peerUid !== String(currentUid || '')) {
-        const u = await fetchNodeBBUserPublic(peerUid);
-        const profile = publicUserForConversation(u);
-        if (profile) {
-          row.nbbUser = profile;
-          row.user = profile;
-          row.displayName = profile.displayname || profile.username;
-          row.username = profile.username;
-          row.avatarUrl = profile.avatarUrl;
-          row.picture = profile.picture;
-          row.icontext = profile.icontext;
-          row.iconbgColor = profile.iconbgColor;
-          row.country = profile.country;
-          row.countryCode = profile.countryCode;
-          row.countryFlagUrl = profile.countryFlagUrl;
-          row.language_flag = profile.language_flag;
-        }
-      }
-    } else if (channelType === TOPIC_CHANNEL_TYPE || channelId.startsWith(TOPIC_CHANNEL_PREFIX)) {
-      const tid = topicIdFromChannelId(channelId);
-      const topicActivity = tid ? activity[tid] : null;
-      const publisherUid = String(
-        getObjectValue(row, ['publisher_uid', 'publisherUid', 'last_chat_uid', 'lastChatUid', 'from_uid', 'fromUID'], '') ||
-        (topicActivity && topicActivity.last_chat_uid) ||
-        ''
-      ).replace(/[^0-9]/g, '');
-
-      if (publisherUid) {
-        const u = await fetchNodeBBUserPublic(publisherUid);
-        const profile = publicUserForConversation(u);
-        if (profile) row.publisher = profile;
-      }
-
-      if (topicActivity) {
-        row.topic = {
-          tid,
-          title: topicActivity.title || '',
-          cid: topicActivity.cid || '',
-        };
-        if (!row.last_msg && topicActivity.last_chat_text) row.last_msg = topicActivity.last_chat_text;
-        if (!row.last_msg_at && topicActivity.last_chat_at) row.last_msg_at = topicActivity.last_chat_at;
-      }
-    }
-
-    enriched.push(row);
-  }
-
-  return setConversationList(data, found.path, enriched);
 }
 
 async function provisionWukongUser(uid, username, token, source = 'unknown') {
@@ -929,9 +1111,59 @@ function registerApiRoutes(router, middleware) {
     };
 
     const data = await wkPostAny(['/conversation/sync', '/v1/conversation/sync'], payload, 5000, []);
-    const enriched = await enrichConversationSyncData(data, current.uid);
-    res.json(enriched);
+    res.json(data);
   }));
+
+
+  router.post(`${api}/conversations/list`, ensureLogin, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ error: 'unauthorized' });
+
+    let rawData = [];
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const payload = {
+        uid: String(current.uid),
+        version: clampInt(body.version, 0, 999999999, 0),
+        msg_count: clampInt(body.msg_count || body.msgCount, 1, 100, 1),
+      };
+      rawData = await wkPostAny(['/conversation/sync', '/v1/conversation/sync'], payload, 5000, []);
+    } catch (err) {
+      console.warn('[wukong-chat] conversation list sync failed, using local cache:', err.message);
+    }
+
+    const data = await buildConversationListForUser(current, rawData);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(data);
+  }));
+
+  router.post(`${api}/conversations/upsert`, ensureLogin, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ error: 'unauthorized' });
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const room = normalizeConversationUpsertBody(body, current.uid);
+    if (!room) return res.status(400).json({ error: 'invalid_conversation' });
+
+    const saved = upsertConversationForUser(String(current.uid), room);
+    res.json({ ok: true, room: saved });
+  }));
+
+  router.post(`${api}/conversations/read`, ensureLogin, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ error: 'unauthorized' });
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const channelId = String(firstNonEmpty(body.channel_id, body.channelId, '')).trim();
+    if (!channelId) return res.status(400).json({ error: 'missing_channel_id' });
+
+    const defaultType = channelId.startsWith(TOPIC_CHANNEL_PREFIX) ? TOPIC_CHANNEL_TYPE : 1;
+    const channelType = normalizeChannelType(firstNonEmpty(body.channel_type, body.channelType, defaultType), defaultType);
+    const room = markConversationRead(String(current.uid), channelId, channelType);
+
+    res.json({ ok: true, room });
+  }));
+
 
   router.post(`${api}/topic-channel/ensure`, ensureLogin, asyncHandler(async (req, res) => {
     const current = await getCurrentUser(req);
