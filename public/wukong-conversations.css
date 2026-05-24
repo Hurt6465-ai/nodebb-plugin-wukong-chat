@@ -67,6 +67,11 @@ body.wkconv-page {
   min-height: 44px;
 }
 
+.wkconv-drawer-open {
+  margin-left: auto;       /* 推到最右边 */
+}
+
+
 .wkconv-tab {
   appearance: none;
   border: 0;
@@ -156,8 +161,8 @@ body.wkconv-page {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 70px;
-  padding: 7px 18px;
+  min-height: 62px;
+  padding: 4px 18px;
   border-radius: 0;
   background: transparent;
   border: 0;
