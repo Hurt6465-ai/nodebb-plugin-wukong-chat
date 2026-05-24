@@ -36,22 +36,34 @@
     return text.slice(0, 180);
   }
 
-  function upsert(text, incoming) {
+  function upsert(text, incoming, extra) {
+    extra = extra || {};
     var ch = channelInfo();
     if (!ch.channelId) return;
     text = previewFromText(text);
     if (!text) return;
+
+    var selfUid = getSelfUid();
+    var isSelf = extra.is_self !== undefined ? !!extra.is_self : !incoming;
+    var eventId = String(extra.event_id || extra.eventId || "");
+    if (!eventId) {
+      eventId = "local:" + ch.channelType + ":" + ch.channelId + ":" + (isSelf ? "self" : "peer") + ":" + Date.now() + ":" + text.slice(0, 40);
+    }
 
     fetch(apiBase() + "/conversations/upsert", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
-        channel_id: ch.channelId,
-        channel_type: ch.channelType,
-        ts: Date.now(),
+        channel_id: extra.channel_id || ch.channelId,
+        channel_type: extra.channel_type || ch.channelType,
+        ts: extra.ts || Date.now(),
         text: text,
-        incoming: !!incoming
+        incoming: !!incoming && !isSelf,
+        is_self: isSelf,
+        event_id: eventId,
+        last_from_uid: extra.last_from_uid || (isSelf ? selfUid : ""),
+        last_from_name: extra.last_from_name || (isSelf ? "我" : "")
       })
     }).catch(function () {});
   }
@@ -136,6 +148,7 @@
                   text: text,
                   incoming: false,
                   is_self: true,
+                  event_id: String((ret && (ret.messageID || ret.messageId || ret.clientMsgNo || ret.clientSeq)) || ("sdk:" + ch.channelType + ":" + ch.channelId + ":" + Date.now() + ":" + text.slice(0, 40))),
                   last_from_uid: getSelfUid(),
                   last_from_name: "我"
                 })
