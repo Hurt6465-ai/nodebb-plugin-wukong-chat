@@ -1,5 +1,6 @@
-<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=5">
-<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.css?v=5">
+<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversation-sidebar-links.js?v=1">
+<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=6">
+<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.css?v=6">
 
 <div id="nodebb-wukong-conversations-root" class="wkconv-root" data-wkconv-root="1">
   <div class="wkconv-loading">正在加载消息...</div>
@@ -23,8 +24,11 @@
     wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1",
     i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
     maxConversations: 500,
-    openTopicPage: true
+    openTopicPage: true,
+    virtualOverscan: 10,
+    defaultRowHeight: 58
   });
 })();
 </script>
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=5"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversation-sidebar-links.js?v=1"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=6"></script>
