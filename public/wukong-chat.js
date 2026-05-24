@@ -1936,6 +1936,20 @@
     });
 
     newMsg.serverText = text;
+    try {
+      if (window.NBBWukongConversationUpsert) {
+        window.NBBWukongConversationUpsert(displayText, false, {
+          is_self: true,
+          ts: Date.now(),
+          event_id: "chat:" + (state.channelId || getPeerUid() || "") + ":" + Date.now() + ":" + String(displayText || "").slice(0, 40),
+          last_from_uid: getSelfUid(),
+          last_from_name: "我"
+        });
+      }
+    } catch (e) {
+      warn("conversation-upsert-self", e);
+    }
+
 
     markPendingNativeText(text, newMsg.id);
 
