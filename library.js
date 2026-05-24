@@ -63,6 +63,7 @@ const TOPIC_CHANNEL_PREFIX = 'nbb_topic_';
 const USER_PROFILE_CACHE_TTL_MS = Number(process.env.USER_PROFILE_CACHE_TTL_MS || 30 * 24 * 60 * 60 * 1000);
 const PRESENCE_TTL_MS = 45000;
 const MEDIA_TTL_MS = Number(process.env.WK_MEDIA_TTL_MS || 48 * 60 * 60 * 1000);
+const TOPIC_CONVERSATION_IDLE_DELETE_MS = Number(process.env.WK_TOPIC_CONVERSATION_IDLE_DELETE_MS || 24 * 60 * 60 * 1000);
 const MEDIA_UPLOAD_DIR = path.resolve(PLUGIN_ROOT, '../../public/uploads/wukong-chat');
 const MEDIA_PUBLIC_PREFIX = '/assets/uploads/wukong-chat';
 const MEDIA_CLEANUP_TZ_OFFSET_MS = Number(process.env.WK_MEDIA_CLEANUP_TZ_OFFSET_MS || 8 * 60 * 60 * 1000);
@@ -295,6 +296,16 @@ function conversationPayload(item) {
   );
 }
 
+
+function isExpiredTopicConversation(room, nowMs = Date.now()) {
+  if (!room || !room.is_topic) return false;
+  const ttl = Number(TOPIC_CONVERSATION_IDLE_DELETE_MS || 0);
+  if (!ttl) return false;
+  const ts = Number(room.ts || room.updated_at || room.last_chat_at || 0);
+  if (!ts) return false;
+  return nowMs - ts > ttl;
+}
+
 function normalizeConversationItem(item, currentUid) {
   const channelId = conversationChannelId(item);
   if (!channelId) return null;
@@ -382,8 +393,16 @@ async function buildConversationListForUser(current, rawData) {
 
   userState.updatedAt = Date.now();
 
+  const nowForTopicCleanup = Date.now();
+  for (const [key, room] of Object.entries(userState.rooms)) {
+    if (isExpiredTopicConversation(room, nowForTopicCleanup)) {
+      delete userState.rooms[key];
+      delete userState.readAt[key];
+    }
+  }
+
   const rooms = Object.values(userState.rooms)
-    .filter(room => room && room.channel_id)
+    .filter(room => room && room.channel_id && !isExpiredTopicConversation(room, nowForTopicCleanup))
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))
     .slice(0, 500);
 
@@ -454,16 +473,23 @@ function upsertConversationForUser(uid, room) {
   const userState = getConversationUserState(store, uid);
   const old = userState.rooms[room.key] && typeof userState.rooms[room.key] === 'object' ? userState.rooms[room.key] : {};
   const readAt = Number(userState.readAt[room.key] || 0);
+  const roomTs = Number(room.ts || Date.now());
 
   const next = {
     ...old,
     ...room,
-    unread: room.incoming && Number(room.ts || 0) > readAt ? Number(old.unread || 0) + 1 : Number(old.unread || 0),
+    ts: roomTs,
+    unread: room.incoming && roomTs > readAt ? Number(old.unread || 0) + 1 : Number(old.unread || 0),
     updated_at: Date.now(),
   };
 
   if (!room.text && old.text) next.text = old.text;
-  if (!next.incoming && Number(next.ts || 0) <= readAt) next.unread = 0;
+
+  // Own messages must still update the last-message preview, but must not add unread.
+  if (!room.incoming) {
+    next.unread = 0;
+    userState.readAt[room.key] = Math.max(Number(userState.readAt[room.key] || 0), roomTs);
+  }
 
   delete next.incoming;
   userState.rooms[room.key] = next;
@@ -977,6 +1003,7 @@ function registerApiRoutes(router, middleware) {
       sync_user: SYNC_WUKONG_USER,
       time: new Date().toISOString(),
       media_ttl_ms: MEDIA_TTL_MS,
+      topic_conversation_idle_delete_ms: TOPIC_CONVERSATION_IDLE_DELETE_MS,
       media_cleanup: {
         hour_beijing: MEDIA_CLEANUP_HOUR,
         jitter_ms: MEDIA_CLEANUP_JITTER_MS,
