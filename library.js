@@ -35,6 +35,20 @@ try {
   console.warn('[wukong-chat] topics module unavailable:', err.message);
 }
 
+let posts = null;
+try {
+  posts = require.main.require('./src/posts');
+} catch (err) {
+  console.warn('[wukong-chat] posts module unavailable:', err.message);
+}
+
+let db = null;
+try {
+  db = require.main.require('./src/database');
+} catch (err) {
+  console.warn('[wukong-chat] database module unavailable:', err.message);
+}
+
 const plugin = {};
 
 const PLUGIN_ROOT = __dirname;
@@ -457,6 +471,8 @@ function normalizeConversationItem(item, currentUid) {
     text,
     last_from_uid: lastFromUid,
     last_from_name: lastFromName,
+    unread_abs: true,
+    event_id: String(firstNonEmpty(item.event_id, item.eventId, item.message_id, item.messageId, item.client_msg_no, item.clientMsgNo, '') || '').trim(),
   };
 }
 
@@ -615,6 +631,22 @@ async function buildConversationListForUser(current, rawData) {
   for (const tid of topicTids) {
     const topic = await getTopicPublic(tid);
     if (topic) {
+      const roomForTopic = rooms.find(r => String(r.tid || '') === String(tid));
+      const extraParticipantUids = Array.isArray(roomForTopic && roomForTopic.participant_uids) ? roomForTopic.participant_uids : [];
+      const extraMembers = [];
+      for (const memberUid of extraParticipantUids) {
+        const member = await fetchNodeBBUserPublic(memberUid);
+        if (member) extraMembers.push(member);
+      }
+      const mergedMembers = [];
+      const seenMemberUids = new Set();
+      for (const member of [...extraMembers, ...(Array.isArray(topic.members) ? topic.members : []), topic.poster].filter(Boolean)) {
+        const mid = String(member.uid || member.picture || member.username || '');
+        if (!mid || seenMemberUids.has(mid)) continue;
+        seenMemberUids.add(mid);
+        mergedMembers.push(member);
+      }
+      topic.members = mergedMembers.slice(0, 4);
       topicMap[tid] = topic;
       if (topic.poster && topic.poster.uid) users[String(topic.poster.uid)] = topic.poster;
       if (Array.isArray(topic.members)) {
@@ -634,6 +666,35 @@ async function buildConversationListForUser(current, rawData) {
     topics: topicMap,
     serverTime: Date.now(),
   };
+}
+
+
+function conversationEventId(body) {
+  const raw = firstNonEmpty(
+    body.event_id,
+    body.eventId,
+    body.message_id,
+    body.messageId,
+    body.messageID,
+    body.client_msg_no,
+    body.clientMsgNo,
+    body.clientMsgNO,
+    body.client_seq,
+    body.clientSeq,
+    ''
+  );
+  const s = String(raw || '').trim();
+  if (s) return s.slice(0, 160);
+
+  const channelId = String(firstNonEmpty(body.channel_id, body.channelId, '')).trim();
+  const channelType = String(firstNonEmpty(body.channel_type, body.channelType, '')).trim();
+  const ts = Number(body.ts || body.timestamp || 0);
+  const bucket = ts ? Math.floor(ts / 5000) : 0;
+  const text = conversationPayloadText(firstNonEmpty(body.text, body.last_msg, body.lastMsg, body.payload, '')).slice(0, 80);
+  const from = String(firstNonEmpty(body.last_from_uid, body.lastFromUid, body.from_uid, body.fromUid, body.fromUID, '')).trim();
+  const incoming = /^(1|true|yes)$/i.test(String(body.incoming || '')) ? 'in' : 'out';
+  if (channelId && text) return crypto.createHash('sha1').update([channelType, channelId, incoming, from, bucket, text].join('|')).digest('hex');
+  return '';
 }
 
 function normalizeConversationUpsertBody(body, currentUid) {
@@ -663,6 +724,9 @@ function normalizeConversationUpsertBody(body, currentUid) {
     last_from_uid: lastFromUid,
     last_from_name: lastFromName,
     is_self: /^(1|true|yes)$/i.test(String(body.is_self || body.self || '')),
+    event_id: conversationEventId(body),
+    unread_abs: /^(1|true|yes)$/i.test(String(body.unread_abs || body.unreadAbs || '')),
+    unread: clampInt(firstNonEmpty(body.unread, body.unread_count, body.unreadCount, 0), 0, 999999, 0),
   };
 }
 
@@ -672,28 +736,50 @@ function upsertConversationForUser(uid, room) {
   const old = userState.rooms[room.key] && typeof userState.rooms[room.key] === 'object' ? userState.rooms[room.key] : {};
   const readAt = Number(userState.readAt[room.key] || 0);
   const roomTs = Number(room.ts || Date.now());
+  const isSelf = !!room.is_self || (!room.incoming && String(room.last_from_uid || '') === String(uid));
+  const eventId = String(room.event_id || '').trim();
+
+  const recent = Array.isArray(old.recent_event_ids) ? old.recent_event_ids.slice(-40) : [];
+  const duplicate = !!eventId && recent.includes(eventId);
+  if (eventId && !duplicate) recent.push(eventId);
+
+  let nextUnread = Number(old.unread || 0);
+  if (isSelf) {
+    nextUnread = 0;
+    userState.readAt[room.key] = Math.max(Number(userState.readAt[room.key] || 0), roomTs);
+  } else if (room.unread_abs) {
+    nextUnread = Number(room.unread || 0);
+  } else if (room.incoming && roomTs > readAt && !duplicate) {
+    nextUnread += 1;
+  }
 
   const next = {
     ...old,
     ...room,
     ts: roomTs,
-    unread: room.incoming && roomTs > readAt ? Number(old.unread || 0) + 1 : Number(old.unread || 0),
+    unread: Math.max(0, Math.min(999999, nextUnread)),
+    recent_event_ids: recent.slice(-40),
     updated_at: Date.now(),
   };
 
   if (!room.text && old.text) next.text = old.text;
-
-  // Own messages must still update the last-message preview, but must not add unread.
-  if (!room.incoming || room.is_self) {
-    next.unread = 0;
-    userState.readAt[room.key] = Math.max(Number(userState.readAt[room.key] || 0), roomTs);
-  }
-
   if (!next.last_from_uid && old.last_from_uid) next.last_from_uid = old.last_from_uid;
   if (!next.last_from_name && old.last_from_name) next.last_from_name = old.last_from_name;
 
+  if (room.is_topic && /^\d+$/.test(String(room.last_from_uid || ''))) {
+    const participants = Array.isArray(old.participant_uids) ? old.participant_uids.slice(0) : [];
+    const senderUid = String(room.last_from_uid);
+    if (!participants.includes(senderUid)) participants.unshift(senderUid);
+    const posterUid = String(old.uid || old.poster_uid || '');
+    if (posterUid && !participants.includes(posterUid)) participants.push(posterUid);
+    next.participant_uids = participants.slice(0, 12);
+  }
+
   delete next.incoming;
   delete next.is_self;
+  delete next.unread_abs;
+  delete next.event_id;
+
   userState.rooms[room.key] = next;
   userState.updatedAt = Date.now();
   writeConversationState(store);
