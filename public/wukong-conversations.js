@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v6 - virtual list + drawer */
+/* Wukong independent conversation list v9 - compact drawer + better preview */
 (function () {
   "use strict";
 
@@ -30,6 +30,9 @@
     touchY: 0,
     edgeTouchX: 0,
     edgeTouchY: 0,
+    drawerDragging: false,
+    drawerStartX: 0,
+    drawerCurrentX: 0,
     messageListener: null,
     conversationListener: null,
     connectListener: null,
@@ -41,7 +44,7 @@
       end: 0,
       top: 0,
       bottom: 0,
-      avg: 66
+      avg: 70
     }
   };
 
@@ -69,7 +72,7 @@
       maxConversations: 500,
       openTopicPage: true,
       virtualOverscan: 10,
-      defaultRowHeight: 66
+      defaultRowHeight: 70
     }, (W.NBBWukongConversations && W.NBBWukongConversations.config) || {});
   }
 
@@ -278,6 +281,11 @@
           if (data.topics[tid].poster && data.topics[tid].poster.uid) {
             state.users[String(data.topics[tid].poster.uid)] = data.topics[tid].poster;
           }
+          if (Array.isArray(data.topics[tid].members)) {
+            data.topics[tid].members.forEach(function (u) {
+              if (u && u.uid) state.users[String(u.uid)] = u;
+            });
+          }
         }
       });
     }
@@ -340,7 +348,10 @@
       ts: ts,
       text: text || t("message", "[消息]"),
       unread: incoming ? 1 : 0,
-      incoming: incoming
+      incoming: incoming,
+      last_from_uid: fromUid || (incoming ? "" : self),
+      last_from_name: incoming ? userName(fromUid) : "我",
+      is_self: !incoming
     };
   }
 
@@ -358,9 +369,11 @@
     if (old) {
       old.ts = room.ts || old.ts || now();
       if (room.text) old.text = room.text;
-      old.unread = Number(old.unread || 0) + Number(room.unread || 0);
+      if (room.last_from_uid) old.last_from_uid = room.last_from_uid;
+      if (room.last_from_name) old.last_from_name = room.last_from_name;
+      old.unread = room.is_self ? 0 : (Number(old.unread || 0) + Number(room.unread || 0));
     } else {
-      state.rooms.unshift(Object.assign({}, room));
+      state.rooms.unshift(Object.assign({}, room, { unread: room.is_self ? 0 : Number(room.unread || 0) }));
     }
 
     saveLocal();
@@ -374,7 +387,10 @@
           channel_type: room.channel_type,
           ts: room.ts,
           text: room.text,
-          incoming: room.incoming
+          incoming: room.incoming,
+          is_self: !!room.is_self,
+          last_from_uid: room.last_from_uid || "",
+          last_from_name: room.last_from_name || ""
         })
       }).catch(function () {});
     }
@@ -495,7 +511,9 @@
       tid: channelType === 2 ? String(channelId).replace("nbb_topic_", "").replace(/[^\d]/g, "") : "",
       ts: ts || now(),
       text: text || "",
-      unread: Number(c.unread || 0) || 0
+      unread: Number(c.unread || 0) || 0,
+      last_from_uid: String(get(last, ["fromUID", "fromUid", "from_uid"], "")),
+      last_from_name: ""
     };
   }
 
@@ -546,7 +564,7 @@
 
   function avatarHtmlForUser(u, fallbackText) {
     if (u && u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
-    var txt = String((u && (u.icontext || u.username)) || fallbackText || "?").charAt(0).toUpperCase();
+    var txt = String((u && (u.icontext || u.username)) || fallbackText || "我").charAt(0).toUpperCase();
     var bg = (u && u.iconbgColor) || "#dbeafe";
     return '<span style="background:' + esc(bg) + ';display:grid;place-items:center;">' + esc(txt) + '</span>';
   }
@@ -575,30 +593,31 @@
     var topic = state.topics[tid] || {};
     var users = [];
 
-    if (Array.isArray(topic.members)) users = topic.members.slice(0);
-    if (Array.isArray(topic.users)) users = users.concat(topic.users);
-    if (Array.isArray(topic.avatars)) {
-      users = users.concat(topic.avatars.map(function (x) {
-        return typeof x === "string" ? { picture: x } : x;
-      }));
+    function addUser(u) {
+      if (!u) return;
+      if (typeof u === "string") u = { picture: u };
+      users.push(u);
     }
-    if (topic.poster) users.unshift(topic.poster);
+
+    if (Array.isArray(topic.members)) topic.members.forEach(addUser);
+    if (Array.isArray(topic.users)) topic.users.forEach(addUser);
+    if (Array.isArray(topic.avatars)) topic.avatars.forEach(addUser);
+    if (!users.length && topic.poster) addUser(topic.poster);
 
     var seen = {};
     users = users.filter(function (u) {
-      var key = String((u && (u.uid || u.picture || u.username)) || Math.random());
+      var key = String((u && (u.uid || u.picture || u.username || u.displayname)) || "");
+      if (!key) key = "slot" + Math.random();
       if (seen[key]) return false;
       seen[key] = true;
       return true;
     }).slice(0, 4);
 
-    while (users.length < 4) {
-      users.push({ icontext: "#", iconbgColor: users.length % 2 ? "#dbeafe" : "#e0f2fe" });
-    }
+    while (users.length < 4) users.push({ icontext: "", iconbgColor: users.length % 2 ? "#dbeafe" : "#e0f2fe" });
 
     return '<div class="wkconv-group-avatar">' + users.slice(0, 4).map(function (u) {
       if (u && u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
-      var txt = String((u && (u.icontext || u.username)) || "#").charAt(0).toUpperCase();
+      var txt = String((u && (u.icontext || u.username || u.displayname)) || "").charAt(0).toUpperCase();
       var bg = (u && u.iconbgColor) || "#dbeafe";
       return '<span style="background:' + esc(bg) + ';">' + esc(txt) + '</span>';
     }).join("") + '</div>';
@@ -620,10 +639,18 @@
   }
 
   function previewText(room) {
+    var text = room.text || "";
+    var fromUid = String(room.last_from_uid || "");
+    var fromName = String(room.last_from_name || "");
+    var self = String(state.uid || "");
+
+    if (fromUid && fromUid === self) fromName = "我";
+    if (!fromName && fromUid) fromName = userName(fromUid);
+
     if (room.is_topic || room.isTopic) {
-      return room.text || t("roomLabel", "聊天室");
+      return fromName && text ? (fromName + ": " + text) : (text || t("roomLabel", "聊天室"));
     }
-    return room.text || "";
+    return fromName === "我" && text ? ("我: " + text) : text;
   }
 
   function openUrl(room) {
@@ -785,14 +812,11 @@
       var name = roomName(room);
       var flag = roomFlag(room);
       var online = roomOnline(room);
-      var titleHtml = isTopic ?
-        '<span class="wkconv-topic-prefix">#</span>' + esc(name) :
-        esc(name);
+      var titleHtml = esc(name);
 
       return '<div class="wkconv-item' + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + (online ? " is-online" : "") + '" data-key="' + esc(key) + '">' +
         '<div class="wkconv-avatar">' +
           '<div class="wkconv-avatar-inner">' + roomAvatar(room) + '</div>' +
-          (isTopic ? '<span class="wkconv-topic-badge">#</span>' : '') +
           '<span class="wkconv-online"></span><span class="wkconv-flag">' + esc(flag) + '</span>' +
         '</div>' +
         '<div class="wkconv-main">' +
@@ -902,8 +926,11 @@
 
   function drawerAvatarHtml() {
     var u = currentUser();
-    if (u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
-    return esc(String(u.username || u.uid || "?").charAt(0).toUpperCase());
+    var cached = state.users[String(state.uid || (u && u.uid) || "")] || {};
+    var pic = u.picture || u.uploadedpicture || cached.picture || "";
+    if (pic) return '<img src="' + esc(pic) + '" alt="">';
+    var txt = String(u.displayname || u.username || u.userslug || cached.displayname || cached.username || state.uid || "我").charAt(0).toUpperCase();
+    return esc(txt || "我");
   }
 
   function renderDrawerLinks() {
@@ -927,6 +954,45 @@
     }).join("");
   }
 
+
+  function setDrawerDragX(x) {
+    x = Math.max(0, Math.min(x, Math.min(W.innerWidth * 0.76, 286)));
+    state.drawerCurrentX = x;
+    if (els.drawerMask) {
+      els.drawerMask.setAttribute("data-open", "1");
+      els.drawerMask.setAttribute("data-dragging", "1");
+      els.drawerMask.style.setProperty("--wk-drawer-dx", x + "px");
+    }
+    setBlur(true);
+  }
+
+  function beginDrawerDrag(x, y) {
+    state.drawerDragging = true;
+    state.drawerStartX = x || 0;
+    state.edgeTouchY = y || 0;
+    setDrawerDragX(0);
+  }
+
+  function moveDrawerDrag(x, y) {
+    if (!state.drawerDragging) return;
+    var dx = Math.max(0, (x || 0) - state.drawerStartX);
+    var dy = Math.abs((y || 0) - state.edgeTouchY);
+    if (dy > dx * 1.4) return;
+    setDrawerDragX(dx);
+  }
+
+  function endDrawerDrag(x) {
+    if (!state.drawerDragging) return;
+    var dx = Math.max(0, (x || 0) - state.drawerStartX);
+    state.drawerDragging = false;
+    if (els.drawerMask) {
+      els.drawerMask.removeAttribute("data-dragging");
+      els.drawerMask.style.removeProperty("--wk-drawer-dx");
+    }
+    if (dx > 88) openDrawer();
+    else closeDrawer();
+  }
+
   function bind() {
     els.tabs.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-tab]");
@@ -942,16 +1008,19 @@
       els.edgeSwipe.addEventListener("touchstart", function (e) {
         var p = e.touches && e.touches[0];
         if (!p) return;
-        state.edgeTouchX = p.clientX;
-        state.edgeTouchY = p.clientY;
+        beginDrawerDrag(p.clientX, p.clientY);
+      }, { passive: true });
+
+      els.edgeSwipe.addEventListener("touchmove", function (e) {
+        var p = e.touches && e.touches[0];
+        if (!p) return;
+        moveDrawerDrag(p.clientX, p.clientY);
       }, { passive: true });
 
       els.edgeSwipe.addEventListener("touchend", function (e) {
         var p = e.changedTouches && e.changedTouches[0];
         if (!p) return;
-        var dx = p.clientX - state.edgeTouchX;
-        var dy = p.clientY - state.edgeTouchY;
-        if (dx > 42 && Math.abs(dx) > Math.abs(dy) * 1.15) openDrawer();
+        endDrawerDrag(p.clientX);
       }, { passive: true });
     }
 
@@ -960,16 +1029,22 @@
       if (!p) return;
       state.edgeTouchX = p.clientX;
       state.edgeTouchY = p.clientY;
+      if (p.clientX < 26) beginDrawerDrag(p.clientX, p.clientY);
+    }, { passive: true });
+
+    D.addEventListener("touchmove", function (e) {
+      var p = e.touches && e.touches[0];
+      if (!p) return;
+      moveDrawerDrag(p.clientX, p.clientY);
     }, { passive: true });
 
     D.addEventListener("touchend", function (e) {
       var p = e.changedTouches && e.changedTouches[0];
       if (!p) return;
+      if (state.drawerDragging) return endDrawerDrag(p.clientX);
       var dx = p.clientX - state.edgeTouchX;
       var dy = p.clientY - state.edgeTouchY;
-      if (state.edgeTouchX < 60 && dx > 55 && Math.abs(dx) > Math.abs(dy) * 1.25) {
-        openDrawer();
-      }
+      if (state.edgeTouchX < 60 && dx > 55 && Math.abs(dx) > Math.abs(dy) * 1.25) openDrawer();
     }, { passive: true });
 
     els.listWrap.addEventListener("scroll", function () {
