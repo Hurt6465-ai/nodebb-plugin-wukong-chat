@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v10 - stable unread preview virtual list */
+/* Wukong independent conversation list v12 - topic tile avatar */
 (function () {
   "use strict";
 
@@ -213,6 +213,17 @@
     return s.replace(/\s+/g, " ").slice(0, 180);
   }
 
+
+  function isBadPreviewText(text) {
+    text = String(text || "").replace(/\s+/g, " ").trim();
+    return !text || text === t("roomLabel", "聊天室") || text === t("topic", "聊天室") || text === "聊天室";
+  }
+
+  function cleanPreviewText(text) {
+    text = String(text || "").replace(/\s+/g, " ").trim();
+    return isBadPreviewText(text) ? "" : text;
+  }
+
   async function fetchJson(url, opts) {
     var res = await fetch(url, Object.assign({
       credentials: "same-origin",
@@ -297,9 +308,11 @@
     (data.rooms || []).forEach(function (r) {
       var key = roomKey(r);
       var old = map[key] || {};
-      if (!r.text && old.text) r.text = old.text;
+      r.text = cleanPreviewText(r.text);
+      if (!r.text && old.text && !isBadPreviewText(old.text)) r.text = old.text;
       if (!r.ts && old.ts) r.ts = old.ts;
       map[key] = Object.assign({}, old, r);
+      map[key].text = cleanPreviewText(map[key].text);
       if (r.unread_abs) map[key].unread = Number(r.unread || 0);
     });
 
@@ -348,7 +361,7 @@
       peer_uid: isTopic ? "" : String(channelId).replace(/[^\d]/g, ""),
       tid: tid,
       ts: ts,
-      text: text || t("message", "[消息]"),
+      text: cleanPreviewText(text) || t("message", "[消息]"),
       unread: incoming ? 1 : 0,
       incoming: incoming,
       last_from_uid: fromUid || (incoming ? "" : self),
@@ -403,6 +416,7 @@
 
     if (old) {
       old.ts = room.ts || old.ts || now();
+      room.text = cleanPreviewText(room.text);
       if (room.text) old.text = room.text;
       if (room.last_from_uid) old.last_from_uid = room.last_from_uid;
       if (room.last_from_name) old.last_from_name = room.last_from_name;
@@ -549,7 +563,7 @@
       peer_uid: channelType === 1 ? String(channelId).replace(/[^\d]/g, "") : "",
       tid: channelType === 2 ? String(channelId).replace("nbb_topic_", "").replace(/[^\d]/g, "") : "",
       ts: ts || now(),
-      text: text || "",
+      text: cleanPreviewText(text) || "",
       unread: Number(c.unread || 0) || 0,
       unread_abs: true,
       event_id: String(get(last, ["messageID", "messageId", "clientMsgNo", "client_msg_no", "clientSeq", "client_seq", "messageSeq"], "")) || "",
@@ -630,49 +644,12 @@
     return userName(room.peer_uid || room.id);
   }
 
-  function groupAvatarHtml(room) {
-    var tid = topicTid(room);
-    var topic = state.topics[tid] || {};
-    var users = [];
-
-    function addUser(u) {
-      if (!u) return;
-      if (typeof u === "string") u = { picture: u };
-      users.push(u);
-    }
-
-    if (Array.isArray(topic.members)) topic.members.forEach(addUser);
-    if (Array.isArray(topic.users)) topic.users.forEach(addUser);
-    if (Array.isArray(topic.avatars)) topic.avatars.forEach(addUser);
-    if (Array.isArray(room.participant_uids)) {
-      room.participant_uids.forEach(function (uid) {
-        addUser(state.users[String(uid)] || { uid: uid, username: String(uid) });
-      });
-    }
-    if (topic.poster) addUser(topic.poster);
-
-    var seen = {};
-    users = users.filter(function (u) {
-      var key = String((u && (u.uid || u.picture || u.username || u.displayname)) || "");
-      if (!key) key = "slot" + Math.random();
-      if (seen[key]) return false;
-      seen[key] = true;
-      return true;
-    }).slice(0, 4);
-
-    var fallbackTexts = ["聊", "天", "室", "友"];
-    while (users.length < 4) users.push({ icontext: fallbackTexts[users.length], iconbgColor: ["#dbeafe", "#e0f2fe", "#ede9fe", "#dcfce7"][users.length % 4] });
-
-    return '<div class="wkconv-group-avatar">' + users.slice(0, 4).map(function (u) {
-      if (u && u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
-      var txt = String((u && (u.icontext || u.username || u.displayname)) || "").charAt(0).toUpperCase();
-      var bg = (u && u.iconbgColor) || "#dbeafe";
-      return '<span style="background:' + esc(bg) + ';">' + esc(txt) + '</span>';
-    }).join("") + '</div>';
+  function topicAvatarHtml(room) {
+    return '<div class="wkconv-topic-avatar"><i></i><b></b></div>';
   }
 
   function roomAvatar(room) {
-    if (room.is_topic || room.isTopic) return groupAvatarHtml(room);
+    if (room.is_topic || room.isTopic) return topicAvatarHtml(room);
     return avatarHtmlForUser(state.users[String(room.peer_uid || room.id)] || {}, userName(room.peer_uid || room.id));
   }
 
@@ -687,16 +664,17 @@
   }
 
   function previewText(room) {
-    var text = room.text || "";
+    var text = cleanPreviewText(room.text || "");
     var fromUid = String(room.last_from_uid || "");
     var fromName = String(room.last_from_name || "");
     var self = String(state.uid || "");
 
     if (fromUid && fromUid === self) fromName = "我";
+    if (!fromName && room.is_self) fromName = "我";
     if (!fromName && fromUid) fromName = userName(fromUid);
 
     if (room.is_topic || room.isTopic) {
-      return fromName && text ? (fromName + ": " + text) : (text || t("roomLabel", "聊天室"));
+      return fromName && text ? (fromName + ": " + text) : text;
     }
     if ((fromName === "我" || fromUid === self || room.is_self) && text) return "我: " + text;
     return text;
@@ -860,10 +838,10 @@
       var isTopic = room.is_topic || room.isTopic;
       var name = roomName(room);
       var flag = roomFlag(room);
-      var online = roomOnline(room);
+      var online = isTopic ? false : roomOnline(room);
       var titleHtml = esc(name);
 
-      return '<div class="wkconv-item' + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + (online ? " is-online" : "") + '" data-key="' + esc(key) + '">' +
+      return '<div class="wkconv-item' + (isTopic ? " is-topic" : "") + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + (online ? " is-online" : "") + '" data-key="' + esc(key) + '">' +
         '<div class="wkconv-avatar">' +
           '<div class="wkconv-avatar-inner">' + roomAvatar(room) + '</div>' +
           '<span class="wkconv-online"></span><span class="wkconv-flag">' + esc(flag) + '</span>' +
@@ -937,7 +915,7 @@
   }
 
   function setStatus(text) {
-    if (els.status) els.status.textContent = text || "";
+    // Hidden by design. Keep this no-op to avoid connection/sync hints in the header.
   }
 
   function setTab(tab) {
@@ -1194,7 +1172,7 @@
           '<div class="wkconv-tabs" role="tablist">' +
             '<button class="wkconv-tab is-active" data-tab="direct" role="tab" type="button">' + esc(t("messages", "消息")) + '</button>' +
             '<button class="wkconv-tab" data-tab="rooms" role="tab" type="button">' + esc(t("chatrooms", "聊天室")) + '</button>' +
-            '<div class="wkconv-status">' + esc(t("loading", "正在加载消息...")) + '</div>' +
+            '<div class="wkconv-status"></div>' +
             '<button class="wkconv-drawer-open" type="button" aria-label="menu"><span></span></button>' +
           '</div>' +
         '</header>' +
@@ -1251,7 +1229,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v10-stable-unread-preview",
+      version: "v12-topic-avatar-tile",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
