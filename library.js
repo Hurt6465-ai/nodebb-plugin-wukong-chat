@@ -64,6 +64,10 @@ const USER_PROFILE_CACHE_TTL_MS = Number(process.env.USER_PROFILE_CACHE_TTL_MS |
 const PRESENCE_TTL_MS = 45000;
 const MEDIA_TTL_MS = Number(process.env.WK_MEDIA_TTL_MS || 48 * 60 * 60 * 1000);
 const TOPIC_CONVERSATION_IDLE_DELETE_MS = Number(process.env.WK_TOPIC_CONVERSATION_IDLE_DELETE_MS || 24 * 60 * 60 * 1000);
+const TOPIC_CONVERSATION_DELETE_TOPIC = !/^(0|false|no)$/i.test(String(process.env.WK_TOPIC_CONVERSATION_DELETE_TOPIC || 'true'));
+const TOPIC_CONVERSATION_DELETE_MODE = String(process.env.WK_TOPIC_CONVERSATION_DELETE_MODE || 'delete').trim().toLowerCase(); // delete | purge
+const TOPIC_CONVERSATION_DELETE_UID = Number(process.env.WK_TOPIC_CONVERSATION_DELETE_UID || 1);
+const TOPIC_CLEANUP_ON_START = !/^(0|false|no)$/i.test(String(process.env.WK_TOPIC_CLEANUP_ON_START || 'true'));
 const MEDIA_UPLOAD_DIR = path.resolve(PLUGIN_ROOT, '../../public/uploads/wukong-chat');
 const MEDIA_PUBLIC_PREFIX = '/assets/uploads/wukong-chat';
 const MEDIA_CLEANUP_TZ_OFFSET_MS = Number(process.env.WK_MEDIA_CLEANUP_TZ_OFFSET_MS || 8 * 60 * 60 * 1000);
@@ -71,6 +75,7 @@ const MEDIA_CLEANUP_HOUR = Number(process.env.WK_MEDIA_CLEANUP_HOUR || 2);
 const MEDIA_CLEANUP_JITTER_MS = Number(process.env.WK_MEDIA_CLEANUP_JITTER_MS || 60 * 60 * 1000);
 const MEDIA_CLEANUP_ON_START = /^(1|true|yes)$/i.test(String(process.env.WK_MEDIA_CLEANUP_ON_START || 'false'));
 let mediaCleanupTimer = null;
+let topicConversationCleanupTimer = null;
 
 // WuKongIM official user registration/login endpoint is POST /user/token.
 // Keep this enabled by default so NodeBB users are provisioned when they register
@@ -306,6 +311,108 @@ function isExpiredTopicConversation(room, nowMs = Date.now()) {
   return nowMs - ts > ttl;
 }
 
+
+async function deleteNodeBBTopicForExpiredConversation(room) {
+  if (!TOPIC_CONVERSATION_DELETE_TOPIC) return { ok: false, skipped: true, reason: 'disabled' };
+  const tid = String(room && room.tid || topicIdFromChannelId(room && room.channel_id) || '').trim();
+  if (!/^\d+$/.test(tid)) return { ok: false, skipped: true, reason: 'invalid_tid', tid };
+  if (!topics) return { ok: false, skipped: true, reason: 'topics_module_missing', tid };
+
+  const actorUid = Number(room && (room.uid || room.poster_uid || room.peer_uid) || TOPIC_CONVERSATION_DELETE_UID || 1);
+  const mode = TOPIC_CONVERSATION_DELETE_MODE === 'purge' ? 'purge' : 'delete';
+
+  try {
+    if (mode === 'purge') {
+      if (typeof topics.purge === 'function') {
+        await topics.purge(tid, actorUid);
+        return { ok: true, tid, mode: 'purge' };
+      }
+      if (typeof topics.purgeTopic === 'function') {
+        await topics.purgeTopic(tid, actorUid);
+        return { ok: true, tid, mode: 'purgeTopic' };
+      }
+    }
+
+    if (typeof topics.delete === 'function') {
+      await topics.delete(tid, actorUid);
+      return { ok: true, tid, mode: 'delete' };
+    }
+    if (typeof topics.deleteTopic === 'function') {
+      await topics.deleteTopic(tid, actorUid);
+      return { ok: true, tid, mode: 'deleteTopic' };
+    }
+
+    return { ok: false, skipped: true, reason: 'no_delete_api', tid };
+  } catch (err) {
+    console.warn('[wukong-chat] expired topic delete failed:', { tid, mode, error: err.message });
+    return { ok: false, tid, mode, error: err.message };
+  }
+}
+
+async function cleanupExpiredTopicConversations() {
+  const store = readConversationState();
+  const nowMs = Date.now();
+  let checked = 0;
+  let expired = 0;
+  let deletedTopics = 0;
+  let removedRooms = 0;
+  const topicDeleteTried = new Set();
+
+  for (const [uid, userState] of Object.entries(store.users || {})) {
+    if (!userState || typeof userState !== 'object') continue;
+    userState.rooms = userState.rooms && typeof userState.rooms === 'object' && !Array.isArray(userState.rooms) ? userState.rooms : {};
+    userState.readAt = userState.readAt && typeof userState.readAt === 'object' && !Array.isArray(userState.readAt) ? userState.readAt : {};
+
+    for (const [key, room] of Object.entries(userState.rooms)) {
+      checked += 1;
+      if (!isExpiredTopicConversation(room, nowMs)) continue;
+      expired += 1;
+      const tid = String(room && room.tid || topicIdFromChannelId(room && room.channel_id) || '').trim();
+
+      if (tid && !topicDeleteTried.has(tid)) {
+        topicDeleteTried.add(tid);
+        const result = await deleteNodeBBTopicForExpiredConversation(room);
+        if (result && result.ok) deletedTopics += 1;
+      }
+
+      delete userState.rooms[key];
+      delete userState.readAt[key];
+      removedRooms += 1;
+    }
+  }
+
+  writeConversationState(store);
+  return { ok: true, checked, expired, deletedTopics, removedRooms, ttl_ms: TOPIC_CONVERSATION_IDLE_DELETE_MS };
+}
+
+function scheduleNextTopicConversationCleanup() {
+  const delay = getNextBeijingCleanupDelay();
+  topicConversationCleanupTimer = setTimeout(async () => {
+    try {
+      const result = await cleanupExpiredTopicConversations();
+      console.log('[wukong-chat] expired topic conversation cleanup:', result);
+    } catch (err) {
+      console.warn('[wukong-chat] expired topic conversation cleanup failed:', err.message);
+    } finally {
+      topicConversationCleanupTimer = null;
+      scheduleNextTopicConversationCleanup();
+    }
+  }, delay);
+  if (topicConversationCleanupTimer && typeof topicConversationCleanupTimer.unref === 'function') {
+    topicConversationCleanupTimer.unref();
+  }
+}
+
+function startTopicConversationCleanupTimer() {
+  if (topicConversationCleanupTimer) return;
+  if (TOPIC_CLEANUP_ON_START) {
+    cleanupExpiredTopicConversations()
+      .then(result => console.log('[wukong-chat] initial expired topic conversation cleanup:', result))
+      .catch(err => console.warn('[wukong-chat] initial expired topic conversation cleanup failed:', err.message));
+  }
+  scheduleNextTopicConversationCleanup();
+}
+
 function normalizeConversationItem(item, currentUid) {
   const channelId = conversationChannelId(item);
   if (!channelId) return null;
@@ -396,6 +503,7 @@ async function buildConversationListForUser(current, rawData) {
   const nowForTopicCleanup = Date.now();
   for (const [key, room] of Object.entries(userState.rooms)) {
     if (isExpiredTopicConversation(room, nowForTopicCleanup)) {
+      await deleteNodeBBTopicForExpiredConversation(room);
       delete userState.rooms[key];
       delete userState.readAt[key];
     }
@@ -961,11 +1069,26 @@ function cleanupPresence() {
   }
 }
 
+
+function sendPluginTemplate(res, filename) {
+  const file = path.join(PLUGIN_ROOT, 'templates', filename);
+  let html = '';
+  try {
+    html = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    console.warn('[wukong-chat] read template failed:', file, err.message);
+    res.status(500).type('html').send('<!doctype html><meta charset="utf-8"><title>悟空</title><div>Template missing: ' + filename + '</div>');
+    return;
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('html').send(html);
+}
+
 function registerPageRoutes(router, middleware) {
   async function renderWukongConversationsPage(req, res) {
-    res.render('wukong-conversations', {
-      title: '悟空会话',
-    });
+    // Send the plugin template directly so this standalone page does not fail
+    // with "Failed to lookup view" when NodeBB template compilation is stale.
+    sendPluginTemplate(res, 'wukong-conversations.tpl');
   }
 
   async function renderWukongPage(req, res) {
@@ -1004,6 +1127,8 @@ function registerApiRoutes(router, middleware) {
       time: new Date().toISOString(),
       media_ttl_ms: MEDIA_TTL_MS,
       topic_conversation_idle_delete_ms: TOPIC_CONVERSATION_IDLE_DELETE_MS,
+      topic_conversation_delete_topic: TOPIC_CONVERSATION_DELETE_TOPIC,
+      topic_conversation_delete_mode: TOPIC_CONVERSATION_DELETE_MODE,
       media_cleanup: {
         hour_beijing: MEDIA_CLEANUP_HOUR,
         jitter_ms: MEDIA_CLEANUP_JITTER_MS,
@@ -1613,6 +1738,7 @@ plugin.init = async function init(params) {
   registerPageRoutes(router, middleware);
   registerApiRoutes(router, middleware);
   startWukongMediaCleanupTimer();
+  startTopicConversationCleanupTimer();
 
   console.log('[wukong-chat] routes registered: /wukong, /wukong/conversations, /wukong/conversation, /wukong/:uid, /api/wukong/healthz');
 };
