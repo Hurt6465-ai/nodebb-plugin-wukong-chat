@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v14 - public room prune */
+/* Wukong independent conversation list v15 - notifications action */
 (function () {
   "use strict";
 
@@ -37,6 +37,10 @@
     conversationListener: null,
     connectListener: null,
     lastSyncAt: 0,
+    notificationUnread: false,
+    notificationCount: 0,
+    notificationCheckInFlight: false,
+    notificationTimer: 0,
     eventSeen: {},
     visibleRooms: [],
     heightMap: {},
@@ -92,6 +96,8 @@
       topicBase: "/topic",
       wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1",
       i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
+      notificationUrl: "/notifications",
+      notificationApi: "/api/notifications",
       maxConversations: 500,
       openTopicPage: true,
       virtualOverscan: 10,
@@ -958,6 +964,149 @@
     // Hidden by design. Keep this no-op to avoid connection/sync hints in the header.
   }
 
+  function absoluteAppUrl(url) {
+    url = String(url || "");
+    if (!url) return "#";
+    if (/^(?:https?:)?\/\//i.test(url)) return url;
+    if (url.charAt(0) !== "/") url = "/" + url;
+    return rel() + url;
+  }
+
+  function notificationHref() {
+    return absoluteAppUrl(cfg.notificationUrl || "/notifications");
+  }
+
+  function numberFromAny(value) {
+    var n = Number(value);
+    return isFinite(n) && n > 0 ? n : 0;
+  }
+
+  function extractNotificationCount(data) {
+    if (!data) return 0;
+    if (typeof data === "number") return numberFromAny(data);
+    if (typeof data !== "object") return 0;
+
+    var keys = [
+      "unread", "unreadCount", "unread_count", "notificationCount", "notificationsCount",
+      "notifications_unread", "count", "unreadNotifications"
+    ];
+
+    for (var i = 0; i < keys.length; i++) {
+      if (data[keys[i]] !== undefined && data[keys[i]] !== null) return numberFromAny(data[keys[i]]);
+    }
+
+    if (Array.isArray(data.notifications)) {
+      var total = 0;
+      data.notifications.forEach(function (n) {
+        if (!n) return;
+        if (n.read === false || n.is_read === false || n.unread === true || n.readAt === 0 || n.read_at === 0) total++;
+      });
+      return total;
+    }
+
+    if (data.data && typeof data.data === "object") return extractNotificationCount(data.data);
+    if (data.payload && typeof data.payload === "object") return extractNotificationCount(data.payload);
+    return 0;
+  }
+
+  function readNotificationCountFromGlobals() {
+    var candidates = [];
+    try { candidates.push(W.app && app.user); } catch (_) {}
+    try { candidates.push(W.ajaxify && ajaxify.data); } catch (_) {}
+    try { candidates.push(W.ajaxify && ajaxify.data && ajaxify.data.loggedInUser); } catch (_) {}
+    try { candidates.push(W.config); } catch (_) {}
+
+    for (var i = 0; i < candidates.length; i++) {
+      var count = extractNotificationCount(candidates[i]);
+      if (count > 0) return count;
+    }
+
+    try {
+      var badge = D.querySelector(
+        '[component="notifications/icon"] [data-count],' +
+        '[component="notifications/icon"] .badge,' +
+        '[component="notifications"] .badge,' +
+        '.notifications .badge'
+      );
+      if (badge) return numberFromAny(badge.getAttribute("data-count") || badge.textContent || "");
+    } catch (_) {}
+
+    return 0;
+  }
+
+  function setNotificationDot(count) {
+    count = numberFromAny(count);
+    state.notificationCount = count;
+    state.notificationUnread = count > 0;
+
+    if (!els.notifyLink) return;
+    els.notifyLink.classList.toggle("has-unread", state.notificationUnread);
+    els.notifyLink.setAttribute("data-count", count ? String(count) : "");
+    els.notifyLink.setAttribute(
+      "aria-label",
+      count ? t("notificationsUnread", "有新通知") : t("notifications", "通知")
+    );
+  }
+
+  async function updateNotificationBadge(reason) {
+    var localCount = readNotificationCountFromGlobals();
+    if (localCount > 0) setNotificationDot(localCount);
+
+    if (state.notificationCheckInFlight) return;
+    state.notificationCheckInFlight = true;
+
+    try {
+      var api = absoluteAppUrl(cfg.notificationApi || "/api/notifications");
+      var res = await fetch(api, {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" }
+      });
+      var data = null;
+      try { data = await res.json(); } catch (_) { data = {}; }
+      if (res.ok) setNotificationDot(extractNotificationCount(data));
+      else if (!localCount) setNotificationDot(0);
+    } catch (_) {
+      if (!localCount) setNotificationDot(0);
+    } finally {
+      state.notificationCheckInFlight = false;
+    }
+  }
+
+  function bindNotificationEvents() {
+    updateNotificationBadge("boot");
+
+    try {
+      var sock = W.socket || (W.app && app.socket);
+      if (sock && typeof sock.on === "function") {
+        [
+          "event:new_notification",
+          "event:notification_pushed",
+          "event:notifications.update",
+          "event:notifications.read",
+          "event:notifications.mark_read"
+        ].forEach(function (name) {
+          sock.on(name, function () {
+            updateNotificationBadge(name);
+          });
+        });
+      }
+    } catch (_) {}
+
+    W.addEventListener("focus", function () {
+      updateNotificationBadge("focus");
+    });
+
+    D.addEventListener("visibilitychange", function () {
+      if (!D.hidden) updateNotificationBadge("visible");
+    });
+
+    if (!state.notificationTimer) {
+      state.notificationTimer = W.setInterval(function () {
+        if (!D.hidden) updateNotificationBadge("timer");
+      }, 60000);
+    }
+  }
+
   function setTab(tab) {
     if (tab !== "direct" && tab !== "rooms") return;
     if (state.tab === tab) return;
@@ -1214,7 +1363,12 @@
             '<button class="wkconv-tab is-active" data-tab="direct" role="tab" type="button">' + esc(t("messages", "消息")) + '</button>' +
             '<button class="wkconv-tab" data-tab="rooms" role="tab" type="button">' + esc(t("chatrooms", "聊天室")) + '</button>' +
             '<div class="wkconv-status"></div>' +
-            '<button class="wkconv-drawer-open" type="button" aria-label="menu"><span></span></button>' +
+            '<div class="wkconv-actions">' +
+              '<a class="wkconv-notify-link" href="' + esc(notificationHref()) + '" aria-label="' + esc(t("notifications", "通知")) + '">' +
+                '<span class="wkconv-notify-icon" aria-hidden="true">🔔</span><span class="wkconv-notify-dot"></span>' +
+              '</a>' +
+              '<button class="wkconv-drawer-open" type="button" aria-label="menu"><span></span></button>' +
+            '</div>' +
           '</div>' +
         '</header>' +
         '<main class="wkconv-list-wrap">' +
@@ -1234,6 +1388,8 @@
       status: root.querySelector(".wkconv-status"),
       tabs: root.querySelector(".wkconv-tabs"),
       drawerOpen: root.querySelector(".wkconv-drawer-open"),
+      notifyLink: root.querySelector(".wkconv-notify-link"),
+      notifyDot: root.querySelector(".wkconv-notify-dot"),
       listWrap: root.querySelector(".wkconv-list-wrap"),
       list: root.querySelector(".wkconv-list"),
       topSpacer: root.querySelector(".wkconv-top-spacer"),
@@ -1265,13 +1421,14 @@
     updateAverageHeight();
     mountHtml();
     bind();
+    bindNotificationEvents();
     render();
 
     syncList("boot");
     startRealtime();
 
     W.WukongConversations = {
-      version: "v14-public-room-prune",
+      version: "v15-notifications-action",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
