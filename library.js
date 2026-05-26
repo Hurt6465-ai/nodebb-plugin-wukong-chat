@@ -28,11 +28,11 @@ try {
 
 const user = require.main.require('./src/user');
 
-let topics = null;
+let db = null;
 try {
-  topics = require.main.require('./src/topics');
+  db = require.main.require('./src/database');
 } catch (err) {
-  console.warn('[wukong-chat] topics module unavailable:', err.message);
+  console.warn('[wukong-chat] database module unavailable:', err.message);
 }
 
 let posts = null;
@@ -42,11 +42,11 @@ try {
   console.warn('[wukong-chat] posts module unavailable:', err.message);
 }
 
-let db = null;
+let topics = null;
 try {
-  db = require.main.require('./src/database');
+  topics = require.main.require('./src/topics');
 } catch (err) {
-  console.warn('[wukong-chat] database module unavailable:', err.message);
+  console.warn('[wukong-chat] topics module unavailable:', err.message);
 }
 
 const plugin = {};
@@ -82,6 +82,8 @@ const TOPIC_CONVERSATION_DELETE_TOPIC = !/^(0|false|no)$/i.test(String(process.e
 const TOPIC_CONVERSATION_DELETE_MODE = String(process.env.WK_TOPIC_CONVERSATION_DELETE_MODE || 'purge').trim().toLowerCase(); // delete | purge
 const TOPIC_CONVERSATION_DELETE_UID = Number(process.env.WK_TOPIC_CONVERSATION_DELETE_UID || 1);
 const TOPIC_CLEANUP_ON_START = !/^(0|false|no)$/i.test(String(process.env.WK_TOPIC_CLEANUP_ON_START || 'true'));
+const TOPIC_PUBLIC_CIDS = String(process.env.WK_TOPIC_PUBLIC_CIDS || process.env.CP_WUKONG_TOPIC_CIDS || '7').split(',').map(x => String(x).trim()).filter(Boolean);
+const TOPIC_PUBLIC_LIST_LIMIT = clampInt(process.env.WK_TOPIC_PUBLIC_LIST_LIMIT, 1, 500, 120);
 const MEDIA_UPLOAD_DIR = path.resolve(PLUGIN_ROOT, '../../public/uploads/wukong-chat');
 const MEDIA_PUBLIC_PREFIX = '/assets/uploads/wukong-chat';
 const MEDIA_CLEANUP_TZ_OFFSET_MS = Number(process.env.WK_MEDIA_CLEANUP_TZ_OFFSET_MS || 8 * 60 * 60 * 1000);
@@ -195,14 +197,16 @@ function writeNotify(list) {
 
 function readConversationState() {
   const data = readJsonFile(CONVERSATION_STATE_FILE, {});
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return { users: {} };
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { users: {}, globalRooms: {} };
   data.users = data.users && typeof data.users === 'object' && !Array.isArray(data.users) ? data.users : {};
+  data.globalRooms = data.globalRooms && typeof data.globalRooms === 'object' && !Array.isArray(data.globalRooms) ? data.globalRooms : {};
   return data;
 }
 
 function writeConversationState(data) {
-  const safe = data && typeof data === 'object' ? data : { users: {} };
+  const safe = data && typeof data === 'object' ? data : { users: {}, globalRooms: {} };
   safe.users = safe.users && typeof safe.users === 'object' && !Array.isArray(safe.users) ? safe.users : {};
+  safe.globalRooms = safe.globalRooms && typeof safe.globalRooms === 'object' && !Array.isArray(safe.globalRooms) ? safe.globalRooms : {};
   writeJsonFile(CONVERSATION_STATE_FILE, safe);
 }
 
@@ -218,7 +222,13 @@ function getConversationUserState(store, uid) {
   const st = store.users[id];
   st.rooms = st.rooms && typeof st.rooms === 'object' && !Array.isArray(st.rooms) ? st.rooms : {};
   st.readAt = st.readAt && typeof st.readAt === 'object' && !Array.isArray(st.readAt) ? st.readAt : {};
+  st.readVersions = st.readVersions && typeof st.readVersions === 'object' && !Array.isArray(st.readVersions) ? st.readVersions : {};
   return st;
+}
+
+function getConversationGlobalRooms(store) {
+  store.globalRooms = store.globalRooms && typeof store.globalRooms === 'object' && !Array.isArray(store.globalRooms) ? store.globalRooms : {};
+  return store.globalRooms;
 }
 
 function conversationRoomKey(channelId, channelType) {
@@ -371,27 +381,45 @@ async function cleanupExpiredTopicConversations() {
   let deletedTopics = 0;
   let removedRooms = 0;
   const topicDeleteTried = new Set();
+  const globalRooms = getConversationGlobalRooms(store);
+
+  async function removeRoom(key, room) {
+    expired += 1;
+    const tid = String(room && room.tid || topicIdFromChannelId(room && room.channel_id) || '').trim();
+    if (tid && !topicDeleteTried.has(tid)) {
+      topicDeleteTried.add(tid);
+      const result = await deleteNodeBBTopicForExpiredConversation(room);
+      if (result && result.ok) deletedTopics += 1;
+    }
+    removedRooms += 1;
+    return key;
+  }
+
+  for (const [key, room] of Object.entries(globalRooms)) {
+    if (!room || !room.is_topic) continue;
+    checked += 1;
+    const topic = await getTopicPublic(room.tid || topicIdFromChannelId(room.channel_id));
+    if (!topic || isExpiredTopicConversation(room, nowMs)) {
+      await removeRoom(key, room);
+      delete globalRooms[key];
+    }
+  }
 
   for (const [uid, userState] of Object.entries(store.users || {})) {
     if (!userState || typeof userState !== 'object') continue;
     userState.rooms = userState.rooms && typeof userState.rooms === 'object' && !Array.isArray(userState.rooms) ? userState.rooms : {};
     userState.readAt = userState.readAt && typeof userState.readAt === 'object' && !Array.isArray(userState.readAt) ? userState.readAt : {};
+    userState.readVersions = userState.readVersions && typeof userState.readVersions === 'object' && !Array.isArray(userState.readVersions) ? userState.readVersions : {};
 
     for (const [key, room] of Object.entries(userState.rooms)) {
       checked += 1;
-      if (!isExpiredTopicConversation(room, nowMs)) continue;
-      expired += 1;
-      const tid = String(room && room.tid || topicIdFromChannelId(room && room.channel_id) || '').trim();
-
-      if (tid && !topicDeleteTried.has(tid)) {
-        topicDeleteTried.add(tid);
-        const result = await deleteNodeBBTopicForExpiredConversation(room);
-        if (result && result.ok) deletedTopics += 1;
-      }
-
+      if (!room || !room.is_topic) continue;
+      const topic = await getTopicPublic(room.tid || topicIdFromChannelId(room.channel_id));
+      if (topic && !isExpiredTopicConversation(room, nowMs)) continue;
+      await removeRoom(key, room);
       delete userState.rooms[key];
       delete userState.readAt[key];
-      removedRooms += 1;
+      delete userState.readVersions[key];
     }
   }
 
@@ -471,11 +499,137 @@ function normalizeConversationItem(item, currentUid) {
     text,
     last_from_uid: lastFromUid,
     last_from_name: lastFromName,
-    unread_abs: true,
-    event_id: String(firstNonEmpty(item.event_id, item.eventId, item.message_id, item.messageId, item.client_msg_no, item.clientMsgNo, '') || '').trim(),
   };
 }
 
+
+function isTopicDeletedFields(fields) {
+  if (!fields || typeof fields !== 'object') return true;
+  return /^(1|true|yes)$/i.test(String(fields.deleted || fields.isDeleted || fields.deletedAt || ''));
+}
+
+function topicRoomFromPublicTopic(topic, oldRoom) {
+  oldRoom = oldRoom && typeof oldRoom === 'object' ? oldRoom : {};
+  const channelId = `${TOPIC_CHANNEL_PREFIX}${topic.tid}`;
+  const channelType = TOPIC_CHANNEL_TYPE;
+  const key = conversationRoomKey(channelId, channelType);
+  const topicTs = Number(topic.lastposttime || topic.timestamp || 0) || Date.now();
+  return {
+    ...oldRoom,
+    key,
+    channel_id: channelId,
+    channel_type: channelType,
+    is_topic: true,
+    peer_uid: '',
+    tid: String(topic.tid),
+    title: topic.title,
+    ts: Number(oldRoom.ts || 0) > topicTs ? Number(oldRoom.ts || 0) : topicTs,
+    text: conversationPayloadText(oldRoom.text || ''),
+    last_from_uid: String(oldRoom.last_from_uid || topic.uid || ''),
+    last_from_name: String(oldRoom.last_from_name || (topic.poster && (topic.poster.displayname || topic.poster.username)) || ''),
+    version: Number(oldRoom.version || 0),
+    updated_at: Date.now(),
+  };
+}
+
+async function getPublicTopicIds(limit = TOPIC_PUBLIC_LIST_LIMIT) {
+  const ids = [];
+  const seen = new Set();
+  if (!db) return ids;
+
+  function addTid(tid) {
+    tid = String(tid || '').trim();
+    if (!/^\d+$/.test(tid) || seen.has(tid)) return;
+    seen.add(tid);
+    ids.push(tid);
+  }
+
+  for (const cid of TOPIC_PUBLIC_CIDS) {
+    if (ids.length >= limit) break;
+    if (!/^\d+$/.test(String(cid))) continue;
+    const keys = [`cid:${cid}:tids`, `cid:${cid}:topics`];
+    for (const key of keys) {
+      if (ids.length >= limit) break;
+      try {
+        let tids = [];
+        if (typeof db.getSortedSetRevRange === 'function') tids = await db.getSortedSetRevRange(key, 0, limit - 1);
+        else if (typeof db.getSortedSetRange === 'function') tids = (await db.getSortedSetRange(key, 0, limit - 1)).reverse();
+        (tids || []).forEach(addTid);
+        if (ids.length) break;
+      } catch (err) {
+        // Best-effort. Different NodeBB versions use slightly different sets.
+      }
+    }
+  }
+  return ids.slice(0, limit);
+}
+
+async function syncPublicTopicRooms(store) {
+  const globalRooms = getConversationGlobalRooms(store);
+  const removedKeys = [];
+  const activeKeys = new Set();
+  const nowMs = Date.now();
+  const topicDeleteTried = new Set();
+
+  for (const tid of await getPublicTopicIds(TOPIC_PUBLIC_LIST_LIMIT)) {
+    const topic = await getTopicPublic(tid);
+    if (!topic) continue;
+    const key = conversationRoomKey(`${TOPIC_CHANNEL_PREFIX}${tid}`, TOPIC_CHANNEL_TYPE);
+    const candidate = topicRoomFromPublicTopic(topic, globalRooms[key]);
+    if (isExpiredTopicConversation(candidate, nowMs)) {
+      if (!topicDeleteTried.has(tid)) {
+        topicDeleteTried.add(tid);
+        await deleteNodeBBTopicForExpiredConversation(candidate);
+      }
+      delete globalRooms[key];
+      removedKeys.push(key);
+      continue;
+    }
+    globalRooms[key] = candidate;
+    activeKeys.add(key);
+  }
+
+  for (const [key, room] of Object.entries(globalRooms)) {
+    if (!room || !room.is_topic) continue;
+    const tid = String(room.tid || topicIdFromChannelId(room.channel_id) || '').trim();
+    const topic = await getTopicPublic(tid);
+    if (!topic || isExpiredTopicConversation(room, nowMs)) {
+      if (tid && !topicDeleteTried.has(tid)) {
+        topicDeleteTried.add(tid);
+        if (topic) await deleteNodeBBTopicForExpiredConversation(room);
+      }
+      delete globalRooms[key];
+      removedKeys.push(key);
+      continue;
+    }
+    activeKeys.add(key);
+  }
+
+  return { activeKeys, removedKeys };
+}
+
+async function pruneInvalidTopicRooms(store, userState, activeKeys) {
+  const removedKeys = [];
+  const globalRooms = getConversationGlobalRooms(store);
+
+  for (const [key, room] of Object.entries(userState.rooms || {})) {
+    if (!room || !room.is_topic) continue;
+    const tid = String(room.tid || topicIdFromChannelId(room.channel_id) || '').trim();
+    const active = activeKeys && activeKeys.has(key);
+    const topic = active ? true : await getTopicPublic(tid);
+    if (!topic || isExpiredTopicConversation(room)) {
+      delete userState.rooms[key];
+      delete userState.readAt[key];
+      if (userState.readVersions) delete userState.readVersions[key];
+      removedKeys.push(key);
+    }
+  }
+
+  for (const key of removedKeys) {
+    if (globalRooms[key]) delete globalRooms[key];
+  }
+  return removedKeys;
+}
 
 async function getTopicPostIds(tid, limit = 12) {
   tid = String(tid || '').trim();
@@ -545,9 +699,12 @@ async function getTopicPublic(tid) {
       'slug',
       'timestamp',
       'lastposttime',
+      'deleted',
+      'isDeleted',
+      'deletedAt',
     ]);
 
-    if (!fields || !fields.tid) return null;
+    if (!fields || !fields.tid || isTopicDeletedFields(fields)) return null;
 
     const posterUid = String(fields.uid || '').trim();
     const poster = posterUid ? await fetchNodeBBUserPublic(posterUid) : null;
@@ -574,7 +731,13 @@ async function buildConversationListForUser(current, rawData) {
   const uid = String(current.uid);
   const store = readConversationState();
   const userState = getConversationUserState(store, uid);
+  const globalRooms = getConversationGlobalRooms(store);
   const incoming = conversationExtractList(rawData).map(item => normalizeConversationItem(item, uid)).filter(Boolean);
+  const removedKeys = [];
+
+  const synced = await syncPublicTopicRooms(store);
+  synced.removedKeys.forEach(key => removedKeys.push(key));
+  const activeTopicKeys = synced.activeKeys || new Set();
 
   for (const room of incoming) {
     const old = userState.rooms[room.key] && typeof userState.rooms[room.key] === 'object' ? userState.rooms[room.key] : {};
@@ -593,17 +756,40 @@ async function buildConversationListForUser(current, rawData) {
     };
   }
 
-  userState.updatedAt = Date.now();
+  // Merge public topic rooms into every user's list. This fixes new accounts seeing an empty room list.
+  for (const [key, globalRoom] of Object.entries(globalRooms)) {
+    if (!globalRoom || !globalRoom.is_topic) continue;
+    const old = userState.rooms[key] && typeof userState.rooms[key] === 'object' ? userState.rooms[key] : {};
+    const globalVersion = Number(globalRoom.version || 0);
+    let readVersion = Number(userState.readVersions[key] || 0);
 
-  const nowForTopicCleanup = Date.now();
-  for (const [key, room] of Object.entries(userState.rooms)) {
-    if (isExpiredTopicConversation(room, nowForTopicCleanup)) {
-      await deleteNodeBBTopicForExpiredConversation(room);
-      delete userState.rooms[key];
-      delete userState.readAt[key];
+    // New users should see existing public rooms, but should not get unread badges for old messages.
+    if (!old.channel_id && !readVersion) {
+      readVersion = globalVersion;
+      userState.readVersions[key] = globalVersion;
+      userState.readAt[key] = Math.max(Number(userState.readAt[key] || 0), Number(globalRoom.ts || 0));
     }
+
+    const unreadByVersion = Math.max(0, globalVersion - readVersion);
+    userState.rooms[key] = {
+      ...globalRoom,
+      ...old,
+      text: globalRoom.text || old.text || '',
+      ts: Number(globalRoom.ts || 0) || Number(old.ts || 0) || Date.now(),
+      last_from_uid: globalRoom.last_from_uid || old.last_from_uid || '',
+      last_from_name: globalRoom.last_from_name || old.last_from_name || '',
+      unread: unreadByVersion,
+      version: globalVersion,
+      updated_at: Date.now(),
+    };
   }
 
+  userState.updatedAt = Date.now();
+
+  const pruned = await pruneInvalidTopicRooms(store, userState, activeTopicKeys);
+  pruned.forEach(key => removedKeys.push(key));
+
+  const nowForTopicCleanup = Date.now();
   const rooms = Object.values(userState.rooms)
     .filter(room => room && room.channel_id && !isExpiredTopicConversation(room, nowForTopicCleanup))
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))
@@ -631,22 +817,6 @@ async function buildConversationListForUser(current, rawData) {
   for (const tid of topicTids) {
     const topic = await getTopicPublic(tid);
     if (topic) {
-      const roomForTopic = rooms.find(r => String(r.tid || '') === String(tid));
-      const extraParticipantUids = Array.isArray(roomForTopic && roomForTopic.participant_uids) ? roomForTopic.participant_uids : [];
-      const extraMembers = [];
-      for (const memberUid of extraParticipantUids) {
-        const member = await fetchNodeBBUserPublic(memberUid);
-        if (member) extraMembers.push(member);
-      }
-      const mergedMembers = [];
-      const seenMemberUids = new Set();
-      for (const member of [...extraMembers, ...(Array.isArray(topic.members) ? topic.members : []), topic.poster].filter(Boolean)) {
-        const mid = String(member.uid || member.picture || member.username || '');
-        if (!mid || seenMemberUids.has(mid)) continue;
-        seenMemberUids.add(mid);
-        mergedMembers.push(member);
-      }
-      topic.members = mergedMembers.slice(0, 4);
       topicMap[tid] = topic;
       if (topic.poster && topic.poster.uid) users[String(topic.poster.uid)] = topic.poster;
       if (Array.isArray(topic.members)) {
@@ -654,6 +824,13 @@ async function buildConversationListForUser(current, rawData) {
           if (member && member.uid) users[String(member.uid)] = member;
         }
       }
+    } else {
+      const key = conversationRoomKey(`${TOPIC_CHANNEL_PREFIX}${tid}`, TOPIC_CHANNEL_TYPE);
+      delete userState.rooms[key];
+      delete userState.readAt[key];
+      delete userState.readVersions[key];
+      delete globalRooms[key];
+      removedKeys.push(key);
     }
   }
 
@@ -664,37 +841,10 @@ async function buildConversationListForUser(current, rawData) {
     rooms,
     users,
     topics: topicMap,
+    removed_keys: Array.from(new Set(removedKeys)),
+    topic_room_keys: rooms.filter(room => room.is_topic).map(room => room.key),
     serverTime: Date.now(),
   };
-}
-
-
-function conversationEventId(body) {
-  const raw = firstNonEmpty(
-    body.event_id,
-    body.eventId,
-    body.message_id,
-    body.messageId,
-    body.messageID,
-    body.client_msg_no,
-    body.clientMsgNo,
-    body.clientMsgNO,
-    body.client_seq,
-    body.clientSeq,
-    ''
-  );
-  const s = String(raw || '').trim();
-  if (s) return s.slice(0, 160);
-
-  const channelId = String(firstNonEmpty(body.channel_id, body.channelId, '')).trim();
-  const channelType = String(firstNonEmpty(body.channel_type, body.channelType, '')).trim();
-  const ts = Number(body.ts || body.timestamp || 0);
-  const bucket = ts ? Math.floor(ts / 5000) : 0;
-  const text = conversationPayloadText(firstNonEmpty(body.text, body.last_msg, body.lastMsg, body.payload, '')).slice(0, 80);
-  const from = String(firstNonEmpty(body.last_from_uid, body.lastFromUid, body.from_uid, body.fromUid, body.fromUID, '')).trim();
-  const incoming = /^(1|true|yes)$/i.test(String(body.incoming || '')) ? 'in' : 'out';
-  if (channelId && text) return crypto.createHash('sha1').update([channelType, channelId, incoming, from, bucket, text].join('|')).digest('hex');
-  return '';
 }
 
 function normalizeConversationUpsertBody(body, currentUid) {
@@ -724,62 +874,76 @@ function normalizeConversationUpsertBody(body, currentUid) {
     last_from_uid: lastFromUid,
     last_from_name: lastFromName,
     is_self: /^(1|true|yes)$/i.test(String(body.is_self || body.self || '')),
-    event_id: conversationEventId(body),
-    unread_abs: /^(1|true|yes)$/i.test(String(body.unread_abs || body.unreadAbs || '')),
-    unread: clampInt(firstNonEmpty(body.unread, body.unread_count, body.unreadCount, 0), 0, 999999, 0),
   };
 }
 
-function upsertConversationForUser(uid, room) {
+function upsertConversationForUser(uid, room, currentUser = null) {
   const store = readConversationState();
   const userState = getConversationUserState(store, uid);
+  const globalRooms = getConversationGlobalRooms(store);
   const old = userState.rooms[room.key] && typeof userState.rooms[room.key] === 'object' ? userState.rooms[room.key] : {};
   const readAt = Number(userState.readAt[room.key] || 0);
   const roomTs = Number(room.ts || Date.now());
-  const isSelf = !!room.is_self || (!room.incoming && String(room.last_from_uid || '') === String(uid));
-  const eventId = String(room.event_id || '').trim();
 
-  const recent = Array.isArray(old.recent_event_ids) ? old.recent_event_ids.slice(-40) : [];
-  const duplicate = !!eventId && recent.includes(eventId);
-  if (eventId && !duplicate) recent.push(eventId);
-
-  let nextUnread = Number(old.unread || 0);
-  if (isSelf) {
-    nextUnread = 0;
-    userState.readAt[room.key] = Math.max(Number(userState.readAt[room.key] || 0), roomTs);
-  } else if (room.unread_abs) {
-    nextUnread = Number(room.unread || 0);
-  } else if (room.incoming && roomTs > readAt && !duplicate) {
-    nextUnread += 1;
-  }
-
-  const next = {
+  let next = {
     ...old,
     ...room,
     ts: roomTs,
-    unread: Math.max(0, Math.min(999999, nextUnread)),
-    recent_event_ids: recent.slice(-40),
+    unread: room.incoming && roomTs > readAt ? Number(old.unread || 0) + 1 : Number(old.unread || 0),
     updated_at: Date.now(),
   };
 
   if (!room.text && old.text) next.text = old.text;
+
+  // Topic rooms are public. Store one global latest-message state so offline users and new accounts
+  // can see the latest room preview without needing a personal upsert.
+  if (room.is_topic) {
+    const globalOld = globalRooms[room.key] && typeof globalRooms[room.key] === 'object' ? globalRooms[room.key] : {};
+    const senderName = firstNonEmpty(
+      room.last_from_name && room.last_from_name !== '我' ? room.last_from_name : '',
+      currentUser && currentUser.displayname,
+      currentUser && currentUser.username,
+      room.last_from_uid ? `user${room.last_from_uid}` : ''
+    );
+    const versionBump = room.text && (room.text !== globalOld.text || roomTs > Number(globalOld.ts || 0)) ? 1 : 0;
+    const globalNext = {
+      ...globalOld,
+      ...room,
+      text: room.text || globalOld.text || '',
+      ts: roomTs || Number(globalOld.ts || 0) || Date.now(),
+      unread: 0,
+      last_from_uid: room.last_from_uid || globalOld.last_from_uid || '',
+      last_from_name: senderName || globalOld.last_from_name || '',
+      version: Number(globalOld.version || 0) + versionBump,
+      updated_at: Date.now(),
+    };
+    delete globalNext.incoming;
+    delete globalNext.is_self;
+    globalRooms[room.key] = globalNext;
+
+    next = {
+      ...globalNext,
+      ...next,
+      text: globalNext.text || next.text || '',
+      ts: globalNext.ts || next.ts,
+      last_from_uid: globalNext.last_from_uid || next.last_from_uid || '',
+      last_from_name: room.is_self ? '我' : (globalNext.last_from_name || next.last_from_name || ''),
+      version: globalNext.version,
+    };
+  }
+
+  // Own messages must still update the last-message preview, but must not add unread.
+  if (!room.incoming || room.is_self) {
+    next.unread = 0;
+    userState.readAt[room.key] = Math.max(Number(userState.readAt[room.key] || 0), roomTs);
+    if (room.is_topic && next.version) userState.readVersions[room.key] = Number(next.version || 0);
+  }
+
   if (!next.last_from_uid && old.last_from_uid) next.last_from_uid = old.last_from_uid;
   if (!next.last_from_name && old.last_from_name) next.last_from_name = old.last_from_name;
 
-  if (room.is_topic && /^\d+$/.test(String(room.last_from_uid || ''))) {
-    const participants = Array.isArray(old.participant_uids) ? old.participant_uids.slice(0) : [];
-    const senderUid = String(room.last_from_uid);
-    if (!participants.includes(senderUid)) participants.unshift(senderUid);
-    const posterUid = String(old.uid || old.poster_uid || '');
-    if (posterUid && !participants.includes(posterUid)) participants.push(posterUid);
-    next.participant_uids = participants.slice(0, 12);
-  }
-
   delete next.incoming;
   delete next.is_self;
-  delete next.unread_abs;
-  delete next.event_id;
-
   userState.rooms[room.key] = next;
   userState.updatedAt = Date.now();
   writeConversationState(store);
@@ -790,14 +954,19 @@ function upsertConversationForUser(uid, room) {
 function markConversationRead(uid, channelId, channelType) {
   const store = readConversationState();
   const userState = getConversationUserState(store, uid);
+  const globalRooms = getConversationGlobalRooms(store);
   const key = conversationRoomKey(channelId, channelType);
   const nowTs = Date.now();
 
   userState.readAt[key] = nowTs;
+  if (globalRooms[key] && globalRooms[key].is_topic) {
+    userState.readVersions[key] = Number(globalRooms[key].version || 0);
+  }
   if (userState.rooms[key]) {
     userState.rooms[key].unread = 0;
     userState.rooms[key].read_at = nowTs;
     userState.rooms[key].updated_at = nowTs;
+    if (globalRooms[key] && globalRooms[key].version) userState.rooms[key].version = Number(globalRooms[key].version || 0);
   }
 
   userState.updatedAt = nowTs;
@@ -805,6 +974,8 @@ function markConversationRead(uid, channelId, channelType) {
 
   return userState.rooms[key] || { key, channel_id: channelId, channel_type: channelType, unread: 0, read_at: nowTs };
 }
+
+
 
 
 
@@ -1309,6 +1480,7 @@ function registerApiRoutes(router, middleware) {
       topic_conversation_idle_delete_ms: TOPIC_CONVERSATION_IDLE_DELETE_MS,
       topic_conversation_delete_topic: TOPIC_CONVERSATION_DELETE_TOPIC,
       topic_conversation_delete_mode: TOPIC_CONVERSATION_DELETE_MODE,
+      topic_public_cids: TOPIC_PUBLIC_CIDS,
       media_cleanup: {
         hour_beijing: MEDIA_CLEANUP_HOUR,
         jitter_ms: MEDIA_CLEANUP_JITTER_MS,
@@ -1477,7 +1649,7 @@ function registerApiRoutes(router, middleware) {
     const room = normalizeConversationUpsertBody(body, current.uid);
     if (!room) return res.status(400).json({ error: 'invalid_conversation' });
 
-    const saved = upsertConversationForUser(String(current.uid), room);
+    const saved = upsertConversationForUser(String(current.uid), room, current);
     res.json({ ok: true, room: saved });
   }));
 
