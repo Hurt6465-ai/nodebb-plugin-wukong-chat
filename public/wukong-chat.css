@@ -4184,3 +4184,118 @@ body.cp-has-bg #cp-chat-root .cp-header {
   top: calc(env(safe-area-inset-top) + 76px) !important;
   width: min(50vw, 200px) !important;
 }
+
+/* =========================================================
+   v46 full-preserve AI-only polish patch
+   Keep the original 100KB stylesheet, append only targeted fixes.
+   ========================================================= */
+#cp-chat-root .cp-avatar-wrap,
+#cp-chat-root .cp-peer-avatar,
+#cp-chat-root .cp-peer-avatar-link {
+  width: var(--cp-avatar, 46px) !important;
+  height: var(--cp-avatar, 46px) !important;
+  min-width: var(--cp-avatar, 46px) !important;
+  aspect-ratio: 1 / 1 !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+  flex: 0 0 auto !important;
+  display: block !important;
+}
+#cp-chat-root .cp-peer-avatar,
+#cp-chat-root .cp-peer-avatar-link {
+  width: var(--cp-peer-avatar, 46px) !important;
+  height: var(--cp-peer-avatar, 46px) !important;
+  min-width: var(--cp-peer-avatar, 46px) !important;
+}
+#cp-chat-root .cp-avatar-wrap .avatar,
+#cp-chat-root .cp-avatar-wrap img,
+#cp-chat-root .cp-peer-avatar .avatar,
+#cp-chat-root .cp-peer-avatar img,
+#cp-chat-root .cp-peer-avatar-link .avatar,
+#cp-chat-root .cp-peer-avatar-link img {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  aspect-ratio: 1 / 1 !important;
+  border-radius: 50% !important;
+  object-fit: cover !important;
+  object-position: center center !important;
+  display: block !important;
+}
+#cp-chat-root .cp-trans-wa,
+#cp-chat-root .cp-trans-stack,
+#cp-chat-root .cp-ai-glyph {
+  width: 22px !important;
+  height: 18px !important;
+  display: inline-block !important;
+  position: relative !important;
+  transform: rotate(-12deg) !important;
+  color: #a78bfa !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  vertical-align: middle !important;
+  background: none !important;
+  -webkit-background-clip: initial !important;
+  background-clip: initial !important;
+}
+#cp-chat-root .cp-trans-wa i,
+#cp-chat-root .cp-trans-stack i {
+  display: none !important;
+}
+#cp-chat-root .cp-trans-wa b,
+#cp-chat-root .cp-trans-stack b {
+  position: absolute !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  color: #a78bfa !important;
+  font-size: 12px !important;
+  text-shadow: 0 1px 0 rgba(255,255,255,.75) !important;
+}
+#cp-chat-root .cp-trans-wa b:first-child,
+#cp-chat-root .cp-trans-stack b:first-child {
+  left: 1px !important;
+  top: 1px !important;
+}
+#cp-chat-root .cp-trans-wa b:last-child,
+#cp-chat-root .cp-trans-stack b:last-child {
+  right: 1px !important;
+  bottom: 0 !important;
+}
+#cp-chat-root .cp-quick-trans .cp-trans-wa,
+#cp-chat-root .cp-quick-trans .cp-trans-stack {
+  transform: rotate(-14deg) scale(.96) !important;
+}
+#cp-chat-root .cp-time-sep::before,
+#cp-chat-root .cp-time-sep::after {
+  opacity: .42 !important;
+  background: linear-gradient(90deg, transparent, rgba(148,163,184,.32)) !important;
+}
+#cp-chat-root .cp-time-sep::after {
+  background: linear-gradient(90deg, rgba(148,163,184,.32), transparent) !important;
+}
+#cp-chat-root .cp-time-sep span {
+  color: rgba(100,116,139,.66) !important;
+  font-weight: 650 !important;
+  text-shadow: 0 1px 1px rgba(255,255,255,.36) !important;
+}
+#cp-chat-root .cp-inline-time,
+#cp-chat-root .cp-voice-time,
+#cp-chat-root .cp-media-time {
+  opacity: .42 !important;
+}
+#cp-chat-root #cp-provider-google,
+#cp-chat-root .cp-provider-tab[data-provider="google"] {
+  display: none !important;
+}
+#cp-chat-root .cp-provider-tabs {
+  grid-template-columns: 1fr !important;
+}
+#cp-chat-root #cp-provider-ai {
+  display: block !important;
+}
