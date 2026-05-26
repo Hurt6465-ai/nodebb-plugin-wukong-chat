@@ -338,7 +338,7 @@
     album: cpSvgIcon("image"),
     trash: cpSvgIcon("trash"),
     close: cpSvgIcon("close"),
-    ai: '<span class="cp-trans-wa"><i class="fa-solid fa-language" style="color: rgb(177, 151, 252);"></i><b>文A</b></span>'
+    ai: '<span class="cp-trans-wa" aria-hidden="true"><b>文</b><b>A</b></span>'
   };
 
 
@@ -470,7 +470,7 @@
 
     if (mediaBtn) mediaBtn.innerHTML = ICON.photo;
     var transBtn = byId("cp-send-translate-toggle");
-    if (transBtn) transBtn.innerHTML = '<span class="cp-trans-stack" aria-hidden="true"><b>文</b><b>A</b></span>';
+    if (transBtn) transBtn.innerHTML = '<span class="cp-trans-wa" aria-hidden="true"><b>文</b><b>A</b></span>';
     if (primaryIcon && !String(byId("cp-input") && byId("cp-input").value || "").trim()) primaryIcon.innerHTML = ICON.mic;
     if (cameraIcon) cameraIcon.innerHTML = ICON.camera;
     if (cameraLabel) cameraLabel.textContent = cpT("shoot", "拍摄");
@@ -597,10 +597,10 @@
       voiceMaxDuration: 60,
       translateProvider: "ai",
       ai: {
-        endpoint: "",
+        endpoint: "https://api.deepseek.com/v1/chat/completions",
         apiKey: "",
-        model: "gpt-4o-mini",
-        temperature: 0.2,
+        model: "deepseek4flash",
+        temperature: 0.3,
         translatePrompt: DEFAULT_TRANSLATE_PROMPT,
         wingmanPrompt: DEFAULT_WINGMAN_PROMPT
       }
@@ -609,13 +609,13 @@
     cfg = Object.assign({}, defaults, cfg || {});
     cfg.ai = Object.assign({}, defaults.ai, cfg.ai || {});
 
-    if (cfg.translateProvider !== "ai" && cfg.translateProvider !== "google") cfg.translateProvider = "ai";
+    cfg.translateProvider = "ai";
     if (!cfg.sourceLang) cfg.sourceLang = defaults.sourceLang;
     if (!cfg.targetLang) cfg.targetLang = defaults.targetLang;
 
     if (!cfg.ai.translatePrompt) cfg.ai.translatePrompt = DEFAULT_TRANSLATE_PROMPT;
     if (!cfg.ai.wingmanPrompt) cfg.ai.wingmanPrompt = DEFAULT_WINGMAN_PROMPT;
-    if (!Number.isFinite(Number(cfg.ai.temperature))) cfg.ai.temperature = 0.2;
+    cfg.ai.temperature = 0.3;
 
     cfg.contextRounds = Number(cfg.contextRounds) || 30;
     if ([10, 30, 50, 100].indexOf(cfg.contextRounds) === -1) cfg.contextRounds = 30;
@@ -1936,20 +1936,6 @@
     });
 
     newMsg.serverText = text;
-    try {
-      if (window.NBBWukongConversationUpsert) {
-        window.NBBWukongConversationUpsert(displayText, false, {
-          is_self: true,
-          ts: Date.now(),
-          event_id: "chat:" + (state.channelId || getPeerUid() || "") + ":" + Date.now() + ":" + String(displayText || "").slice(0, 40),
-          last_from_uid: getSelfUid(),
-          last_from_name: "我"
-        });
-      }
-    } catch (e) {
-      warn("conversation-upsert-self", e);
-    }
-
 
     markPendingNativeText(text, newMsg.id);
 
@@ -2071,8 +2057,8 @@
         ai: {
           endpoint: "",
           apiKey: "",
-          model: "gpt-4o-mini",
-          temperature: 0.2,
+          model: "deepseek4flash",
+          temperature: 0.3,
           translatePrompt: DEFAULT_TRANSLATE_PROMPT,
           wingmanPrompt: DEFAULT_WINGMAN_PROMPT
         }
@@ -2386,7 +2372,7 @@
               <button class="cp-lang-btn" id="cp-src-lang-btn">🇨🇳 中文</button>
               <button class="cp-swap-btn" id="cp-lang-swap">⇄</button>
               <button class="cp-lang-btn" id="cp-tgt-lang-btn">🇲🇲 မြန်မာစာ</button>
-              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><span class="cp-trans-stack" aria-hidden="true"><b>文</b><b>A</b></span></button>
+              <button class="cp-toggle-ai-send" id="cp-send-translate-toggle" title="开启后：输入框内容会翻译成对方语言再发送"><span class="cp-trans-wa" aria-hidden="true"><b>文</b><b>A</b></span></button>
             </div>
           </div>
 
@@ -2492,7 +2478,7 @@
                   </label>
                   <label class="cp-setting-field">
                     <span>模型</span>
-                    <input id="cp-ai-model" type="text" placeholder="gpt-4o-mini / qwen / deepseek" />
+                    <input id="cp-ai-model" type="text" placeholder="deepseek4flash" />
                   </label>
                 </div>
               </div>
@@ -3053,14 +3039,14 @@
   }
 
   function setTranslateProvider(provider) {
-    state.cfg.translateProvider = provider === "google" ? "google" : "ai";
+    state.cfg.translateProvider = "ai";
     syncProviderUI();
     syncTranslateBar();
     saveJSON(KEY_CFG, state.cfg);
   }
 
   function getProvider() {
-    return state.cfg && state.cfg.translateProvider === "google" ? "google" : "ai";
+    return "ai";
   }
 
   function syncProviderUI() {
@@ -3069,9 +3055,9 @@
     var ai = byId("cp-provider-ai");
     var pane = byId("cp-ai-pane");
 
-    if (google) google.classList.toggle("active", provider === "google");
-    if (ai) ai.classList.toggle("active", provider === "ai");
-    if (pane) pane.classList.toggle("show", provider === "ai");
+    if (google) { google.classList.remove("active"); google.hidden = true; google.style.display = "none"; }
+    if (ai) ai.classList.add("active");
+    if (pane) pane.classList.add("show");
   }
 
   function syncSettingsUI() {
@@ -3093,7 +3079,7 @@
 
     if (endpoint) endpoint.value = state.cfg.ai.endpoint || "";
     if (key) key.value = state.cfg.ai.apiKey || "";
-    if (model) model.value = state.cfg.ai.model || "gpt-4o-mini";
+    if (model) model.value = state.cfg.ai.model || "deepseek4flash";
 
     setChecked("cp-sr-setting", state.cfg.smartReplyEnabled);
     setChecked("cp-auto-trans-setting", state.cfg.autoTranslateLastMsg);
@@ -3148,11 +3134,11 @@
     state.cfg.relationshipStage = value("cp-relationship-stage", state.cfg.relationshipStage || "刚认识") || "刚认识";
     state.cfg.communicationStyle = value("cp-communication-style", state.cfg.communicationStyle || "自然直接，偶尔幽默").trim() || "自然直接，偶尔幽默";
 
-    state.cfg.translateProvider = getProvider();
+    state.cfg.translateProvider = "ai";
     state.cfg.ai.endpoint = value("cp-ai-endpoint", state.cfg.ai.endpoint || "").trim();
     state.cfg.ai.apiKey = value("cp-ai-key", state.cfg.ai.apiKey || "").trim();
-    state.cfg.ai.model = value("cp-ai-model", state.cfg.ai.model || "gpt-4o-mini").trim() || "gpt-4o-mini";
-    state.cfg.ai.temperature = 0.2;
+    state.cfg.ai.model = value("cp-ai-model", state.cfg.ai.model || "deepseek4flash").trim() || "deepseek4flash";
+    state.cfg.ai.temperature = 0.3;
 
     state.bg.opacity = parseFloat(value("cp-bg-opacity", state.bg.opacity !== undefined ? state.bg.opacity : 0.85));
 
@@ -4582,8 +4568,10 @@
               Authorization: "Bearer " + ai.apiKey
             },
             body: JSON.stringify({
-              model: ai.model,
-              temperature: Number.isFinite(Number(ai.temperature)) ? Number(ai.temperature) : 0.2,
+              model: ai.model || "deepseek4flash",
+              temperature: 0.3,
+              thinking: { type: "disabled" },
+              bodyConfigs: { thinking: { type: "disabled" } },
               messages: messages
             })
           },
@@ -4674,13 +4662,7 @@
   }
 
   async function translateByProvider(text, from, to, forceProvider) {
-    var provider = forceProvider || getProvider();
-
-    if (provider === "ai") {
-      return await translateViaAI(text, from, to, state.cfg.ai || {});
-    }
-
-    return await translateViaGoogle(text, to, from);
+    return await translateViaAI(text, from, to, state.cfg.ai || {});
   }
 
   function addToAiCache(key, val, ttlMs) {
