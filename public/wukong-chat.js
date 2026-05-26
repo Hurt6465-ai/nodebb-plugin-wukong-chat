@@ -23,9 +23,18 @@
     return (window.CPChatHarmony && window.CPChatHarmony.config) || {};
   }
 
+  function getRuntimeState() {
+    try {
+      return typeof state === "undefined" ? null : state;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function readSelfUidFromRuntime() {
+    var s = getRuntimeState();
     var candidates = [
-      state && state.myUid,
+      s && s.myUid,
       window.app && window.app.user && window.app.user.uid,
       window.ajaxify && ajaxify.data && ajaxify.data.loggedInUser && ajaxify.data.loggedInUser.uid,
       window.ajaxify && ajaxify.data && ajaxify.data.uid,
@@ -41,9 +50,10 @@
   }
 
   function ensureSelfUid() {
+    var s = getRuntimeState();
     var uid = readSelfUidFromRuntime();
-    if (uid && state && state.myUid !== uid) state.myUid = uid;
-    return String((state && state.myUid) || uid || "").trim();
+    if (uid && s && s.myUid !== uid) s.myUid = uid;
+    return String((s && s.myUid) || uid || "").trim();
   }
 
   function getSelfUid() {
@@ -174,7 +184,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.3-independent-v42";
+  window.__cpNodebbHarmonyVersion = "1.0.4-p0-p1-stability";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -244,7 +254,7 @@
   };
 
   var VIDEO_CONFIG = {
-    maxSizeThreshold: 40 * 1024 * 1024,
+    maxSizeThreshold: 30 * 1024 * 1024,
     maxDuration: 180,
     maxWidth: 720,
     fps: 24,
@@ -350,6 +360,7 @@
     mounted: false,
     observer: null,
     lazyObserver: null,
+    lazyObserved: typeof WeakSet !== "undefined" ? new WeakSet() : null,
     vvHandler: null,
     popHandler: null,
     docClickHandler: null,
@@ -373,6 +384,7 @@
 
     audio: new Audio(),
     audioEndedHandler: null,
+    audioEndedBound: false,
     currentAudioEl: null,
 
     previewOpen: false,
@@ -427,6 +439,210 @@
     bootRetryTimer: null,
     nativeObserverRetryTimer: null
   };
+
+  function bindAudioEndedHandler() {
+    if (!state || !state.audio || !state.audioEndedHandler || state.audioEndedBound) return;
+
+    try {
+      state.audio.addEventListener("ended", state.audioEndedHandler);
+      state.audioEndedBound = true;
+    } catch (e) {
+      warn("bind-audio-ended", e);
+    }
+  }
+
+  function releaseSharedAudio() {
+    if (!state || !state.audio) return;
+
+    try {
+      if (state.audioEndedHandler && state.audioEndedBound) {
+        state.audio.removeEventListener("ended", state.audioEndedHandler);
+      }
+      state.audioEndedBound = false;
+      state.audio.pause();
+      state.audio.removeAttribute("src");
+      state.audio.load();
+    } catch (e) {
+      warn("release-audio", e);
+    }
+  }
+
+  function releaseMountedMediaElements() {
+    try {
+      Array.prototype.forEach.call(document.querySelectorAll("#cp-msg-list video, #cp-msg-list audio, #cp-preview-body video, #cp-preview-body audio"), function (el) {
+        try {
+          el.pause();
+          el.removeAttribute("src");
+          el.load();
+        } catch (_) {}
+      });
+    } catch (e) {
+      warn("release-media-elements", e);
+    }
+  }
+
+  function getWkStableMessageId(m) {
+    if (!m) return "";
+    return String(
+      m.message_id ||
+      m.messageID ||
+      m.messageId ||
+      m.client_msg_no ||
+      m.clientMsgNo ||
+      m.client_msg_no_str ||
+      ""
+    );
+  }
+
+  function getWkClientMsgNo(m) {
+    if (!m) return "";
+    return String(m.client_msg_no || m.clientMsgNo || m.clientMsgNO || "");
+  }
+
+  function getWkSeq(m) {
+    if (!m) return 0;
+    return Number(m.message_seq || m.messageSeq || m.seq || 0) || 0;
+  }
+
+  function msgIdentityMatches(msg, msgId, clientNo, seq) {
+    if (!msg) return false;
+
+    var ids = [
+      msg.id,
+      msg.clientMsgNo,
+      msg.client_msg_no,
+      msg.messageID,
+      msg.message_id,
+      msg.wkMsg && msg.wkMsg.messageID,
+      msg.wkMsg && msg.wkMsg.message_id,
+      msg.wkMsg && msg.wkMsg.clientMsgNo,
+      msg.wkMsg && msg.wkMsg.client_msg_no
+    ].map(function (x) {
+      return String(x || "");
+    });
+
+    if (msgId && ids.indexOf(String(msgId)) > -1) return true;
+    if (clientNo && ids.indexOf(String(clientNo)) > -1) return true;
+
+    if (seq && msg.seq && Number(msg.seq) === Number(seq)) return true;
+
+    return false;
+  }
+
+  function findPendingOutgoingMessage(serverText, msgId, clientNo, seq, ts, type) {
+    var key = normalizeTextKey(serverText);
+    var nowTs = Number(ts || Date.now());
+
+    for (var i = state.wkMessages.length - 1; i >= 0; i--) {
+      var m = state.wkMessages[i];
+      if (!m || !m.mine) continue;
+
+      if (msgIdentityMatches(m, msgId, clientNo, seq)) return m;
+
+      var maybeLocal =
+        !m.seq ||
+        m.seq === Number.MAX_SAFE_INTEGER ||
+        /^wk_\d+_\d+/.test(String(m.id || "")) ||
+        m.pendingLocal;
+
+      if (!maybeLocal) continue;
+      if (type && m.type && m.type !== type) continue;
+
+      var localPayload = m.type === "text" ? (m.serverText || m.text || "") : (m.mediaUrl || m.audioUrl || "");
+      if (!localPayload || normalizeTextKey(localPayload) !== key) continue;
+
+      var diff = Math.abs(Number(m.ts || 0) - nowTs);
+      if (!m.ts || !nowTs || diff <= 30000) return m;
+    }
+
+    return null;
+  }
+
+  function adoptServerIdentity(localMsg, serverMsg, msgId, seq, clientNo, serverText, displayText) {
+    if (!localMsg) return false;
+
+    var changed = false;
+    var stableId = String(msgId || clientNo || "");
+
+    if (stableId && String(localMsg.id || "") !== stableId) {
+      localMsg.id = stableId;
+      changed = true;
+    }
+
+    if (seq && Number(seq) !== Number(localMsg.seq || 0)) {
+      localMsg.seq = Number(seq);
+      changed = true;
+    }
+
+    if (serverMsg && localMsg.wkMsg !== serverMsg) {
+      localMsg.wkMsg = serverMsg;
+      changed = true;
+    }
+
+    if (clientNo && localMsg.clientMsgNo !== String(clientNo)) {
+      localMsg.clientMsgNo = String(clientNo);
+      changed = true;
+    }
+
+    if (serverText && localMsg.serverText !== serverText) {
+      localMsg.serverText = serverText;
+      changed = true;
+    }
+
+    if (displayText && localMsg.text && localMsg.text !== displayText && /^wk_\d+_\d+/.test(String(localMsg.id || ""))) {
+      localMsg.text = displayText;
+      changed = true;
+    }
+
+    localMsg.pendingLocal = false;
+
+    if (changed) msgTouch(localMsg);
+    return changed;
+  }
+
+  function bindOutgoingAck(wkMsgObj, localMsg) {
+    if (!wkMsgObj || !localMsg) return;
+
+    localMsg.pendingLocal = true;
+
+    var sync = function (ack) {
+      var source = ack || wkMsgObj;
+      var msgId = getWkStableMessageId(source) || getWkStableMessageId(wkMsgObj);
+      var clientNo = getWkClientMsgNo(source) || getWkClientMsgNo(wkMsgObj);
+      var seq = getWkSeq(source) || getWkSeq(wkMsgObj);
+
+      if (adoptServerIdentity(localMsg, source, msgId, seq, clientNo, localMsg.serverText || localMsg.text || "", localMsg.text || "")) {
+        schedulePersistChat(getPeerUid());
+        incrementalRender("keep");
+      }
+    };
+
+    sync(wkMsgObj);
+
+    try {
+      if (typeof wkMsgObj.once === "function") {
+        wkMsgObj.once("sendack", sync);
+        wkMsgObj.once("ack", sync);
+      } else if (typeof wkMsgObj.on === "function") {
+        wkMsgObj.on("sendack", sync);
+        wkMsgObj.on("ack", sync);
+      } else if (typeof wkMsgObj.addEventListener === "function") {
+        wkMsgObj.addEventListener("sendack", function (ev) { sync(ev && (ev.detail || ev)); }, { once: true });
+        wkMsgObj.addEventListener("ack", function (ev) { sync(ev && (ev.detail || ev)); }, { once: true });
+      }
+    } catch (e) {
+      warn("bind-sendack", e);
+    }
+
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      sync(wkMsgObj);
+      if (tries >= 12 || (!localMsg.pendingLocal && localMsg.seq && localMsg.seq !== Number.MAX_SAFE_INTEGER)) {
+        clearInterval(timer);
+      }
+    }, 250);
+  }
 
   function warn(scope, err) {
     try {
@@ -498,6 +714,16 @@
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 800);
+  }
+
+  function shortHash(input) {
+    var s = String(input == null ? "" : input);
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+    }
+    return (h >>> 0).toString(36);
   }
 
   // 修复：检查滚动容器是否在底部
@@ -793,12 +1019,8 @@
     if (state.blobKeys.length > 60) {
       var oldUrl = state.blobKeys.shift();
 
-      try {
-        URL.revokeObjectURL(state.blobUrlCache[oldUrl]);
-      } catch (e) {
-        warn("revoke-url", e);
-      }
-
+      // 不主动 revoke 正在 DOM 中使用的 objectURL，避免历史图片滚动回来后破图。
+      // 这些 URL 会在页面 unmount 时统一释放。
       delete state.blobUrlCache[oldUrl];
     }
 
@@ -1534,9 +1756,9 @@
     state.currentAudioEl = null;
   }
 
-  // 修复：保存引用以便清理
+  // 修复：保存引用并通过幂等绑定，避免重复挂载时累积 ended 监听器
   state.audioEndedHandler = onAudioEnded;
-  state.audio.addEventListener("ended", state.audioEndedHandler);
+  bindAudioEndedHandler();
 
   function initWukong() {
     if (window.__wkEngineBooted) return;
@@ -1776,12 +1998,30 @@
 
   function processWukongMessages(msgs, isLoadMore) {
     var added = false;
+    var touchedExisting = false;
     var wasAtBottom = isMainAtBottom();
+
+    var existingIds = new Set();
+    var existingSeqs = new Set();
+
+    for (var ei = 0; ei < state.wkMessages.length; ei++) {
+      var ex = state.wkMessages[ei];
+      if (!ex) continue;
+      if (ex.id) existingIds.add(String(ex.id));
+      if (ex.clientMsgNo) existingIds.add(String(ex.clientMsgNo));
+      if (ex.wkMsg) {
+        var exStable = getWkStableMessageId(ex.wkMsg);
+        var exClient = getWkClientMsgNo(ex.wkMsg);
+        if (exStable) existingIds.add(String(exStable));
+        if (exClient) existingIds.add(String(exClient));
+      }
+      if (ex.seq && ex.seq !== Number.MAX_SAFE_INTEGER) existingSeqs.add(String(ex.seq));
+    }
 
     for (var i = 0; i < msgs.length; i++) {
       var m = msgs[i];
       var payloadObj = extractWkPayload(m) || {};
-      var fromUid = String(m.from_uid || m.fromUID);
+      var fromUid = String(m.from_uid || m.fromUID || m.fromUid || "");
       var isMine = cpIsMineUid(fromUid);
       var serverT = payloadObj.text || payloadObj.content || "";
 
@@ -1796,33 +2036,55 @@
       // 双保险：originalText 如果也是通话信令，也跳过
       if (isCallSignalText(t)) continue;
 
-      var msgId = String(m.message_id || m.messageID || m.client_msg_no || m.clientMsgNo || "wk_hist_" + Math.random());
+      var seq = getWkSeq(m);
+      var clientNo = getWkClientMsgNo(m);
+      var stableId = getWkStableMessageId(m);
+      var ts = m.timestamp ? Number(m.timestamp) * 1000 : Date.now();
+      var msgId = String(stableId || (seq ? ("wk_seq_" + seq) : ("wk_hist_" + fromUid + "_" + shortHash(serverT || t) + "_" + ts)));
 
-      var exists = state.wkMessages.some(function (x) {
-        return x.id === msgId;
-      });
+      if (existingIds.has(msgId) || (clientNo && existingIds.has(String(clientNo))) || (seq && existingSeqs.has(String(seq)))) {
+        continue;
+      }
 
-      if (exists) continue;
+      if (isMine) {
+        var pending = findPendingOutgoingMessage(serverT || t, msgId, clientNo, seq, ts, "");
+        if (pending) {
+          adoptServerIdentity(pending, m, msgId, seq, clientNo, serverT || t, t);
+          pending.ts = pending.ts || ts;
+          existingIds.add(String(pending.id || msgId));
+          if (clientNo) existingIds.add(String(clientNo));
+          if (seq) existingSeqs.add(String(seq));
+          touchedExisting = true;
+          continue;
+        }
+      }
 
       var newMsg = createMessageObj(t, isMine, fromUid, m, payloadObj);
       newMsg.id = msgId;
-      newMsg.seq = m.message_seq || m.messageSeq || 0;
+      newMsg.seq = seq || 0;
+      newMsg.clientMsgNo = clientNo || "";
       // 修复：始终设置 serverText（实际发送/接收的服务器文本）
       newMsg.serverText = serverT || t;
 
-      if (m.timestamp) newMsg.ts = m.timestamp * 1000;
+      if (m.timestamp) newMsg.ts = ts;
 
       if (newMsg.seq && newMsg.seq < Number.MAX_SAFE_INTEGER && newMsg.seq > state.localMaxSeq) {
         state.localMaxSeq = newMsg.seq;
       }
 
       state.wkMessages.push(newMsg);
+      existingIds.add(String(newMsg.id));
+      if (clientNo) existingIds.add(String(clientNo));
+      if (newMsg.seq) existingSeqs.add(String(newMsg.seq));
       added = true;
     }
 
-    if (!added) return;
+    if (!added && !touchedExisting) return;
 
     state.wkMessages.sort(function (a, b) {
+      var as = Number(a.seq || 0);
+      var bs = Number(b.seq || 0);
+      if (as && bs && as !== Number.MAX_SAFE_INTEGER && bs !== Number.MAX_SAFE_INTEGER && as !== bs) return as - bs;
       return (a.ts || 0) - (b.ts || 0);
     });
 
@@ -1936,6 +2198,7 @@
     });
 
     newMsg.serverText = text;
+    newMsg.pendingLocal = true;
 
     markPendingNativeText(text, newMsg.id);
 
@@ -1947,6 +2210,7 @@
     }
 
     state.wkMessages.push(newMsg);
+    bindOutgoingAck(wkMsgObj, newMsg);
     pruneWkMessages();
     pruneAllMessagesInMemory();
 
@@ -2096,6 +2360,8 @@
     state.wingmanRequestId = 0;
     state.translateInflight = {};
     state.stickToBottom = true;
+    state.lazyObserved = typeof WeakSet !== "undefined" ? new WeakSet() : null;
+    bindAudioEndedHandler();
 
     cleanUpOldMedia();
 
@@ -2173,6 +2439,9 @@
 
     if (state.lazyObserver) state.lazyObserver.disconnect();
     state.lazyObserver = null;
+    state.lazyObserved = typeof WeakSet !== "undefined" ? new WeakSet() : null;
+
+    releaseMountedMediaElements();
 
     if (window.visualViewport && state.vvHandler) {
       window.visualViewport.removeEventListener("resize", state.vvHandler);
@@ -2186,7 +2455,7 @@
       state.docClickHandler = null;
     }
 
-    state.audio.pause();
+    releaseSharedAudio();
 
     var root = byId("cp-chat-root");
     if (root) root.remove();
@@ -2595,6 +2864,31 @@
     byId("cp-lang-grid").innerHTML = langHtml;
   }
 
+  function clearAllMessageTranslations() {
+    var lists = [state.messages || [], state.wkMessages || []];
+    var changed = false;
+
+    for (var li = 0; li < lists.length; li++) {
+      var list = lists[li];
+
+      for (var i = 0; i < list.length; i++) {
+        var m = list[i];
+        if (!m) continue;
+        if (m.translation || m.translationOpen) {
+          m.translation = "";
+          m.translationOpen = false;
+          msgTouch(m);
+          changed = true;
+        }
+      }
+    }
+
+    state.aiCache = {};
+    state.aiCacheKeys = [];
+
+    if (changed) incrementalRender("keep");
+  }
+
   function bindUI() {
     var input = byId("cp-input");
     var btnPrimary = byId("cp-primary-btn");
@@ -2723,6 +3017,7 @@
       else state.cfg.targetLang = lang;
 
       syncTranslateBar();
+      clearAllMessageTranslations();
       saveJSON(KEY_CFG, state.cfg);
       cpSetModalVisible(byId("cp-lang-mask"), false);
       clearWingmanPanel();
@@ -2919,8 +3214,14 @@
 
     // 修复：popstate 处理时 hidden 状态先变更，避免 history.back 死循环
     state.popHandler = function () {
-      if (state.previewOpen) closePreview(true);
-      if (state.settingsOpen) closeSettings(true);
+      if (state.previewOpen) {
+        closePreview(true);
+        return;
+      }
+      if (state.settingsOpen) {
+        closeSettings(true);
+        return;
+      }
     };
 
     window.addEventListener("popstate", state.popHandler);
@@ -2957,14 +3258,15 @@
       var root = byId("cp-chat-root");
       if (!root || !root.contains(e.target)) return;
       if (e.target.closest("textarea,input,select")) return;
-      if (e.target.closest("a,button,video")) return;
+      if (e.target.closest(".cp-text,.cp-translation-text,.cp-rendered-text,.cp-bubble a")) return;
+      if (e.target.closest("a,button,video,audio")) return;
       e.preventDefault();
       return false;
     };
 
+    // 不再拦截 copy，允许用户复制聊天文本、链接、电话。
     document.addEventListener("selectstart", block, true);
     document.addEventListener("dragstart", block, true);
-    document.addEventListener("copy", block, true);
   }
 
   function openSettings() {
@@ -4182,6 +4484,7 @@
 
   function initLazyObserver() {
     if (state.lazyObserver) state.lazyObserver.disconnect();
+    state.lazyObserved = typeof WeakSet !== "undefined" ? new WeakSet() : null;
 
     if (!("IntersectionObserver" in window)) return;
 
@@ -4206,15 +4509,13 @@
 
   function observeLazyElements() {
     if (state.lazyObserver) {
-      document.querySelectorAll(".cp-lazy-media").forEach(function (el) {
-        if (el.dataset.observed === "1") return;
-        el.dataset.observed = "1";
-        state.lazyObserver.observe(el);
-      });
+      document.querySelectorAll(".cp-lazy-media,.cp-lazy-audio").forEach(function (el) {
+        if (state.lazyObserved && state.lazyObserved.has(el)) return;
+        if (!state.lazyObserved && el.dataset.observed === "1") return;
 
-      document.querySelectorAll(".cp-lazy-audio").forEach(function (el) {
-        if (el.dataset.observed === "1") return;
-        el.dataset.observed = "1";
+        if (state.lazyObserved) state.lazyObserved.add(el);
+        else el.dataset.observed = "1";
+
         state.lazyObserver.observe(el);
       });
     } else {
@@ -5232,9 +5533,13 @@
 
     if (!url) return "";
 
-    if (!/^https?:\/\//i.test(url) && url.charAt(0) !== "/") url = "/" + url;
+    url = String(url).trim().replace(/[\u0000-\u001f\u007f]/g, "");
+    if (/^(javascript|data|vbscript):/i.test(url)) return "";
+    if (/^\/\//.test(url)) url = location.protocol + url;
+    if (/^https?:\/\//i.test(url)) return url;
+    if (url.charAt(0) === "/") return url;
 
-    return url;
+    return "/" + url.replace(/^\/+/, "");
   }
 
   function uploadToNodeBB(file, onProgress) {
@@ -5452,8 +5757,14 @@
     // displayed a black preview or could not play in some mobile browsers.
     // We only validate duration, then upload the original file.
     maxDuration = maxDuration || VIDEO_CONFIG.maxDuration;
+    maxSizeThreshold = maxSizeThreshold || VIDEO_CONFIG.maxSizeThreshold;
 
     if (!file || !/^video\//i.test(file.type)) return file;
+    if (file.size > maxSizeThreshold) {
+      var tooLarge = new Error("视频超过 " + Math.round(maxSizeThreshold / 1024 / 1024) + "MB，不能上传");
+      tooLarge.code = "VIDEO_TOO_LARGE";
+      throw tooLarge;
+    }
 
     var inputUrl = URL.createObjectURL(file);
     try {
@@ -5480,7 +5791,7 @@
       return file;
     } catch (err) {
       warn("check-video", err);
-      if (err && err.code === "VIDEO_TOO_LONG") throw err;
+      if (err && (err.code === "VIDEO_TOO_LONG" || err.code === "VIDEO_TOO_LARGE")) throw err;
       return file;
     } finally {
       URL.revokeObjectURL(inputUrl);
@@ -5724,6 +6035,11 @@
             pBar.style.width = "0%";
           }
         }
+
+        state.rec.chunks = [];
+        state.rec.stream = null;
+        state.rec.mediaRecorder = null;
+        state.rec.shouldSend = false;
       };
 
       toggleUIForRecording(true);
@@ -5844,18 +6160,26 @@
   }
 
   function isSafeHref(url) {
-    var s = String(url || "").trim();
+    var s = String(url || "").trim().replace(/[\u0000-\u001f\u007f\s]+/g, "");
+    var decoded = "";
+
+    try { decoded = decodeURIComponent(s); } catch (_) { decoded = s; }
 
     if (!s) return false;
+    if (/^(javascript|data|vbscript):/i.test(s) || /^(javascript|data|vbscript):/i.test(decoded)) return false;
     if (s.charAt(0) === "/" || s.charAt(0) === "#") return true;
 
     return /^(https?:|mailto:|tel:)/i.test(s);
   }
 
   function isSafeImgSrc(url) {
-    var s = String(url || "").trim();
+    var s = String(url || "").trim().replace(/[\u0000-\u001f\u007f\s]+/g, "");
+    var decoded = "";
+
+    try { decoded = decodeURIComponent(s); } catch (_) { decoded = s; }
 
     if (!s) return false;
+    if (/^(javascript|vbscript):/i.test(s) || /^(javascript|vbscript):/i.test(decoded)) return false;
     if (s.charAt(0) === "/") return true;
 
     return /^(https?:|data:image\/)/i.test(s);
