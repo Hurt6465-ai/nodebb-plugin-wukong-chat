@@ -741,3 +741,74 @@ body.wkconv-page {
 .wkconv-topic-avatar::after {
   left: 29px;
 }
+
+/* v15: header right action group + NodeBB notifications */
+.wkconv-tabs {
+  align-items: center;
+}
+
+.wkconv-actions {
+  margin-left: auto !important;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.wkconv-notify-link {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #334155;
+  text-decoration: none;
+  background: transparent;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.wkconv-notify-link:active {
+  background: rgba(255,255,255,.55);
+}
+
+.wkconv-notify-icon {
+  display: block;
+  font-size: 17px;
+  line-height: 1;
+  transform: translateY(.5px);
+  filter: grayscale(.15);
+}
+
+.wkconv-notify-dot {
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #ef4444;
+  border: 1.5px solid rgba(255,255,255,.96);
+  box-shadow: 0 1px 5px rgba(239,68,68,.38);
+  display: none;
+}
+
+.wkconv-notify-link.has-unread .wkconv-notify-dot {
+  display: block;
+}
+
+.wkconv-drawer-open {
+  margin-left: 0 !important;
+  flex: 0 0 14px;
+}
+
+.wkconv-drawer-open span,
+.wkconv-drawer-open::before,
+.wkconv-drawer-open::after {
+  width: 3px;
+  height: 3px;
+  margin: 1px 0;
+}
