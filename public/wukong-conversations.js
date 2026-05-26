@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v15 - notifications action */
+/* Wukong independent conversation list v16 - merged notifications tab */
 (function () {
   "use strict";
 
@@ -41,6 +41,10 @@
     notificationCount: 0,
     notificationCheckInFlight: false,
     notificationTimer: 0,
+    notifications: [],
+    notificationsLoaded: false,
+    notificationsLoading: false,
+    notificationsError: "",
     eventSeen: {},
     visibleRooms: [],
     heightMap: {},
@@ -60,6 +64,7 @@
       var hash = String(location.hash || "").toLowerCase();
       var saved = "";
       try { saved = String(sessionStorage.getItem("wkconv_preferred_tab") || "").toLowerCase(); } catch (_) {}
+      if (raw === "notifications" || raw === "notice" || raw === "notices" || hash === "#notifications" || hash === "#notice" || saved === "notifications") return "notifications";
       if (raw === "rooms" || raw === "chatrooms" || raw === "topics" || raw === "topic" || hash === "#rooms" || hash === "#chatrooms" || saved === "rooms") return "rooms";
       if (raw === "direct" || raw === "messages" || raw === "dm" || hash === "#direct" || saved === "direct") return "direct";
     } catch (_) {}
@@ -98,6 +103,7 @@
       i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
       notificationUrl: "/notifications",
       notificationApi: "/api/notifications",
+      maxNotifications: 80,
       maxConversations: 500,
       openTopicPage: true,
       virtualOverscan: 10,
@@ -848,6 +854,10 @@
 
   function render() {
     if (!els.items) return;
+    if (state.tab === "notifications") {
+      renderNotifications();
+      return;
+    }
     updateTabs();
 
     var rooms = getFiltered();
@@ -1034,10 +1044,216 @@
     return 0;
   }
 
+  function stripHtml(html) {
+    var div = D.createElement("div");
+    div.innerHTML = String(html || "");
+    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+  }
+
+  function firstText(obj, keys) {
+    for (var i = 0; i < keys.length; i++) {
+      var v = obj && obj[keys[i]];
+      if (v !== undefined && v !== null && String(v).trim()) return stripHtml(v);
+    }
+    return "";
+  }
+
+  function extractNotificationList(data) {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data.notifications)) return data.notifications;
+    if (Array.isArray(data.list)) return data.list;
+    if (Array.isArray(data.items)) return data.items;
+    if (data.data) {
+      var nested = extractNotificationList(data.data);
+      if (nested.length) return nested;
+    }
+    if (data.payload) {
+      var nested2 = extractNotificationList(data.payload);
+      if (nested2.length) return nested2;
+    }
+    return [];
+  }
+
+  function notificationUnread(n) {
+    if (!n) return false;
+    if (n.read === false || n.is_read === false || n.isRead === false) return true;
+    if (n.unread === true || n.isUnread === true) return true;
+    if (n.readAt === 0 || n.read_at === 0) return true;
+    if (n.read === 0 || n.is_read === 0) return true;
+    return false;
+  }
+
+  function notificationId(n) {
+    return String(get(n, ["nid", "id", "notificationId", "notification_id", "uuid"], ""));
+  }
+
+  function notificationTarget(n) {
+    var url = get(n, ["url", "path", "href", "link", "targetUrl", "target_url"], "");
+    if (!url && n && n.path) url = n.path;
+    if (!url && n && n.tid) url = "/topic/" + encodeURIComponent(String(n.tid));
+    if (!url && n && n.pid) url = "/post/" + encodeURIComponent(String(n.pid));
+    return absoluteAppUrl(url || cfg.notificationUrl || "/notifications");
+  }
+
+  function notificationAvatar(n) {
+    var u = (n && (n.user || n.from || n.sender || n.fromUser || n.userData)) || {};
+    var pic = get(u, ["picture", "uploadedpicture", "avatar", "image"], "") || get(n, ["image", "picture", "avatar"], "");
+    if (pic) return '<img src="' + esc(absoluteAppUrl(pic)) + '" alt="">';
+    var name = get(u, ["displayname", "username", "userslug", "name"], "") || firstText(n, ["title", "bodyShort", "body", "bodyLong"]);
+    var txt = String(name || "通").charAt(0).toUpperCase();
+    return '<span>' + esc(txt || "通") + '</span>';
+  }
+
+  function notificationKind(n) {
+    var hay = [
+      get(n, ["type", "notificationType", "notification_type", "nid"], ""),
+      get(n, ["path", "url", "href"], ""),
+      firstText(n, ["title", "bodyShort", "body", "bodyLong", "message", "text"])
+    ].join(" ").toLowerCase();
+
+    if (/digest|email|mail|badge|award|reputation|声望|徽章|digest|newsletter|cron|job|debug|任务|后台/.test(hay)) return "noise";
+    if (/mention|@|提到|at-user/.test(hay)) return "mention";
+    if (/reply|repl|回复|comment|post|pid|quote|引用/.test(hay)) return "reply";
+    if (/like|upvote|vote|点赞|收藏|bookmark|favourite|favorite/.test(hay)) return "like";
+    if (/follow|关注|follower/.test(hay)) return "follow";
+    if (/topic|thread|tid|主题|帖子|new-topic|new_post/.test(hay)) return "topic";
+    if (/admin|system|moderator|系统|管理员|封禁|警告|审核/.test(hay)) return "system";
+    return "other";
+  }
+
+  function isCommonNotification(n) {
+    var kind = notificationKind(n);
+    if (kind === "noise") return false;
+    if (kind !== "other") return true;
+    var txt = firstText(n, ["title", "bodyShort", "body", "bodyLong", "message", "text"]);
+    var target = notificationTarget(n);
+    // Keep readable notifications with a useful target, but filter empty/internal noise.
+    return !!txt && !!target && target !== "#" && !/\/admin\/plugins|\/api\//.test(target);
+  }
+
+  function normalizeNotification(n, idx) {
+    var kind = notificationKind(n);
+    var title = firstText(n, ["title", "bodyShort", "body", "bodyLong", "message", "text"]);
+    var body = firstText(n, ["bodyLong", "body", "message", "text", "description"]);
+    if (!title) title = kind === "mention" ? t("noticeMention", "有人提到了你") :
+      kind === "reply" ? t("noticeReply", "有人回复了你") :
+      kind === "like" ? t("noticeLike", "有人与你互动") :
+      kind === "follow" ? t("noticeFollow", "有人关注了你") :
+      kind === "system" ? t("noticeSystem", "系统通知") :
+      t("notice", "通知");
+    if (body === title) body = "";
+    var ts = Number(get(n, ["datetime", "timestamp", "time", "createdAt", "created_at"], 0));
+    if (ts && ts < 10000000000) ts *= 1000;
+    return {
+      raw: n,
+      id: notificationId(n) || String(idx),
+      kind: kind,
+      title: title,
+      body: body,
+      url: notificationTarget(n),
+      unread: notificationUnread(n),
+      ts: ts || 0,
+      avatar: notificationAvatar(n)
+    };
+  }
+
+  async function loadNotifications(reason) {
+    if (state.notificationsLoading) return;
+    state.notificationsLoading = true;
+    state.notificationsError = "";
+    if (state.tab === "notifications") render();
+    try {
+      var api = absoluteAppUrl(cfg.notificationApi || "/api/notifications");
+      var res = await fetch(api, {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" }
+      });
+      var data = null;
+      try { data = await res.json(); } catch (_) { data = {}; }
+      if (!res.ok) throw new Error((data && (data.message || data.error)) || ("HTTP " + res.status));
+      var list = extractNotificationList(data).filter(isCommonNotification).map(normalizeNotification);
+      list.sort(function (a, b) { return Number(b.ts || 0) - Number(a.ts || 0); });
+      state.notifications = list.slice(0, Number(cfg.maxNotifications || 80));
+      state.notificationsLoaded = true;
+      var unread = state.notifications.filter(function (n) { return n.unread; }).length;
+      setNotificationDot(extractNotificationCount(data) || unread);
+    } catch (err) {
+      state.notificationsError = err && err.message ? err.message : String(err || "error");
+      state.notificationsLoaded = true;
+    } finally {
+      state.notificationsLoading = false;
+      if (state.tab === "notifications") render();
+    }
+  }
+
+  function renderNotifications() {
+    updateTabs();
+    if (!els.items) return;
+    els.topSpacer.style.height = "0px";
+    els.bottomSpacer.style.height = "0px";
+
+    if (state.notificationsLoading && !state.notifications.length) {
+      els.items.innerHTML = '<div class="wkconv-empty wkconv-notice-loading"><div><strong>' + esc(t("loadingNotifications", "正在加载通知")) + '</strong></div></div>';
+      return;
+    }
+
+    if (state.notificationsError && !state.notifications.length) {
+      els.items.innerHTML = '<div class="wkconv-error"><div><strong>' + esc(t("noticeLoadFailed", "通知加载失败")) + '</strong><div>' + esc(state.notificationsError) + '</div></div></div>';
+      return;
+    }
+
+    if (!state.notifications.length) {
+      els.items.innerHTML = '<div class="wkconv-empty"><div><strong>' + esc(t("emptyNotificationsTitle", "暂无通知")) + '</strong><div>' + esc(t("emptyNotificationsDesc", "常用通知会显示在这里。")) + '</div></div></div>';
+      return;
+    }
+
+    els.items.innerHTML = state.notifications.map(function (n, idx) {
+      return '<div class="wkconv-notice-item' + (n.unread ? ' is-unread' : '') + '" data-notice-index="' + idx + '">' +
+        '<div class="wkconv-notice-avatar">' + n.avatar + '</div>' +
+        '<div class="wkconv-notice-main">' +
+          '<div class="wkconv-notice-top"><div class="wkconv-notice-title">' + esc(n.title) + '</div><div class="wkconv-time">' + esc(fmtTime(n.ts)) + '</div></div>' +
+          '<div class="wkconv-notice-body">' + esc(n.body || noticeKindText(n.kind)) + '</div>' +
+        '</div>' +
+        '<span class="wkconv-notice-dot"></span>' +
+      '</div>';
+    }).join("");
+  }
+
+  function noticeKindText(kind) {
+    if (kind === "mention") return t("noticeMention", "有人提到了你");
+    if (kind === "reply") return t("noticeReply", "有人回复了你");
+    if (kind === "like") return t("noticeLike", "有人与你互动");
+    if (kind === "follow") return t("noticeFollow", "有人关注了你");
+    if (kind === "system") return t("noticeSystem", "系统通知");
+    return t("notice", "通知");
+  }
+
+  function openNotificationByIndex(idx) {
+    var n = state.notifications[Number(idx)];
+    if (!n) return;
+    n.unread = false;
+    var unread = state.notifications.filter(function (x) { return x.unread; }).length;
+    setNotificationDot(unread);
+    try {
+      var sock = W.socket || (W.app && app.socket);
+      if (sock && typeof sock.emit === "function" && n.id) {
+        sock.emit("notifications.markRead", n.id);
+        sock.emit("event:notifications.read", n.id);
+      }
+    } catch (_) {}
+    location.href = n.url || notificationHref();
+  }
+
   function setNotificationDot(count) {
     count = numberFromAny(count);
     state.notificationCount = count;
     state.notificationUnread = count > 0;
+
+    if (els.notifyTab) {
+      els.notifyTab.classList.toggle("has-unread", state.notificationUnread);
+      els.notifyTab.setAttribute("data-count", count ? String(count) : "");
+    }
 
     if (!els.notifyLink) return;
     els.notifyLink.classList.toggle("has-unread", state.notificationUnread);
@@ -1063,8 +1279,16 @@
       });
       var data = null;
       try { data = await res.json(); } catch (_) { data = {}; }
-      if (res.ok) setNotificationDot(extractNotificationCount(data));
-      else if (!localCount) setNotificationDot(0);
+      if (res.ok) {
+        setNotificationDot(extractNotificationCount(data));
+        if (state.tab === "notifications" && !state.notificationsLoading) {
+          var list = extractNotificationList(data).filter(isCommonNotification).map(normalizeNotification);
+          list.sort(function (a, b) { return Number(b.ts || 0) - Number(a.ts || 0); });
+          state.notifications = list.slice(0, Number(cfg.maxNotifications || 80));
+          state.notificationsLoaded = true;
+          renderNotifications();
+        }
+      } else if (!localCount) setNotificationDot(0);
     } catch (_) {
       if (!localCount) setNotificationDot(0);
     } finally {
@@ -1107,12 +1331,25 @@
     }
   }
 
+  function tabOrder() {
+    return ["direct", "rooms", "notifications"];
+  }
+
+  function adjacentTab(dir) {
+    var order = tabOrder();
+    var idx = order.indexOf(state.tab);
+    if (idx < 0) idx = 0;
+    idx = Math.max(0, Math.min(order.length - 1, idx + dir));
+    return order[idx];
+  }
+
   function setTab(tab) {
-    if (tab !== "direct" && tab !== "rooms") return;
+    if (tab !== "direct" && tab !== "rooms" && tab !== "notifications") return;
     if (state.tab === tab) return;
     state.tab = tab;
     updateTabUrl(tab);
     if (els.listWrap) els.listWrap.scrollTop = 0;
+    if (tab === "notifications" && !state.notificationsLoaded) loadNotifications("tab");
     render();
   }
 
@@ -1281,11 +1518,16 @@
       var dx = p.clientX - state.touchX;
       var dy = p.clientY - state.touchY;
       if (Math.abs(dx) > 58 && Math.abs(dx) > Math.abs(dy) * 1.4) {
-        setTab(dx < 0 ? "rooms" : "direct");
+        setTab(adjacentTab(dx < 0 ? 1 : -1));
       }
     }, { passive: true });
 
     els.items.addEventListener("click", function (e) {
+      var notice = e.target.closest(".wkconv-notice-item");
+      if (notice) {
+        openNotificationByIndex(notice.getAttribute("data-notice-index"));
+        return;
+      }
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
       openRoom(findRoomByKey(item.getAttribute("data-key")));
@@ -1293,6 +1535,7 @@
 
     var longTimer = 0;
     els.items.addEventListener("touchstart", function (e) {
+      if (e.target.closest(".wkconv-notice-item")) return;
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
       longTimer = setTimeout(function () {
@@ -1307,6 +1550,7 @@
     });
 
     els.items.addEventListener("contextmenu", function (e) {
+      if (e.target.closest(".wkconv-notice-item")) return;
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
       e.preventDefault();
@@ -1348,6 +1592,7 @@
 
     D.addEventListener("visibilitychange", function () {
       if (!D.hidden && now() - state.lastSyncAt > 3000) syncList("visible");
+      if (!D.hidden && state.tab === "notifications") loadNotifications("visible");
     });
 
     W.addEventListener("online", function () {
@@ -1362,11 +1607,12 @@
           '<div class="wkconv-tabs" role="tablist">' +
             '<button class="wkconv-tab is-active" data-tab="direct" role="tab" type="button">' + esc(t("messages", "消息")) + '</button>' +
             '<button class="wkconv-tab" data-tab="rooms" role="tab" type="button">' + esc(t("chatrooms", "聊天室")) + '</button>' +
+            '<button class="wkconv-tab wkconv-tab-notifications" data-tab="notifications" role="tab" type="button">' + esc(t("notifications", "通知")) + '</button>' +
             '<div class="wkconv-status"></div>' +
             '<div class="wkconv-actions">' +
-              '<a class="wkconv-notify-link" href="' + esc(notificationHref()) + '" aria-label="' + esc(t("notifications", "通知")) + '">' +
+              '<button class="wkconv-notify-link" data-tab="notifications" type="button" aria-label="' + esc(t("notifications", "通知")) + '">' +
                 '<span class="wkconv-notify-icon" aria-hidden="true">🔔</span><span class="wkconv-notify-dot"></span>' +
-              '</a>' +
+              '</button>' +
               '<button class="wkconv-drawer-open" type="button" aria-label="menu"><span></span></button>' +
             '</div>' +
           '</div>' +
@@ -1389,6 +1635,7 @@
       tabs: root.querySelector(".wkconv-tabs"),
       drawerOpen: root.querySelector(".wkconv-drawer-open"),
       notifyLink: root.querySelector(".wkconv-notify-link"),
+      notifyTab: root.querySelector(".wkconv-tab-notifications"),
       notifyDot: root.querySelector(".wkconv-notify-dot"),
       listWrap: root.querySelector(".wkconv-list-wrap"),
       list: root.querySelector(".wkconv-list"),
@@ -1423,12 +1670,13 @@
     bind();
     bindNotificationEvents();
     render();
+    if (state.tab === "notifications") loadNotifications("boot");
 
     syncList("boot");
     startRealtime();
 
     W.WukongConversations = {
-      version: "v15-notifications-action",
+      version: "v16-merged-notifications-tab",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
