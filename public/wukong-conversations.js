@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v12 - topic tile avatar */
+/* Wukong independent conversation list v14 - public room prune */
 (function () {
   "use strict";
 
@@ -48,6 +48,28 @@
       avg: 70
     }
   };
+
+  function initialTabFromUrl() {
+    try {
+      var q = new URLSearchParams(location.search || "");
+      var raw = String(q.get("tab") || q.get("type") || q.get("view") || "").toLowerCase();
+      var hash = String(location.hash || "").toLowerCase();
+      var saved = "";
+      try { saved = String(sessionStorage.getItem("wkconv_preferred_tab") || "").toLowerCase(); } catch (_) {}
+      if (raw === "rooms" || raw === "chatrooms" || raw === "topics" || raw === "topic" || hash === "#rooms" || hash === "#chatrooms" || saved === "rooms") return "rooms";
+      if (raw === "direct" || raw === "messages" || raw === "dm" || hash === "#direct" || saved === "direct") return "direct";
+    } catch (_) {}
+    return "direct";
+  }
+
+  function updateTabUrl(tab) {
+    try {
+      sessionStorage.setItem("wkconv_preferred_tab", tab);
+      var url = new URL(location.href);
+      url.searchParams.set("tab", tab);
+      history.replaceState(history.state, document.title, url.pathname + url.search + url.hash);
+    } catch (_) {}
+  }
 
   function ensureViewport() {
     var meta = D.querySelector('meta[name="viewport"]');
@@ -304,6 +326,20 @@
 
     var map = {};
     state.rooms.forEach(function (r) { map[roomKey(r)] = r; });
+
+    (data.removed_keys || data.removedKeys || []).forEach(function (key) {
+      key = String(key || "");
+      if (key) delete map[key];
+    });
+
+    if (Array.isArray(data.topic_room_keys) || Array.isArray(data.topicRoomKeys)) {
+      var activeTopicKeys = {};
+      (data.topic_room_keys || data.topicRoomKeys || []).forEach(function (key) { activeTopicKeys[String(key)] = 1; });
+      Object.keys(map).forEach(function (key) {
+        var r = map[key] || {};
+        if ((r.is_topic || r.isTopic || Number(r.channel_type || r.channelType) === 2) && !activeTopicKeys[key]) delete map[key];
+      });
+    }
 
     (data.rooms || []).forEach(function (r) {
       var key = roomKey(r);
@@ -683,8 +719,9 @@
   function openUrl(room) {
     if (room.is_topic || room.isTopic) {
       var tid = topicTid(room);
-      if (cfg.openTopicPage !== false) return rel() + cfg.topicBase + "/" + encodeURIComponent(tid);
-      return rel() + cfg.chatBase + "?tid=" + encodeURIComponent(tid);
+      var back = encodeURIComponent("/wukong/conversations?tab=rooms");
+      if (cfg.openTopicPage !== false) return rel() + cfg.topicBase + "/" + encodeURIComponent(tid) + "?return=" + back;
+      return rel() + cfg.chatBase + "?tid=" + encodeURIComponent(tid) + "&return=" + back;
     }
     return rel() + cfg.chatBase + "/" + encodeURIComponent(room.peer_uid || room.id);
   }
@@ -871,6 +908,9 @@
   async function openRoom(room) {
     if (!room) return;
     await markRead(room);
+    if (room.is_topic || room.isTopic) {
+      try { sessionStorage.setItem("wkconv_preferred_tab", "rooms"); } catch (_) {}
+    }
     location.href = openUrl(room);
   }
 
@@ -922,6 +962,7 @@
     if (tab !== "direct" && tab !== "rooms") return;
     if (state.tab === tab) return;
     state.tab = tab;
+    updateTabUrl(tab);
     if (els.listWrap) els.listWrap.scrollTop = 0;
     render();
   }
@@ -1219,6 +1260,7 @@
     D.body.classList.add("wkconv-page");
     await loadI18n();
     await ensureToken().catch(function () {});
+    state.tab = initialTabFromUrl();
     loadLocal();
     updateAverageHeight();
     mountHtml();
@@ -1229,7 +1271,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v12-topic-avatar-tile",
+      version: "v14-public-room-prune",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
