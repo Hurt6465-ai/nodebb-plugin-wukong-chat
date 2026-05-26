@@ -1,4 +1,3 @@
-<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversation-sidebar-links.js?v=15">
 <link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=15">
 <link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.css?v=15">
 
@@ -19,16 +18,14 @@
   window.NBBWukongConversations = window.NBBWukongConversations || {};
   window.NBBWukongConversations.config = Object.assign({}, window.NBBWukongConversations.config || {}, {
     apiBase: "/api/wukong",
+    bridgeBase: "/bridge",
     chatBase: "/wukong",
     topicBase: "/topic",
-    wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1",
     i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
+    syncInterval: 8000,
     maxConversations: 500,
-    openTopicPage: true,
-    virtualOverscan: 10,
-    defaultRowHeight: 58
+    openTopicPage: true
   });
 })();
 </script>
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversation-sidebar-links.js?v=15"></script>
 <script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=15"></script>
