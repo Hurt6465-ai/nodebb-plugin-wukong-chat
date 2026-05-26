@@ -21,9 +21,12 @@
     bridgeBase: "/bridge",
     chatBase: "/wukong",
     topicBase: "/topic",
+    notificationUrl: "/notifications",
+    notificationApi: "/api/notifications",
     i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
     syncInterval: 8000,
     maxConversations: 500,
+    maxNotifications: 80,
     openTopicPage: true
   });
 })();
