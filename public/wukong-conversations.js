@@ -248,9 +248,14 @@
   }
 
 
+  function isCallSignalText(text) {
+    text = String(text || "").trim();
+    return text.indexOf("__cp_harmony_call__:") === 0 || text.indexOf("__wkcall__:") === 0 || text.indexOf("__wkcall__：") === 0;
+  }
+
   function isBadPreviewText(text) {
     text = String(text || "").replace(/\s+/g, " ").trim();
-    return !text || text === t("roomLabel", "聊天室") || text === t("topic", "聊天室") || text === "聊天室";
+    return isCallSignalText(text) || !text || text === t("roomLabel", "聊天室") || text === t("topic", "聊天室") || text === "聊天室";
   }
 
   function cleanPreviewText(text) {
@@ -394,6 +399,7 @@
       textFromContentObject(m && m.payload);
 
     var text = parsePayloadText(contentText || payloadObj || m.payload || "", m && m.contentType);
+    if (isCallSignalText(text)) return null;
     var ts = Number(get(m, ["timestamp", "time", "createdAt"], 0));
     if (ts && ts < 10000000000) ts *= 1000;
     if (!ts) ts = now();
@@ -1676,7 +1682,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v16-merged-notifications-tab",
+      version: "v16-call-signal-filter",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
