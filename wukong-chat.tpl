@@ -18,8 +18,9 @@
     wkWsPath: "/wkws/",
     wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=28",
     peerjsUrl: "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js",
+    globalListen: true,
     autoConnectWukong: true
   });
 })();
 </script>
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/cp-harmony-call.js?v=48"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/cp-harmony-call.js?v=49"></script>
