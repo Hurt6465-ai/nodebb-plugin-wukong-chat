@@ -1,7 +1,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=47">
+<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=49">
 <link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=28">
-<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=47">
+<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=49">
 
 <div id="nodebb-wukong-root" class="nbb-wk-root" data-wukong-root="1">
   <div class="nbb-wk-loading">正在加载悟空聊天...</div>
@@ -33,7 +33,7 @@
     channelId: channelId,
     channelType: Number(channelType || 1),
     wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=28",
-    cssUrl: "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=47",
+    cssUrl: "/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.css?v=49",
     i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
     defaultSourceLang: "中文",
     defaultTargetLang: "မြန်မာစာ",
@@ -42,4 +42,21 @@
   });
 })();
 </script>
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=47"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-chat.js?v=49"></script>
+<script>
+(function () {
+  window.CPHarmonyCallConfig = Object.assign({}, window.CPHarmonyCallConfig || {}, {
+    enabled: true,
+    showButton: true,
+    enableVideo: true,
+    tokenPath: "/api/wukong/token",
+    tokenFallbackPath: "/bridge/token",
+    wkWsPath: "/wkws/",
+    wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=28",
+    peerjsUrl: "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js",
+    globalListen: true,
+    autoConnectWukong: true
+  });
+})();
+</script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/cp-harmony-call.js?v=49"></script>
