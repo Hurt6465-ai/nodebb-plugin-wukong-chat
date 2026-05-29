@@ -2750,14 +2750,16 @@
         right:13px!important;
         bottom:calc(var(--cp-footer-h) + 14px)!important;
         border:0!important;
-        background:#2563eb!important;
+        background:#7bb7ff!important;
         color:#fff!important;
-        box-shadow:0 6px 18px rgba(37,99,235,.28)!important;
+        box-shadow:0 6px 16px rgba(96,165,250,.24)!important;
       }
       #cp-chat-root .cp-fab-v{
-        font-size:14px!important;
+        font-size:19px!important;
+        font-weight:900!important;
         line-height:1!important;
-        transform:none!important;
+        transform:translateY(-1px)!important;
+        color:#fff!important;
       }
       #cp-chat-root .cp-fab-badge{
         top:-5px!important;
@@ -2770,9 +2772,9 @@
       }
 
       #cp-chat-root .cp-quick-trans{
-        width:22px!important;
-        height:22px!important;
-        right:-27px!important;
+        width:20px!important;
+        height:20px!important;
+        right:-25px!important;
         border-radius:999px!important;
         background:rgba(255,255,255,.96)!important;
         border:1px solid rgba(226,232,240,.9)!important;
@@ -2781,7 +2783,7 @@
       #cp-chat-root .cp-quick-trans .cp-trans-wa,
       #cp-chat-root .cp-quick-trans .cp-trans-stack,
       #cp-chat-root .cp-quick-trans .cp-ai-glyph{
-        transform:rotate(-12deg) scale(.78)!important;
+        transform:rotate(-12deg) scale(.68)!important;
       }
 
       #cp-chat-root .cp-avatar-placeholder i{
@@ -2899,7 +2901,7 @@
         </main>
 
         <button id="cp-fab-bottom" class="cp-fab-bottom" title="回到底部" aria-label="回到底部">
-          <i class="fa fa-chevron-down cp-fab-v" aria-hidden="true"></i>
+          <span class="cp-fab-v" aria-hidden="true">↓</span>
           <span id="cp-fab-badge" class="cp-fab-badge" hidden>0</span>
         </button>
 
