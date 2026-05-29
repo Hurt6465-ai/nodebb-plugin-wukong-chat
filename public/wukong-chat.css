@@ -4299,3 +4299,151 @@ body.cp-has-bg #cp-chat-root .cp-header {
 #cp-chat-root #cp-provider-ai {
   display: block !important;
 }
+
+/* =========================================================
+   v47 compact call/translate/bottom polish
+   - smaller blue back-to-bottom button
+   - smaller peer quick translate button
+   - call button sits inside the top-right action cluster
+   ========================================================= */
+#cp-chat-root .cp-header-actions-with-call,
+#cp-chat-root .cp-header-actions {
+  width: auto !important;
+  min-width: 72px !important;
+  height: 36px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 3px !important;
+  flex-shrink: 0 !important;
+}
+
+#cp-chat-root .cp-header-actions > button {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  font-size: 23px !important;
+}
+
+#cp-chat-root .cp-harmony-call-slot {
+  position: relative !important;
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  margin: 0 2px 0 0 !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: 0 0 auto !important;
+}
+
+#cp-chat-root .cp-harmony-call-entry {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  border-radius: 999px !important;
+  background: rgba(59, 130, 246, .10) !important;
+  color: #2563eb !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+#cp-chat-root .cp-harmony-call-entry i {
+  font-size: 16px !important;
+  line-height: 1 !important;
+}
+
+#cp-chat-root .cp-harmony-call-entry:active {
+  transform: scale(.92) !important;
+}
+
+#cp-chat-root .cp-fab-bottom {
+  width: 32px !important;
+  height: 32px !important;
+  right: 14px !important;
+  bottom: calc(var(--cp-footer-h) + 14px) !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: #2563eb !important;
+  color: #fff !important;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, .28) !important;
+}
+
+#cp-chat-root .cp-fab-bottom i,
+#cp-chat-root .cp-fab-bottom .fa {
+  font-size: 18px !important;
+  line-height: 1 !important;
+  color: #fff !important;
+  transform: translateY(1px) !important;
+}
+
+#cp-chat-root .cp-fab-bottom .cp-fab-down-icon,
+#cp-chat-root .cp-fab-bottom svg {
+  width: 18px !important;
+  height: 18px !important;
+  color: #fff !important;
+  stroke-width: 3 !important;
+}
+
+#cp-chat-root .cp-quick-trans {
+  width: 22px !important;
+  height: 22px !important;
+  right: -27px !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, .95) !important;
+  border: 1px solid rgba(226, 232, 240, .95) !important;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, .13) !important;
+}
+
+#cp-chat-root .cp-quick-trans .cp-trans-wa,
+#cp-chat-root .cp-quick-trans .cp-trans-stack,
+#cp-chat-root .cp-quick-trans .cp-ai-glyph {
+  width: 17px !important;
+  height: 15px !important;
+  transform: rotate(-12deg) scale(.86) !important;
+}
+
+#cp-chat-root .cp-quick-trans .cp-trans-wa b,
+#cp-chat-root .cp-quick-trans .cp-trans-stack b {
+  font-size: 10px !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send {
+  min-width: 34px !important;
+  height: 28px !important;
+  padding: 3px 3px 3px 13px !important;
+}
+
+#cp-chat-root .cp-toggle-ai-send .cp-trans-wa,
+#cp-chat-root .cp-toggle-ai-send .cp-trans-stack {
+  width: 17px !important;
+  height: 15px !important;
+  transform: rotate(-12deg) scale(.9) !important;
+}
+
+@media (max-width: 380px) {
+  #cp-chat-root .cp-header-actions-with-call,
+  #cp-chat-root .cp-header-actions {
+    min-width: 68px !important;
+    gap: 2px !important;
+  }
+
+  #cp-chat-root .cp-header-actions > button,
+  #cp-chat-root .cp-harmony-call-slot,
+  #cp-chat-root .cp-harmony-call-entry {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+  }
+
+  #cp-chat-root .cp-harmony-call-entry i {
+    font-size: 15px !important;
+  }
+
+  #cp-chat-root .cp-quick-trans {
+    width: 21px !important;
+    height: 21px !important;
+    right: -25px !important;
+  }
+}
