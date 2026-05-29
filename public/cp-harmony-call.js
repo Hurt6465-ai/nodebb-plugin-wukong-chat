@@ -2,25 +2,23 @@
   "use strict";
 
   // ============================================================
-  // CP Harmony Peer Call v7 — 现代化语音 / 视频通话
-  // - 现代 SVG 图标（无 FontAwesome 依赖）
+  // CP Harmony Peer Call v7.1 — 现代化语音 / 视频通话
+  // - 顶部按钮：黑/灰电话图标，无背景框
+  // - 视频画面：点击小窗切换主画面/小窗，原大屏会进入小窗，再点可切回
   // - 完整通话音效（呼出 / 来电 / 接通 / 挂断 / 拒绝）
   // - 前后摄像头切换（replaceTrack，无需重协商）
-  // - 可拖动本地小窗 + 点击放大 / 全屏切换（仿微信）
-  // - 断线自动重连 + ICE 状态监控，连接更稳定
+  // - 可拖动本地/远端小窗
+  // - 断线自动重连 + ICE 状态监控
   // - 全局监听：不在聊天窗口也能接听来电
   // ============================================================
 
   try {
-    if (
-      window.CPHarmonyCall &&
-      /^v[1-6]-/.test(String(window.CPHarmonyCall.version || "")) &&
-      typeof window.CPHarmonyCall.destroy === "function"
-    ) {
+    if (window.CPHarmonyCall && typeof window.CPHarmonyCall.destroy === "function") {
       window.CPHarmonyCall.destroy();
     }
   } catch (_) {}
 
+  try { window.__cpHarmonyPeerCallInitedV7 = false; } catch (_) {}
   if (window.__cpHarmonyPeerCallInitedV7) return;
   window.__cpHarmonyPeerCallInitedV7 = true;
 
@@ -40,11 +38,11 @@
     tokenFallbackPath: "/bridge/token",
     wkWsPath: "/wkws/",
     wkAddr: "",
-    callTimeoutMs: 30000,    // 振铃 / 无应答超时
-    connectTimeoutMs: 35000, // 接通前的协商超时
-    signalTtlMs: 45000,      // 信令有效期
-    reconnectMaxTries: 5,    // PeerJS 信令断线重连次数
-    iceReconnectGraceMs: 8000, // ICE 进入 disconnected 后的容忍时间
+    callTimeoutMs: 30000,
+    connectTimeoutMs: 35000,
+    signalTtlMs: 45000,
+    reconnectMaxTries: 5,
+    iceReconnectGraceMs: 8000,
     enableVideo: true,
     showButton: true,
     globalListen: true,
@@ -69,6 +67,8 @@
   // 状态
   // ----------------------------------------------------------------
   var State = {
+    destroyed: false,
+
     wkReady: false,
     wkConnected: false,
     wkReadyPromise: null,
@@ -85,7 +85,6 @@
     mediaCall: null,
     localStream: null,
     remoteStream: null,
-    pendingMode: "audio",
 
     callId: "",
     direction: "",
@@ -93,8 +92,11 @@
     connected: false,
     incomingInvite: null,
 
-    facingMode: "user",       // user | environment
+    facingMode: "user",
     switchingCamera: false,
+
+    // remote = 远端画面在大屏，本地画面在小窗；local = 反过来
+    mainVideoSource: "remote",
 
     remoteUser: { uid: "", name: "好友", avatar: "" },
 
@@ -106,13 +108,13 @@
 
     isMicOn: true,
     isCamOn: false,
-    pipExpanded: false,
     ending: false,
 
     seenSignals: {},
     domObserver: null,
     injectTimer: null,
-    started: false
+    started: false,
+    outsideClickHandler: null
   };
 
   var AudioFX = {
@@ -127,9 +129,13 @@
   // 工具
   // ----------------------------------------------------------------
   function noop() {}
-  function warn(scope, err) { if (CFG.debug) { try { console.warn("[cp-call][" + scope + "]", err); } catch (_) {} } }
+  function warn(scope, err) {
+    try {
+      if (CFG.debug) console.warn("[cp-call][" + scope + "]", err);
+    } catch (_) {}
+  }
   function byId(id) { return document.getElementById(id); }
-  function now() { return Date.now(); }
+  function now() { return Date.now ? Date.now() : new Date().getTime(); }
 
   function relativePath() { return (window.config && window.config.relative_path) || ""; }
   function withRelativePath(path) {
@@ -144,30 +150,40 @@
   function cfgObj() { return (window.CPChatHarmony && window.CPChatHarmony.config) || {}; }
 
   function routeTargetUid() {
-    var p = pageInfo(), cfg = cfgObj();
+    var p = pageInfo();
+    var cfg = cfgObj();
     var direct = p.targetUid || cfg.targetUid || cfg.uid || "";
     if (direct) return String(direct).trim();
+
     var root = byId("nodebb-wukong-root");
-    if (root && root.getAttribute("data-target-uid")) return String(root.getAttribute("data-target-uid") || "").trim();
+    if (root && root.getAttribute("data-target-uid")) {
+      return String(root.getAttribute("data-target-uid") || "").trim();
+    }
+
     try {
       var q = new URLSearchParams(location.search || "");
       direct = q.get("uid") || q.get("to_uid") || q.get("targetUid") || "";
       if (direct) return String(direct).trim();
     } catch (_) {}
+
     var m = String(location.pathname || "").match(/\/wukong\/([^/?#]+)/i);
-    if (m && m[1]) { try { return decodeURIComponent(m[1]); } catch (_) { return m[1]; } }
+    if (m && m[1]) {
+      try { return decodeURIComponent(m[1]); } catch (_) { return m[1]; }
+    }
     return "";
   }
 
   function routeChannelType() {
-    var p = pageInfo(), cfg = cfgObj();
+    var p = pageInfo();
+    var cfg = cfgObj();
     var root = byId("nodebb-wukong-root");
     var raw = p.channelType || cfg.channelType || (root && root.getAttribute("data-channel-type")) || "1";
     return Number(raw || 1) || 1;
   }
 
   function isPrivateWukongChat() {
-    var p = pageInfo(), cfg = cfgObj();
+    var p = pageInfo();
+    var cfg = cfgObj();
     if (p.tid || cfg.tid) return false;
     if (routeChannelType() !== 1) return false;
     var target = routeTargetUid();
@@ -200,8 +216,10 @@
 
   function escAttr(s) {
     return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
-      .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
   }
 
   function showToast(text) {
@@ -232,13 +250,15 @@
     return new Promise(function (resolve, reject) {
       var exists = document.querySelector('script[src="' + src + '"]');
       if (exists) {
-        if (exists.getAttribute("data-loaded") === "1") return resolve();
+        if (exists.getAttribute("data-loaded") === "1") { resolve(); return; }
         exists.addEventListener("load", resolve, { once: true });
         exists.addEventListener("error", reject, { once: true });
         return;
       }
+
       var s = document.createElement("script");
-      s.src = src; s.async = true;
+      s.src = src;
+      s.async = true;
       s.onload = function () { s.setAttribute("data-loaded", "1"); resolve(); };
       s.onerror = function () { reject(new Error("脚本加载失败：" + src)); };
       document.head.appendChild(s);
@@ -246,7 +266,7 @@
   }
 
   // ----------------------------------------------------------------
-  // 已结束通话记录（防止过期/已挂断的 invite 重新振铃）
+  // 已结束通话记录
   // ----------------------------------------------------------------
   function getClosedCalls() {
     try { return JSON.parse(sessionStorage.getItem(CLOSED_CALLS_KEY) || "{}"); } catch (e) { return {}; }
@@ -267,7 +287,11 @@
     var map = getClosedCalls();
     var ts = map[String(callId)];
     if (!ts) return false;
-    if (now() - ts > 10 * 60 * 1000) { delete map[String(callId)]; saveClosedCalls(map); return false; }
+    if (now() - ts > 10 * 60 * 1000) {
+      delete map[String(callId)];
+      saveClosedCalls(map);
+      return false;
+    }
     return true;
   }
 
@@ -348,13 +372,15 @@
     var endAt = startAt + (duration || 0.18);
     osc.type = type || "sine";
     osc.frequency.setValueAtTime(freq, startAt);
-    osc.connect(gain); gain.connect(ctx.destination);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
     var v = Math.min(0.2, volume || 0.05);
     gain.gain.setValueAtTime(0.0001, startAt);
     gain.gain.exponentialRampToValueAtTime(v, startAt + 0.03);
     gain.gain.setValueAtTime(v, Math.max(startAt + 0.04, endAt - 0.04));
     gain.gain.exponentialRampToValueAtTime(0.0001, endAt);
-    osc.start(startAt); osc.stop(endAt + 0.03);
+    osc.start(startAt);
+    osc.stop(endAt + 0.03);
     return function () { try { osc.stop(); } catch (e) {} };
   }
   function stopRing() {
@@ -363,9 +389,11 @@
     if (navigator.vibrate) { try { navigator.vibrate(0); } catch (e) {} }
   }
   function playOutgoingRing() {
-    stopRing(); AudioFX.mode = "outgoing";
+    stopRing();
+    AudioFX.mode = "outgoing";
     if (!AudioFX.unlocked || !ensureAudioContext()) return;
-    var stopped = false, timers = [];
+    var stopped = false;
+    var timers = [];
     function cycle() {
       if (stopped) return;
       playTone(440, 0.0, 0.4, 0.045, "sine");
@@ -375,12 +403,14 @@
     AudioFX.stops.push(function () { stopped = true; timers.forEach(clearInterval); });
   }
   function playIncomingRing() {
-    stopRing(); AudioFX.mode = "incoming";
+    stopRing();
+    AudioFX.mode = "incoming";
     if (!AudioFX.unlocked || !ensureAudioContext()) {
       if (navigator.vibrate) { try { navigator.vibrate([260, 120, 260, 800]); } catch (e) {} }
       return;
     }
-    var stopped = false, timers = [];
+    var stopped = false;
+    var timers = [];
     function cycle() {
       if (stopped) return;
       playTone(659, 0.00, 0.22, 0.075, "triangle");
@@ -392,7 +422,8 @@
     cycle();
     timers.push(setInterval(cycle, 2200));
     AudioFX.stops.push(function () {
-      stopped = true; timers.forEach(clearInterval);
+      stopped = true;
+      timers.forEach(clearInterval);
       if (navigator.vibrate) { try { navigator.vibrate(0); } catch (e) {} }
     });
   }
@@ -423,13 +454,16 @@
       tried[path] = true;
       try {
         var res = await fetch(withRelativePath(path), {
-          credentials: "same-origin", headers: { accept: "application/json" }
+          credentials: "same-origin",
+          headers: { accept: "application/json" }
         });
         if (!res.ok) continue;
         var json = await res.json();
         var data = json && json.data && typeof json.data === "object" ? json.data : json;
         if (data && (data.token || data.uid || data.wkUid)) return data;
-      } catch (e) { warn("token-endpoint", { path: path, error: e }); }
+      } catch (e) {
+        warn("token-endpoint", { path: path, error: e });
+      }
     }
     return {};
   }
@@ -468,11 +502,15 @@
     if (State.wkConnected) return;
     await new Promise(function (resolve) {
       var done = false;
-      var timer = setTimeout(function () { if (!done) { done = true; resolve(); } }, timeoutMs);
+      var timer = setTimeout(function () {
+        if (!done) { done = true; resolve(); }
+      }, timeoutMs);
       try {
         var sdk = window.wk && window.wk.WKSDK && window.wk.WKSDK.shared();
         if (!sdk || !sdk.connectManager || !sdk.connectManager.addConnectStatusListener) {
-          clearTimeout(timer); return resolve();
+          clearTimeout(timer);
+          resolve();
+          return;
         }
         sdk.connectManager.addConnectStatusListener(function (status) {
           if (status === 1 || status === "connected" || status === "CONNECTED") {
@@ -480,13 +518,22 @@
             if (!done) { done = true; clearTimeout(timer); resolve(); }
           }
         });
-      } catch (e) { clearTimeout(timer); resolve(); }
+      } catch (e) {
+        clearTimeout(timer);
+        resolve();
+      }
     });
   }
 
   async function ensureWukong() {
-    if (State.wkReady && window.wk && window.wk.WKSDK) { await waitForWukongConnected(1200); return; }
-    if (State.wkReadyPromise) { await State.wkReadyPromise; return; }
+    if (State.wkReady && window.wk && window.wk.WKSDK) {
+      await waitForWukongConnected(1200);
+      return;
+    }
+    if (State.wkReadyPromise) {
+      await State.wkReadyPromise;
+      return;
+    }
 
     State.wkReadyPromise = (async function () {
       if (!window.wk || !window.wk.WKSDK) {
@@ -496,6 +543,7 @@
           else throw e;
         }
       }
+
       var tokenData = await fetchBridgeToken();
       State.myUid = String(tokenData.uid || tokenData.wkUid || uid() || "");
       State.wkToken = String(tokenData.token || "");
@@ -513,21 +561,26 @@
       if (!window.__cpHarmonyCallWkListenerBoundV7) {
         window.__cpHarmonyCallWkListenerBoundV7 = true;
         sdk.chatManager.addMessageListener(function (message) {
+          if (State.destroyed) return;
           var packet = parseSignalFromWkMessage(message);
           if (packet) handleSignal(packet);
         });
         if (sdk.connectManager && sdk.connectManager.addConnectStatusListener) {
           sdk.connectManager.addConnectStatusListener(function (status) {
+            if (State.destroyed) return;
             if (status === 1 || status === "connected" || status === "CONNECTED") State.wkConnected = true;
             else if (status === 0 || status === "disconnected" || status === "DISCONNECTED") State.wkConnected = false;
           });
         }
       }
+
       try { sdk.connectManager.connect(); } catch (e) {}
       State.wkReady = true;
       await waitForWukongConnected(2500);
     })().catch(function (err) {
-      State.wkReady = false; State.wkReadyPromise = null; throw err;
+      State.wkReady = false;
+      State.wkReadyPromise = null;
+      throw err;
     });
 
     await State.wkReadyPromise;
@@ -549,13 +602,14 @@
   }
 
   // ----------------------------------------------------------------
-  // PeerJS 连接（含断线重连）
+  // PeerJS 连接
   // ----------------------------------------------------------------
   function ensurePeerJS() {
     if (window.Peer) return Promise.resolve();
     if (!State.peerScriptPromise) {
       State.peerScriptPromise = loadScript(CFG.peerjsUrl).catch(function (err) {
-        State.peerScriptPromise = null; throw err;
+        State.peerScriptPromise = null;
+        throw err;
       });
     }
     return State.peerScriptPromise;
@@ -569,7 +623,9 @@
   }
   function resetPeer() {
     if (State.peer) { try { State.peer.destroy(); } catch (e) {} }
-    State.peer = null; State.peerId = ""; State.peerReadyPromise = null;
+    State.peer = null;
+    State.peerId = "";
+    State.peerReadyPromise = null;
   }
 
   function tryReconnectPeer() {
@@ -585,7 +641,6 @@
   async function initPeer() {
     if (State.peer && State.peerId && !State.peer.destroyed && !State.peer.disconnected) return State.peerId;
     if (State.peer && (State.peer.destroyed || State.peer.disconnected)) {
-      // 信令断开但 peer 对象在，尝试快速 reconnect
       if (State.peer.disconnected && !State.peer.destroyed) {
         try {
           State.peer.reconnect();
@@ -606,13 +661,16 @@
             iceServers: getIceServers()
           })
         });
+
         State.peer = new window.Peer(peerOptions);
 
         State.peer.on("open", function (id) {
-          State.peerId = id; State.reconnectTries = 0; resolve(id);
+          State.peerId = id;
+          State.reconnectTries = 0;
+          resolve(id);
         });
 
-        // 作为「被叫」收到媒体呼叫：仅在我是 outgoing 发起方时接受
+        // 设计说明：被叫 accept 后主动 peer.call(invite.peerId)，发起方在这里 answer。
         State.peer.on("call", function (call) {
           var meta = call.metadata || {};
           if (!State.callId || meta.callId !== State.callId || State.direction !== "outgoing") {
@@ -633,7 +691,6 @@
         });
 
         State.peer.on("disconnected", function () {
-          // 信令服务器断开，但 P2P 媒体可能仍在。尝试重连信令。
           if (State.peer && !State.peer.destroyed) tryReconnectPeer();
           else if (State.callId) { showToast("信令断开"); endCall(false); }
         });
@@ -641,23 +698,21 @@
         State.peer.on("error", function (err) {
           warn("peer-error", err);
           var type = err && err.type;
-          if (!State.peerId) {
-            // 初始化阶段失败
-            if (type === "network" || type === "server-error" || type === "socket-error") {
-              // 让 reject 触发上层重试
-            }
-            reject(err); return;
-          }
+          if (!State.peerId) { reject(err); return; }
           if (type === "peer-unavailable") {
-            if (State.callId && !State.connected) { showToast("对方暂时不可达"); }
+            if (State.callId && !State.connected) showToast("对方暂时不可达");
             return;
           }
           if (State.callId && !State.connected && type !== "network") {
-            showToast("连接失败"); endCall(false);
+            showToast("连接失败");
+            endCall(false);
           }
         });
       });
-    })().catch(function (err) { resetPeer(); throw err; });
+    })().catch(function (err) {
+      resetPeer();
+      throw err;
+    });
 
     return State.peerReadyPromise;
   }
@@ -671,7 +726,8 @@
   function videoConstraints(facing) {
     return {
       facingMode: facing ? { ideal: facing } : "user",
-      width: { ideal: 1280 }, height: { ideal: 720 },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
       frameRate: { ideal: 24, max: 30 }
     };
   }
@@ -695,7 +751,9 @@
         State.mode = "audio";
         State.localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(), video: false });
         showToast("摄像头不可用，已切换语音");
-      } else throw err;
+      } else {
+        throw err;
+      }
     }
     State.isMicOn = !!State.localStream.getAudioTracks()[0];
     State.isCamOn = !!State.localStream.getVideoTracks()[0];
@@ -709,7 +767,6 @@
     stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
   }
 
-  // 切换前后摄像头（不重协商，replaceTrack）
   async function switchCamera() {
     if (State.mode !== "video" || !State.localStream || State.switchingCamera) return;
     if (!State.mediaCall || !State.mediaCall.peerConnection) { showToast("通话未就绪"); return; }
@@ -725,7 +782,10 @@
       if (sender) await sender.replaceTrack(newTrack);
 
       var oldTrack = State.localStream.getVideoTracks()[0];
-      if (oldTrack) { State.localStream.removeTrack(oldTrack); try { oldTrack.stop(); } catch (e) {} }
+      if (oldTrack) {
+        State.localStream.removeTrack(oldTrack);
+        try { oldTrack.stop(); } catch (e) {}
+      }
       State.localStream.addTrack(newTrack);
       newTrack.enabled = State.isCamOn;
 
@@ -740,42 +800,66 @@
     }
   }
 
-  function bindLocalStream() {
-    var local = byId("cp-call-local-video");
-    var wrap = byId("cp-call-local-wrap");
-    if (local) {
-      local.srcObject = State.localStream || null;
-      // 后置摄像头不镜像
-      local.style.transform = State.facingMode === "environment" ? "none" : "scaleX(-1)";
-    }
-    if (wrap) {
-      wrap.style.display =
-        State.localStream && State.mode === "video" && State.localStream.getVideoTracks().length ? "block" : "none";
+  function isShowingLocal(stream) {
+    return !!(stream && State.localStream && stream === State.localStream);
+  }
+
+  function setVideoElement(el, stream) {
+    if (!el) return;
+    if (el.srcObject !== stream) el.srcObject = stream || null;
+    if (isShowingLocal(stream)) {
+      el.muted = true;
+      el.style.transform = State.facingMode === "environment" ? "none" : "scaleX(-1)";
+    } else {
+      el.muted = false;
+      el.style.transform = "none";
     }
   }
 
-  function bindRemoteStream(stream) {
-    var remoteVideo = byId("cp-call-remote-video");
-    var remoteAudio = byId("cp-call-remote-audio");
-    var hasVideo = stream && stream.getVideoTracks && stream.getVideoTracks().length;
-    if (remoteVideo) {
-      remoteVideo.srcObject = stream || null;
-      remoteVideo.style.display = hasVideo ? "block" : "none";
+  function syncVideoSurfaces() {
+    var mainVideo = byId("cp-call-remote-video");
+    var pipVideo = byId("cp-call-local-video");
+    var wrap = byId("cp-call-local-wrap");
+
+    if (State.mode !== "video") {
+      if (mainVideo) { mainVideo.style.display = "none"; mainVideo.srcObject = null; }
+      if (pipVideo) pipVideo.srcObject = null;
+      if (wrap) wrap.style.display = "none";
+      return;
     }
-    if (remoteAudio) remoteAudio.srcObject = stream || null;
+
+    var mainStream = State.mainVideoSource === "local" ? State.localStream : State.remoteStream;
+    var pipStream = State.mainVideoSource === "local" ? State.remoteStream : State.localStream;
+
+    setVideoElement(mainVideo, mainStream);
+    setVideoElement(pipVideo, pipStream);
+
+    if (mainVideo) mainVideo.style.display = mainStream ? "block" : "none";
+    if (wrap) {
+      wrap.style.display = pipStream ? "block" : "none";
+      wrap.setAttribute("data-showing", State.mainVideoSource === "local" ? "remote" : "local");
+      wrap.setAttribute("title", State.mainVideoSource === "local" ? "点击切回对方画面" : "点击切换到我的画面");
+    }
+  }
+
+  function bindLocalStream() {
+    syncVideoSurfaces();
+  }
+
+  function bindRemoteStream(stream) {
+    State.remoteStream = stream || null;
+    syncVideoSurfaces();
   }
 
   function bindMediaCall(call) {
     State.mediaCall = call;
     call.on("stream", function (remoteStream) {
-      State.remoteStream = remoteStream;
       bindRemoteStream(remoteStream);
       markConnected();
     });
     call.on("close", function () { if (State.callId) endCall(true); });
     call.on("error", function (err) { warn("media-call", err); if (State.callId) endCall(true); });
 
-    // ICE 状态监控：disconnected 给一段宽限期等待自动恢复，failed 直接结束
     try {
       var pc = call.peerConnection;
       if (pc) {
@@ -787,19 +871,17 @@
           } else if (st === "disconnected") {
             clearTimeout(State.iceGraceTimer);
             State.iceGraceTimer = setTimeout(function () {
-              if (State.callId && pc.iceConnectionState === "disconnected") {
-                showToast("网络不稳定，正在重连…");
-              }
+              if (State.callId && pc.iceConnectionState === "disconnected") showToast("网络不稳定，正在重连…");
             }, 1500);
           } else if (st === "failed") {
             clearTimeout(State.iceGraceTimer);
+            try { if (pc.restartIce) pc.restartIce(); } catch (e) {}
             State.iceGraceTimer = setTimeout(function () {
               if (State.callId && pc.iceConnectionState === "failed") {
-                showToast("连接已断开"); endCall(false);
+                showToast("连接已断开");
+                endCall(false);
               }
             }, CFG.iceReconnectGraceMs);
-            // 尝试 ICE 重启
-            try { if (pc.restartIce) pc.restartIce(); } catch (e) {}
           }
         };
       }
@@ -817,7 +899,8 @@
   }
   function startTimer() {
     clearInterval(State.callTimer);
-    State.sec = 0; setStatus("00:00");
+    State.sec = 0;
+    setStatus("00:00");
     State.callTimer = setInterval(function () {
       State.sec += 1;
       var m = String(Math.floor(State.sec / 60)).padStart(2, "0");
@@ -834,7 +917,10 @@
     setMainConnectedMode();
     playConnectedTone();
   }
-  function setStatus(text) { var el = byId("cp-call-status"); if (el) el.textContent = text || ""; }
+  function setStatus(text) {
+    var el = byId("cp-call-status");
+    if (el) el.textContent = text || "";
+  }
 
   // ----------------------------------------------------------------
   // 对端信息提取
@@ -852,7 +938,9 @@
     var row = document.querySelector('[component="chat/user/list"] [data-uid]:not([data-uid="' + me + '"])');
     if (row) return String(row.getAttribute("data-uid") || "");
     var native = document.querySelector('[component="chat/messages"] [component="chat/message"][data-uid]');
-    if (native && String(native.getAttribute("data-uid") || "") !== me) return String(native.getAttribute("data-uid") || "");
+    if (native && String(native.getAttribute("data-uid") || "") !== me) {
+      return String(native.getAttribute("data-uid") || "");
+    }
     return "";
   }
   function getPeerName() {
@@ -884,13 +972,13 @@
   // SVG 图标
   // ----------------------------------------------------------------
   var ICON = {
-    phone: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.33 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
-    hangup: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48a.989.989 0 0 1-.71.29c-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.66-1.85.998.998 0 0 1-.56-.9v-3.1A14.7 14.7 0 0 0 12 9z"/></svg>',
-    mic: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
-    micOff: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
-    video: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>',
-    videoOff: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
-    flip: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 8h7a2 2 0 0 1 2 2v6"/><path d="M13 16H6a2 2 0 0 1-2-2V8"/><polyline points="8 5 11 8 8 11"/><polyline points="16 13 13 16 16 19"/></svg>'
+    phone: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.33 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
+    hangup: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48a.989.989 0 0 1-.71.29c-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.66-1.85.998.998 0 0 1-.56-.9v-3.1A14.7 14.7 0 0 0 12 9z"/></svg>',
+    mic: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
+    micOff: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
+    video: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>',
+    videoOff: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+    flip: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 8h7a2 2 0 0 1 2 2v6"/><path d="M13 16H6a2 2 0 0 1-2-2V8"/><polyline points="8 5 11 8 8 11"/><polyline points="16 13 13 16 16 19"/></svg>'
   };
 
   // ----------------------------------------------------------------
@@ -908,7 +996,8 @@
     if (inName) inName.textContent = name;
     [avatarEl, inAvatar].forEach(function (el) {
       if (!el) return;
-      if (avatar) el.src = avatar; else el.removeAttribute("src");
+      if (avatar) el.src = avatar;
+      else el.removeAttribute("src");
       el.style.display = avatar ? "block" : "none";
     });
     if (bg) bg.style.backgroundImage = avatar ? 'url("' + escAttr(avatar) + '")' : "";
@@ -916,24 +1005,33 @@
 
   function showMainUI() {
     mountUI();
-    var root = byId("cp-call-root"), main = byId("cp-call-main"), incoming = byId("cp-call-incoming");
+    var root = byId("cp-call-root");
+    var main = byId("cp-call-main");
+    var incoming = byId("cp-call-incoming");
     if (root) root.style.display = "block";
     if (main) main.style.display = "block";
     if (incoming) incoming.style.display = "none";
-    setRemoteInfo(); syncButtons();
+    setRemoteInfo();
+    syncButtons();
+    syncVideoSurfaces();
   }
   function showIncomingUI(packet) {
     mountUI();
-    var root = byId("cp-call-root"), main = byId("cp-call-main"), incoming = byId("cp-call-incoming");
+    var root = byId("cp-call-root");
+    var main = byId("cp-call-main");
+    var incoming = byId("cp-call-incoming");
     var tip = byId("cp-call-in-tip");
     if (root) root.style.display = "block";
     if (main) main.style.display = "none";
     if (incoming) incoming.style.display = "flex";
     if (tip) tip.textContent = packet.mode === "video" ? "邀请你视频通话" : "邀请你语音通话";
-    setRemoteInfo(); playIncomingRing();
+    setRemoteInfo();
+    playIncomingRing();
   }
   function hideUI() {
-    var root = byId("cp-call-root"), main = byId("cp-call-main"), incoming = byId("cp-call-incoming");
+    var root = byId("cp-call-root");
+    var main = byId("cp-call-main");
+    var incoming = byId("cp-call-incoming");
     if (root) root.style.display = "none";
     if (main) main.style.display = "none";
     if (incoming) incoming.style.display = "none";
@@ -951,33 +1049,51 @@
     clearTimeout(State.timeoutTimer);
     clearTimeout(State.connectTimer);
     clearTimeout(State.iceGraceTimer);
+
     if (State.mediaCall) { try { State.mediaCall.close(); } catch (e) {} }
     stopTracks(State.localStream);
     stopTracks(State.remoteStream);
 
-    var local = byId("cp-call-local-video"), remote = byId("cp-call-remote-video");
-    var audio = byId("cp-call-remote-audio"), bg = byId("cp-call-bg");
+    var local = byId("cp-call-local-video");
+    var remote = byId("cp-call-remote-video");
+    var audio = byId("cp-call-remote-audio");
+    var bg = byId("cp-call-bg");
     var wrap = byId("cp-call-local-wrap");
     if (local) local.srcObject = null;
     if (remote) remote.srcObject = null;
     if (audio) audio.srcObject = null;
     if (bg) bg.style.backgroundImage = "";
-    if (wrap) { wrap.style.left = ""; wrap.style.top = ""; wrap.style.right = "14px"; wrap.classList.remove("expanded"); }
+    if (wrap) {
+      wrap.style.left = "";
+      wrap.style.top = "";
+      wrap.style.right = "14px";
+      wrap.removeAttribute("data-showing");
+    }
 
-    State.mediaCall = null; State.localStream = null; State.remoteStream = null;
-    State.callId = ""; State.direction = ""; State.mode = "audio";
-    State.connected = false; State.incomingInvite = null;
+    State.mediaCall = null;
+    State.localStream = null;
+    State.remoteStream = null;
+    State.callId = "";
+    State.direction = "";
+    State.mode = "audio";
+    State.connected = false;
+    State.incomingInvite = null;
     State.remoteUser = { uid: "", name: "好友", avatar: "" };
-    State.facingMode = "user"; State.switchingCamera = false;
-    State.sec = 0; State.isMicOn = true; State.isCamOn = false;
-    State.pipExpanded = false; State.ending = false;
+    State.facingMode = "user";
+    State.switchingCamera = false;
+    State.mainVideoSource = "remote";
+    State.sec = 0;
+    State.isMicOn = true;
+    State.isCamOn = false;
+    State.ending = false;
     syncButtons();
   }
 
   function endCall(remoteEnded) {
     if (State.ending) return;
     State.ending = true;
-    var oldCallId = State.callId, oldRemoteUid = State.remoteUser.uid;
+    var oldCallId = State.callId;
+    var oldRemoteUid = State.remoteUser.uid;
     var type = State.direction === "outgoing" && !State.connected ? "cancel" : "end";
     if (oldCallId) markClosedCall(oldCallId);
     if (!remoteEnded && oldCallId && oldRemoteUid) {
@@ -1002,6 +1118,7 @@
     State.direction = "outgoing";
     State.mode = mode || "audio";
     State.connected = false;
+    State.mainVideoSource = "remote";
     State.remoteUser.uid = String(peerUid);
     State.remoteUser.name = getPeerName();
     State.remoteUser.avatar = getPeerAvatar();
@@ -1011,17 +1128,22 @@
     setStatus(State.mode === "video" ? "准备视频通话…" : "准备语音通话…");
 
     try {
-      // 先拿媒体权限，失败则不向对方振铃
       await getMedia(State.mode);
       await sendSignal({
-        type: "invite", callId: State.callId, mode: State.mode,
-        to: State.remoteUser.uid, fromName: myName(), fromAvatar: myAvatar(), peerId: peerId
+        type: "invite",
+        callId: State.callId,
+        mode: State.mode,
+        to: State.remoteUser.uid,
+        fromName: myName(),
+        fromAvatar: myAvatar(),
+        peerId: peerId
       });
       setStatus(State.mode === "video" ? "等待对方接听…" : "正在呼叫…");
       playOutgoingRing();
     } catch (err) {
       if (State.callId) markClosedCall(State.callId);
-      cleanupCall(); hideUI();
+      cleanupCall();
+      hideUI();
       throw err;
     }
 
@@ -1036,12 +1158,14 @@
     var invite = State.incomingInvite;
     if (!invite.peerId) throw new Error("缺少对方 Peer ID");
 
-    stopRing(); unlockAudioNow();
+    stopRing();
+    unlockAudioNow();
     await ensureWukong();
     await initPeer();
 
     State.direction = "incoming";
     State.mode = invite.mode || "audio";
+    State.mainVideoSource = "remote";
     showMainUI();
     setMainConnectedMode();
     setStatus("连接中…");
@@ -1066,7 +1190,8 @@
     if (State.callId) markClosedCall(State.callId);
     stopRing();
     sendSignal({ type: "reject", callId: State.callId, to: State.remoteUser.uid }).catch(noop);
-    cleanupCall(); hideUI();
+    cleanupCall();
+    hideUI();
   }
 
   function handleSignal(packet) {
@@ -1088,6 +1213,7 @@
       State.mode = packet.mode || "audio";
       State.connected = false;
       State.incomingInvite = packet;
+      State.mainVideoSource = "remote";
       State.remoteUser.uid = String(packet.from || "");
       State.remoteUser.name = packet.fromName || "好友";
       State.remoteUser.avatar = packet.fromAvatar || "";
@@ -1095,7 +1221,10 @@
       clearTimeout(State.timeoutTimer);
       State.timeoutTimer = setTimeout(function () {
         if (State.callId && !State.connected) {
-          markClosedCall(State.callId); stopRing(); cleanupCall(); hideUI();
+          markClosedCall(State.callId);
+          stopRing();
+          cleanupCall();
+          hideUI();
         }
       }, CALL_TIMEOUT_MS);
       return;
@@ -1112,7 +1241,7 @@
     }
     if (packet.type === "reject") { showToast("对方已拒绝"); endCall(true); return; }
     if (packet.type === "busy") { showToast("对方忙线中"); endCall(true); return; }
-    if (packet.type === "cancel" || packet.type === "end") { endCall(true); return; }
+    if (packet.type === "cancel" || packet.type === "end") { endCall(true); }
   }
 
   // ----------------------------------------------------------------
@@ -1142,35 +1271,46 @@
     var flip = byId("cp-call-btn-flip");
     if (mic) {
       mic.classList.toggle("off", !State.isMicOn);
-      mic.querySelector(".cp-call-ic").innerHTML = State.isMicOn ? ICON.mic : ICON.micOff;
-      mic.querySelector(".cp-call-lbl").textContent = State.isMicOn ? "静音" : "已静音";
+      var micIcon = mic.querySelector(".cp-call-ic");
+      var micLabel = mic.querySelector(".cp-call-lbl");
+      if (micIcon) micIcon.innerHTML = State.isMicOn ? ICON.mic : ICON.micOff;
+      if (micLabel) micLabel.textContent = State.isMicOn ? "静音" : "已静音";
     }
     if (cam) {
       cam.style.display = State.mode === "video" ? "inline-flex" : "none";
       cam.classList.toggle("off", !State.isCamOn);
-      cam.querySelector(".cp-call-ic").innerHTML = State.isCamOn ? ICON.video : ICON.videoOff;
-      cam.querySelector(".cp-call-lbl").textContent = State.isCamOn ? "摄像头" : "已关闭";
+      var camIcon = cam.querySelector(".cp-call-ic");
+      var camLabel = cam.querySelector(".cp-call-lbl");
+      if (camIcon) camIcon.innerHTML = State.isCamOn ? ICON.video : ICON.videoOff;
+      if (camLabel) camLabel.textContent = State.isCamOn ? "摄像头" : "已关闭";
     }
     if (flip) flip.style.display = State.mode === "video" ? "inline-flex" : "none";
   }
 
   // ----------------------------------------------------------------
-  // 本地小窗拖动 + 点击放大
+  // 小窗拖动 + 点击切换主画面/小窗
   // ----------------------------------------------------------------
   function enablePipInteractions() {
     var wrap = byId("cp-call-local-wrap");
     if (!wrap || wrap._cpBound) return;
     wrap._cpBound = true;
 
-    var dragging = false, moved = false, startX = 0, startY = 0, baseLeft = 0, baseTop = 0;
+    var dragging = false;
+    var moved = false;
+    var startX = 0;
+    var startY = 0;
+    var baseLeft = 0;
+    var baseTop = 0;
 
     function onDown(e) {
-      if (wrap.classList.contains("expanded")) return;
       var p = e.touches ? e.touches[0] : e;
-      dragging = true; moved = false;
-      startX = p.clientX; startY = p.clientY;
+      dragging = true;
+      moved = false;
+      startX = p.clientX;
+      startY = p.clientY;
       var rect = wrap.getBoundingClientRect();
-      baseLeft = rect.left; baseTop = rect.top;
+      baseLeft = rect.left;
+      baseTop = rect.top;
       wrap.style.right = "auto";
       wrap.style.left = baseLeft + "px";
       wrap.style.top = baseTop + "px";
@@ -1179,19 +1319,25 @@
       document.addEventListener("touchmove", onMove, { passive: false });
       document.addEventListener("mouseup", onUp);
       document.addEventListener("touchend", onUp);
+      document.addEventListener("touchcancel", onUp);
     }
+
     function onMove(e) {
       if (!dragging) return;
       var p = e.touches ? e.touches[0] : e;
-      var dx = p.clientX - startX, dy = p.clientY - startY;
+      if (!p) return;
+      var dx = p.clientX - startX;
+      var dy = p.clientY - startY;
       if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
       if (e.cancelable) e.preventDefault();
-      var w = wrap.offsetWidth, h = wrap.offsetHeight;
+      var w = wrap.offsetWidth;
+      var h = wrap.offsetHeight;
       var nl = Math.min(Math.max(6, baseLeft + dx), window.innerWidth - w - 6);
       var nt = Math.min(Math.max(60, baseTop + dy), window.innerHeight - h - 100);
       wrap.style.left = nl + "px";
       wrap.style.top = nt + "px";
     }
+
     function onUp() {
       dragging = false;
       wrap.style.transition = "";
@@ -1199,30 +1345,22 @@
       document.removeEventListener("touchmove", onMove);
       document.removeEventListener("mouseup", onUp);
       document.removeEventListener("touchend", onUp);
-      if (!moved) togglePipExpand();
+      document.removeEventListener("touchcancel", onUp);
+      if (!moved) toggleMainVideoSource();
     }
 
     wrap.addEventListener("mousedown", onDown);
     wrap.addEventListener("touchstart", onDown, { passive: true });
   }
 
-  // 点击小窗：本地放大全屏，远端缩到小窗（仿微信切换主画面）
-  function togglePipExpand() {
+  function toggleMainVideoSource() {
     if (State.mode !== "video") return;
-    var wrap = byId("cp-call-local-wrap");
-    var local = byId("cp-call-local-video");
-    var remote = byId("cp-call-remote-video");
-    if (!wrap || !local) return;
-    State.pipExpanded = !State.pipExpanded;
-    if (State.pipExpanded) {
-      // 本地占满，远端放到小窗
-      wrap.classList.add("expanded");
-      wrap.style.left = ""; wrap.style.top = ""; wrap.style.right = "";
-      // 交换：把远端流绑到小窗的视频上方便预览（用一个浮层简单处理：放大本地，远端仍在底层）
-    } else {
-      wrap.classList.remove("expanded");
-      wrap.style.right = "14px"; wrap.style.left = ""; wrap.style.top = "";
+    if (!State.localStream || !State.remoteStream) {
+      showToast("等待对方画面");
+      return;
     }
+    State.mainVideoSource = State.mainVideoSource === "remote" ? "local" : "remote";
+    syncVideoSurfaces();
   }
 
   // ----------------------------------------------------------------
@@ -1233,10 +1371,10 @@
     var css = `
       #cp-call-root *{box-sizing:border-box;}
       .cp-harmony-call-slot{position:relative;flex-shrink:0;display:flex;align-items:center;justify-content:center;margin-left:auto;margin-right:2px;z-index:30;}
-      .cp-harmony-call-entry{width:38px;height:38px;min-width:38px;padding:0;border:none;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;display:grid;place-items:center;cursor:pointer;box-shadow:0 4px 14px rgba(37,99,235,.35);-webkit-tap-highlight-color:transparent;transition:transform .15s ease,box-shadow .15s ease;}
-      .cp-harmony-call-entry:hover{box-shadow:0 6px 18px rgba(37,99,235,.45);}
-      .cp-harmony-call-entry:active{transform:scale(.9);}
-      .cp-harmony-call-entry svg{width:19px;height:19px;}
+      #cp-chat-root .cp-harmony-call-entry,.cp-harmony-call-entry{width:38px!important;height:38px!important;min-width:38px!important;padding:0!important;border:0!important;border-radius:999px!important;background:transparent!important;color:#374151!important;display:grid!important;place-items:center!important;cursor:pointer!important;box-shadow:none!important;-webkit-tap-highlight-color:transparent;transition:background .14s ease,transform .14s ease,color .14s ease;}
+      #cp-chat-root .cp-harmony-call-entry:hover,.cp-harmony-call-entry:hover{background:rgba(15,23,42,.06)!important;color:#111827!important;}
+      #cp-chat-root .cp-harmony-call-entry:active,.cp-harmony-call-entry:active{transform:scale(.9);background:rgba(15,23,42,.10)!important;}
+      .cp-harmony-call-entry svg{width:20px;height:20px;display:block;}
       .cp-harmony-call-pop{position:absolute;right:0;top:46px;width:188px;padding:7px;border-radius:18px;background:rgba(255,255,255,.99);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);border:1px solid rgba(0,0,0,.05);box-shadow:0 18px 44px rgba(15,23,42,.22);z-index:2147483450;animation:cp-pop-in .18s cubic-bezier(.2,.8,.2,1);}
       .cp-harmony-call-pop[hidden]{display:none!important;}
       @keyframes cp-pop-in{from{opacity:0;transform:translateY(-8px) scale(.95);}to{opacity:1;transform:translateY(0) scale(1);}}
@@ -1246,7 +1384,7 @@
       .cp-harmony-call-pop button:active{transform:scale(.98);}
       .cp-harmony-call-pop-icon{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;color:#fff;flex-shrink:0;}
       .cp-harmony-call-pop-icon svg{width:18px;height:18px;}
-      .cp-harmony-call-pop-icon.audio{background:linear-gradient(135deg,#22c55e,#16a34a);}
+      .cp-harmony-call-pop-icon.audio{background:linear-gradient(135deg,#64748b,#334155);}
       .cp-harmony-call-pop-icon.video{background:linear-gradient(135deg,#8b5cf6,#6d28d9);}
       .cp-harmony-call-pop-main b{display:block;font-size:14px;font-weight:700;color:#0f172a;}
 
@@ -1265,10 +1403,10 @@
       #cp-call-main.is-video #cp-call-avatar{display:none!important;}
       #cp-call-main.is-video #cp-call-name{font-size:20px;}
 
-      #cp-call-local-wrap{position:absolute;right:14px;top:calc(96px + env(safe-area-inset-top));width:108px;height:152px;border-radius:18px;overflow:hidden;background:#000;display:none;z-index:8;box-shadow:0 16px 36px rgba(0,0,0,.4);border:1.5px solid rgba(255,255,255,.18);cursor:grab;transition:all .28s cubic-bezier(.2,.8,.2,1);}
-      #cp-call-local-wrap:active{cursor:grabbing;}
-      #cp-call-local-wrap.expanded{right:0!important;left:0!important;top:0!important;width:100%!important;height:100%!important;border-radius:0;border:none;box-shadow:none;z-index:4;cursor:zoom-out;}
-      #cp-call-local-video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
+      #cp-call-local-wrap{position:absolute;right:14px;top:calc(96px + env(safe-area-inset-top));width:108px;height:152px;border-radius:18px;overflow:hidden;background:#000;display:none;z-index:8;box-shadow:0 16px 36px rgba(0,0,0,.4);border:1.5px solid rgba(255,255,255,.18);cursor:pointer;transition:box-shadow .18s ease,transform .18s ease;}
+      #cp-call-local-wrap:active{transform:scale(.97);}
+      #cp-call-local-wrap::after{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);pointer-events:none;}
+      #cp-call-local-video{width:100%;height:100%;object-fit:cover;display:block;}
 
       #cp-call-controls{position:absolute;left:0;right:0;bottom:0;z-index:9;padding:24px 18px calc(28px + env(safe-area-inset-bottom));display:flex;align-items:flex-end;justify-content:center;gap:18px;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.5));}
       .cp-call-btn{display:inline-flex;flex-direction:column;align-items:center;gap:8px;background:none;border:none;cursor:pointer;color:#fff;-webkit-tap-highlight-color:transparent;}
@@ -1284,14 +1422,13 @@
       @keyframes cp-pulse{0%,100%{box-shadow:0 16px 44px rgba(0,0,0,.4),0 0 0 0 rgba(59,130,246,.4);}50%{box-shadow:0 16px 44px rgba(0,0,0,.4),0 0 0 18px rgba(59,130,246,0);}}
       #cp-call-in-name{margin-top:24px;font-size:28px;font-weight:800;}
       #cp-call-in-tip{margin-top:12px;font-size:15px;opacity:.78;}
-      #cp-call-in-actions{position:absolute;bottom:calc(56px + env(safe-area-inset-bottom));left:0;right:0;display:flex;gap:64px;align-items:center;justify-content:center;}
-      .cp-call-in-action{display:inline-flex;flex-direction:column;align-items:center;gap:10px;cursor:pointer;color:#fff;font-size:14px;font-weight:600;background:none;border:none;}
-      .cp-call-in-circle{width:66px;height:66px;border-radius:50%;display:grid;place-items:center;color:#fff;transition:transform .15s ease;}
-      .cp-call-in-action:active .cp-call-in-circle{transform:scale(.9);}
-      .cp-call-in-circle.red{background:#ef4444;box-shadow:0 10px 28px rgba(239,68,68,.45);}
-      .cp-call-in-circle.green{background:#22c55e;box-shadow:0 10px 28px rgba(34,197,94,.45);animation:cp-bounce 1.4s ease-in-out infinite;}
-      @keyframes cp-bounce{0%,100%{transform:translateY(0);}50%{transform:translateY(-6px);}}
-      .cp-call-in-circle svg{width:26px;height:26px;}
+      #cp-call-in-actions{position:absolute;bottom:calc(56px + env(safe-area-inset-bottom));left:0;right:0;display:flex;gap:14px;align-items:center;justify-content:center;padding:0 18px;}
+      .cp-call-in-action{min-width:122px;height:52px;border-radius:999px;padding:0 18px;display:inline-flex;flex-direction:row;align-items:center;justify-content:center;gap:9px;cursor:pointer;color:#fff;font-size:15px;font-weight:750;border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
+      .cp-call-in-action.reject{background:rgba(255,255,255,.12);}
+      .cp-call-in-action.accept{background:linear-gradient(135deg,#3b82f6,#2563eb);box-shadow:0 12px 30px rgba(37,99,235,.34);}
+      .cp-call-in-action:active{transform:scale(.96);}
+      .cp-call-in-circle{width:24px;height:24px;border-radius:0;display:grid;place-items:center;color:currentColor;background:transparent!important;box-shadow:none!important;animation:none!important;}
+      .cp-call-in-circle svg{width:21px;height:21px;}
       .cp-call-in-circle.red svg{transform:rotate(135deg);}
       .cp-call-hidden-signal{display:none!important;}
     `;
@@ -1330,8 +1467,8 @@
         '<div id="cp-call-in-name">好友</div>' +
         '<div id="cp-call-in-tip">邀请你通话</div>' +
         '<div id="cp-call-in-actions">' +
-          '<button type="button" class="cp-call-in-action" id="cp-call-reject"><span class="cp-call-in-circle red">' + ICON.phone + '</span><span>拒绝</span></button>' +
-          '<button type="button" class="cp-call-in-action" id="cp-call-accept"><span class="cp-call-in-circle green">' + ICON.phone + '</span><span>接听</span></button>' +
+          '<button type="button" class="cp-call-in-action reject" id="cp-call-reject"><span class="cp-call-in-circle red">' + ICON.phone + '</span><span>拒绝</span></button>' +
+          '<button type="button" class="cp-call-in-action accept" id="cp-call-accept"><span class="cp-call-in-circle green">' + ICON.phone + '</span><span>接听</span></button>' +
         '</div>' +
       '</div>';
     document.body.appendChild(root);
@@ -1362,6 +1499,7 @@
     var header = document.querySelector("#cp-chat-root .cp-header");
     var actions = document.querySelector("#cp-chat-root .cp-header-actions");
     if (!header || !actions) return;
+
     var existing = byId("cp-harmony-call-slot");
     if (existing && existing.parentNode === header) return;
     if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
@@ -1390,14 +1528,16 @@
     var entry = byId("cp-harmony-call-entry");
     var pop = byId("cp-harmony-call-pop");
     entry.addEventListener("click", function (e) {
-      e.preventDefault(); e.stopPropagation();
+      e.preventDefault();
+      e.stopPropagation();
       unlockAudioNow();
       pop.hidden = !pop.hidden;
     });
     pop.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-mode]");
       if (!btn) return;
-      e.preventDefault(); e.stopPropagation();
+      e.preventDefault();
+      e.stopPropagation();
       unlockAudioNow();
       var mode = btn.getAttribute("data-mode") || "audio";
       pop.hidden = true;
@@ -1408,13 +1548,13 @@
       });
     });
 
-    if (!window.__cpHarmonyCallPopOutsideBoundV7) {
-      window.__cpHarmonyCallPopOutsideBoundV7 = true;
-      document.addEventListener("click", function (e) {
+    if (!State.outsideClickHandler) {
+      State.outsideClickHandler = function (e) {
         var p = byId("cp-harmony-call-pop");
         if (!p || p.hidden) return;
         if (!e.target.closest("#cp-harmony-call-pop") && !e.target.closest("#cp-harmony-call-entry")) p.hidden = true;
-      });
+      };
+      document.addEventListener("click", State.outsideClickHandler);
     }
   }
 
@@ -1423,9 +1563,10 @@
     if (slot && slot.parentNode) { try { slot.parentNode.removeChild(slot); } catch (_) {} }
   }
 
-  function hideSignalMessagesInDom() {
+  function hideSignalMessagesInDom(scope) {
     if (!isChatContext()) return;
-    var rows = document.querySelectorAll(
+    var root = scope && scope.querySelectorAll ? scope : document;
+    var rows = root.querySelectorAll(
       "#cp-msg-list .cp-row, " + '[component="chat/messages"] [component="chat/message"]'
     );
     for (var i = 0; i < rows.length; i++) {
@@ -1436,18 +1577,51 @@
   }
 
   function refreshChatBindings() {
-    if (isChatContext()) { injectHeaderButton(); hideSignalMessagesInDom(); }
+    if (isChatContext()) { injectHeaderButton(); hideSignalMessagesInDom(document); }
     else removeHeaderButton();
   }
 
+  function shouldRefreshForMutation(mutations) {
+    var needRefresh = false;
+    var needHide = false;
+    for (var i = 0; i < mutations.length; i++) {
+      var m = mutations[i];
+      for (var j = 0; j < m.addedNodes.length; j++) {
+        var n = m.addedNodes[j];
+        if (!n || n.nodeType !== 1) continue;
+        if (
+          n.id === "cp-chat-root" ||
+          n.classList && (n.classList.contains("cp-header") || n.classList.contains("cp-header-actions")) ||
+          n.querySelector && (n.querySelector(".cp-header") || n.querySelector(".cp-header-actions"))
+        ) {
+          needRefresh = true;
+        }
+        if ((n.textContent || "").indexOf(SIGNAL_PREFIX) >= 0) needHide = true;
+      }
+      if (m.removedNodes && m.removedNodes.length) {
+        needRefresh = true;
+      }
+      if (needRefresh && needHide) break;
+    }
+    return needRefresh || needHide;
+  }
+
   function destroy() {
+    State.destroyed = true;
     if (State.domObserver) { try { State.domObserver.disconnect(); } catch (e) {} State.domObserver = null; }
     clearTimeout(State.injectTimer);
-    cleanupCall(); hideUI();
+    cleanupCall();
+    hideUI();
     removeHeaderButton();
+    if (State.outsideClickHandler) {
+      try { document.removeEventListener("click", State.outsideClickHandler); } catch (e) {}
+      State.outsideClickHandler = null;
+    }
     var root = byId("cp-call-root");
     if (root && root.parentNode) root.parentNode.removeChild(root);
     State.started = false;
+    try { window.__cpHarmonyPeerCallInitedV7 = false; } catch (_) {}
+    try { window.__cpHarmonyCallWkListenerBoundV7 = false; } catch (_) {}
   }
 
   // ----------------------------------------------------------------
@@ -1455,21 +1629,22 @@
   // ----------------------------------------------------------------
   function boot() {
     if (State.started) { refreshChatBindings(); return; }
+    State.destroyed = false;
     State.started = true;
 
     mountUI();
     refreshChatBindings();
     unlockAudioOnGesture();
 
-    // 全局监听：无论在哪个页面都建立悟空连接以接听来电
     if (CFG.globalListen !== false && CFG.autoConnectWukong !== false) {
       ensureWukong().catch(function (err) { warn("global-ensure-wukong", err); });
     }
 
     if (!State.domObserver) {
-      State.domObserver = new MutationObserver(function () {
+      State.domObserver = new MutationObserver(function (mutations) {
+        if (!shouldRefreshForMutation(mutations)) return;
         clearTimeout(State.injectTimer);
-        State.injectTimer = setTimeout(refreshChatBindings, 80);
+        State.injectTimer = setTimeout(refreshChatBindings, 100);
       });
       State.domObserver.observe(document.body, { childList: true, subtree: true });
     }
@@ -1481,7 +1656,8 @@
           markClosedCall(State.callId);
           sendSignal({
             type: State.connected ? "end" : "cancel",
-            callId: State.callId, to: State.remoteUser.uid
+            callId: State.callId,
+            to: State.remoteUser.uid
           }).catch(noop);
         }
       });
@@ -1497,15 +1673,16 @@
   }
 
   window.CPHarmonyCall = {
-    version: "v7-modern-wukong-call",
+    version: "v7.1-modern-wukong-call",
     boot: boot,
-    refresh: function () { injectHeaderButton(); hideSignalMessagesInDom(); return !!byId("cp-harmony-call-entry"); },
+    refresh: function () { injectHeaderButton(); hideSignalMessagesInDom(document); return !!byId("cp-harmony-call-entry"); },
     start: function (mode) { unlockAudioNow(); return startOutgoingCall(mode || "audio"); },
     end: function () { return endCall(false); },
     switchCamera: switchCamera,
+    swapVideo: toggleMainVideoSource,
     getPeerId: function () { return State.peerId; },
     isActive: function () { return !!State.callId; },
-    hideSignals: hideSignalMessagesInDom,
+    hideSignals: function () { hideSignalMessagesInDom(document); },
     destroy: destroy,
     config: CFG
   };
