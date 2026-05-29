@@ -184,7 +184,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.4-p0-p1-stability";
+  window.__cpNodebbHarmonyVersion = "1.0.5-p2-ui-performance";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -376,6 +376,7 @@
     lastRenderHash: "",
     renderVersion: 0,
     renderPending: false,
+    renderPendingMode: "",
     syncScheduled: false,
 
     pickingLangFor: null,
@@ -437,7 +438,8 @@
     // 修复：跟踪用户是否在底部（用于自动滚动决策）
     stickToBottom: true,
     bootRetryTimer: null,
-    nativeObserverRetryTimer: null
+    nativeObserverRetryTimer: null,
+    headerActionObserver: null
   };
 
   function bindAudioEndedHandler() {
@@ -806,6 +808,91 @@
     } catch (e) {
       warn("save-json", e);
     }
+  }
+
+  function isMeaningfulPeerName(name) {
+    name = String(name == null ? "" : name).trim();
+    if (!name) return false;
+    if (/^\d+$/.test(name)) return false;
+    if (/^(用户|好友|未知|unknown|guest|user)$/i.test(name)) return false;
+    return true;
+  }
+
+  function getPeerIdentityCacheKey(peerUid) {
+    var key = String(peerUid || state.peerUidCache || getRoutePeerSlug() || "default").trim();
+    key = key.replace(/[^\w\-:.]/g, "_");
+    return LS_PREFIX + "_peer_identity_" + key;
+  }
+
+  function loadPeerIdentityCache(peerUid) {
+    var cached = loadJSON(getPeerIdentityCacheKey(peerUid), {});
+    if (!cached || typeof cached !== "object") return false;
+
+    var changed = false;
+
+    if (!state.peerUidCache && cached.uid) {
+      state.peerUidCache = String(cached.uid);
+      changed = true;
+    }
+
+    if (!state.peerUsernameCache && isMeaningfulPeerName(cached.username)) {
+      state.peerUsernameCache = String(cached.username);
+      changed = true;
+    }
+
+    if (!state.peerUserslugCache && cached.userslug) {
+      state.peerUserslugCache = String(cached.userslug);
+      changed = true;
+    }
+
+    if (!state.peerPictureCache && cached.picture) {
+      state.peerPictureCache = String(cached.picture);
+      changed = true;
+    }
+
+    if (!state.peerIconTextCache && cached.icontext && cached.icontext !== "用") {
+      state.peerIconTextCache = String(cached.icontext);
+      changed = true;
+    }
+
+    if (!state.peerIconBgCache && cached.iconbgColor) {
+      state.peerIconBgCache = String(cached.iconbgColor);
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  function savePeerIdentityCache() {
+    var peerUid = String(state.peerUidCache || getRoutePeerSlug() || "").trim();
+    if (!peerUid) return;
+
+    var username = isMeaningfulPeerName(state.peerUsernameCache) ? String(state.peerUsernameCache) : "";
+    var picture = String(state.peerPictureCache || "").trim();
+
+    // Do not persist placeholder-only identities. That is what caused refreshes to
+    // fall back to the ugly "用" avatar.
+    if (!username && !picture) return;
+
+    saveJSON(getPeerIdentityCacheKey(peerUid), {
+      uid: peerUid,
+      username: username,
+      userslug: state.peerUserslugCache || "",
+      picture: picture,
+      icontext: state.peerIconTextCache && state.peerIconTextCache !== "用" ? state.peerIconTextCache : "",
+      iconbgColor: state.peerIconBgCache || "",
+      ts: Date.now()
+    });
+  }
+
+  function clearPeerRuntimeIdentity(keepUid) {
+    state.peerUsernameCache = "";
+    state.peerUserslugCache = "";
+    state.peerPictureCache = "";
+    state.peerIconTextCache = "";
+    state.peerIconBgCache = "";
+    state.peerHydrating = false;
+    if (keepUid !== undefined) state.peerUidCache = String(keepUid || "");
   }
 
   function normalizeConfig(cfg) {
@@ -1227,7 +1314,10 @@
 
     var wk = path.match(/\/wukong\/([^\/?#]+)/i);
     if (wk && wk[1]) {
-      try { return decodeURIComponent(wk[1]); } catch (_) { return wk[1] || ""; }
+      var wkSlug = "";
+      try { wkSlug = decodeURIComponent(wk[1]); } catch (_) { wkSlug = wk[1] || ""; }
+      if (/^(conversations|conversation|settings|search|new)$/i.test(String(wkSlug || ""))) return "";
+      return wkSlug;
     }
 
     var match = path.match(/\/user\/([^\/?#]+)(?:\/chats(?:\/|$)|$)/i);
@@ -1289,7 +1379,11 @@
         m.uid = peerUid;
         m.username = name;
         m.userslug = slug || m.userslug || encodeURIComponent(name.toLowerCase().replace(/ /g, "-"));
-        m.avatarHtml = getAvatarHtml(peerUid, name, null);
+        var nextAvatarHtml = getAvatarHtml(peerUid, name, null);
+        if (m.avatarHtml !== nextAvatarHtml) {
+          m.avatarHtml = nextAvatarHtml;
+          changed = true;
+        }
         m._ver = (m._ver || 1) + 1;
 
         if (oldName !== name) changed = true;
@@ -1309,18 +1403,25 @@
     var myUidStr = getSelfUid();
     var uid = u.uid || u.userId || u.id;
     var username = u.username || u.displayname || u.name || u.title || u.fullname || u.userslug || u.slug || "";
-    if (/^\d+$/.test(String(username || ""))) username = "";
+    if (!isMeaningfulPeerName(username)) username = "";
+
     var userslug = u.userslug || u.slug || (username ? encodeURIComponent(String(username).toLowerCase().replace(/ /g, "-")) : "");
     var picture = u.picture || u.uploadedpicture || u.uploadedPicture || u.pictureUrl || u.avatarUrl || u.avatar || "";
 
     if (uid && String(uid) !== myUidStr && String(uid) !== "0") state.peerUidCache = String(uid);
     if (username) state.peerUsernameCache = String(username);
     if (userslug) state.peerUserslugCache = String(userslug);
-    if (picture) state.peerPictureCache = picture;
-    if (u.icontext || u["icon:text"]) state.peerIconTextCache = u.icontext || u["icon:text"];
-    if (u.iconbgColor || u["icon:bgColor"]) state.peerIconBgCache = u.iconbgColor || u["icon:bgColor"];
+    if (picture) state.peerPictureCache = String(picture);
 
-    return !!(state.peerUidCache || state.peerUsernameCache || state.peerUserslugCache);
+    var iconText = u.icontext || u["icon:text"] || "";
+    if (iconText && iconText !== "用") state.peerIconTextCache = iconText;
+
+    var iconBg = u.iconbgColor || u["icon:bgColor"] || "";
+    if (iconBg) state.peerIconBgCache = iconBg;
+
+    savePeerIdentityCache();
+
+    return !!(state.peerUidCache || state.peerUsernameCache || state.peerUserslugCache || state.peerPictureCache);
   }
 
   function getPeerFromAjaxify() {
@@ -1368,8 +1469,9 @@
 
   async function hydratePeerFromWukongApi() {
     var cfg = cpPluginConfig();
-    var uid = String((cfg && cfg.targetUid) || (window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.targetUid) || "").trim();
+    var uid = String((cfg && cfg.targetUid) || (window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.targetUid) || getRoutePeerSlug() || "").trim();
     if (!/^\d+$/.test(uid)) return false;
+    loadPeerIdentityCache(uid);
     try {
       var res = await fetch((cfg.apiBase || "/api/wukong") + "/user/" + encodeURIComponent(uid), {
         credentials: "same-origin",
@@ -1399,6 +1501,7 @@
     var slug = getRoutePeerSlug();
     if (!slug) return false;
 
+    loadPeerIdentityCache(slug);
     state.peerUidCache = state.peerUidCache || String(slug);
     if (!/^\d+$/.test(String(slug))) {
       state.peerUsernameCache = state.peerUsernameCache || String(slug);
@@ -1439,20 +1542,34 @@
   }
 
   function getPeerUid() {
-    if (state.peerUidCache) return state.peerUidCache;
-
     var page = window.__NBB_WUKONG_PAGE__ || {};
     var cfg = cpPluginConfig() || {};
-    var direct = page.targetUid || cfg.targetUid || cfg.uid || "";
+    var direct = page.targetUid || cfg.targetUid || cfg.uid || getRoutePeerSlug() || "";
 
     if (direct) {
-      state.peerUidCache = String(direct);
-      if (!/^\d+$/.test(String(direct))) {
-        if (!state.peerUsernameCache) state.peerUsernameCache = String(direct);
-        if (!state.peerUserslugCache) state.peerUserslugCache = String(direct);
+      direct = String(direct);
+      if (state.peerUidCache && String(state.peerUidCache) !== direct) {
+        clearPeerRuntimeIdentity(direct);
+        state.loadedPeerUid = "";
+        state.hasNoMoreHistory = false;
+        state.localMaxSeq = 0;
+        state.mergedCache = null;
+        state.mergedDirty = true;
+        state.msgIndexDirty = true;
       }
+
+      state.peerUidCache = direct;
+      loadPeerIdentityCache(direct);
+
+      if (!/^\d+$/.test(direct)) {
+        if (!state.peerUsernameCache) state.peerUsernameCache = direct;
+        if (!state.peerUserslugCache) state.peerUserslugCache = direct;
+      }
+
       return state.peerUidCache;
     }
+
+    if (state.peerUidCache) return state.peerUidCache;
 
     setPeerFromUser(getPeerFromAjaxify());
     if (state.peerUidCache) return state.peerUidCache;
@@ -1483,7 +1600,8 @@
 
   function getAvatarHtml(uid, username, fallbackHtml) {
     var pic = "";
-    var text = /^\d+$/.test(String(username || "")) ? "用" : String(username || "?").charAt(0).toUpperCase();
+    var cleanName = isMeaningfulPeerName(username) ? String(username).trim() : "";
+    var text = cleanName ? cleanName.charAt(0).toUpperCase() : "";
     var bg = "#72a5f2";
 
     if (cpIsMineUid(uid) && window.app && window.app.user) {
@@ -1528,6 +1646,16 @@
 
     if (fallbackHtml && fallbackHtml.indexOf("<img") > -1) return fallbackHtml;
 
+    if (!text || text === "用") {
+      return (
+        '<div class="avatar cp-avatar-placeholder" style="background:' +
+        escAttr(bg) +
+        ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;font-size:16px;">' +
+        '<i class="fa fa-user" aria-hidden="true"></i>' +
+        "</div>"
+      );
+    }
+
     return (
       '<div class="avatar" style="background:' +
       escAttr(bg) +
@@ -1570,14 +1698,17 @@
         name = routeSlug;
         userslug = userslug || routeSlug;
       } else if (routeSlug) {
-        name = state.peerUsernameCache || cpT("unknown_user", "用户");
+        name = state.peerUsernameCache || cpT("unknown_user", "好友");
       }
     }
 
     if (name) {
-      state.peerUsernameCache = name;
-      userslug = userslug || encodeURIComponent(String(name).toLowerCase().replace(/ /g, "-"));
-      state.peerUserslugCache = userslug;
+      if (isMeaningfulPeerName(name)) state.peerUsernameCache = name;
+      userslug = userslug || state.peerUserslugCache || (isMeaningfulPeerName(name) ? encodeURIComponent(String(name).toLowerCase().replace(/ /g, "-")) : "");
+      if (userslug) state.peerUserslugCache = userslug;
+      savePeerIdentityCache();
+      cpHydratePeerMessagesFromCache();
+
       var profileHref = getRelativePath() + '/user/' + escAttr(userslug || encodeURIComponent(String(name).toLowerCase().replace(/ /g, "-")));
       pInfo.innerHTML = '<a href="' + profileHref + '" title="访问主页">' + esc(name) + "</a>";
       if (avatar) {
@@ -1671,7 +1802,7 @@
       return !m.mine && m.username;
     });
 
-    var username = isMine ? (window.app && app.user ? app.user.username : "我") : peerMsg ? peerMsg.username : state.peerUsernameCache || cpT("unknown_user", "用户");
+    var username = isMine ? (window.app && app.user ? app.user.username : "我") : peerMsg ? peerMsg.username : state.peerUsernameCache || cpT("unknown_user", "好友");
     if (!isMine && /^\d+$/.test(String(username || ""))) username = cpT("unknown_user", "用户");
     var userslug = isMine ? (window.app && app.user ? app.user.userslug || "" : "") : peerMsg ? peerMsg.userslug : "";
     var avatarHtml = getAvatarHtml(String(uid), username, peerMsg ? peerMsg.avatarHtml : null);
@@ -1963,8 +2094,8 @@
 
       if (msgs.length) {
         processWukongMessages(msgs, !!startSeq && !opts.isOfflineSync);
-        if (msgs.length < limit) state.hasNoMoreHistory = true;
-      } else {
+        if (!opts.isOfflineSync && msgs.length < limit) state.hasNoMoreHistory = true;
+      } else if (!opts.isOfflineSync) {
         state.hasNoMoreHistory = true;
       }
     } catch (e) {
@@ -2289,7 +2420,28 @@
 
     if (!pUid || state.loadedPeerUid === pUid) return;
 
+    if (state.loadedPeerUid && state.loadedPeerUid !== pUid) {
+      var oldPeerUid = state.loadedPeerUid;
+      if (oldPeerUid) schedulePersistChat(oldPeerUid);
+
+      state.messages = [];
+      state.wkMessages = [];
+      state.localMaxSeq = 0;
+      state.hasNoMoreHistory = false;
+      state.renderLimit = 240;
+      state.scrollCache[pUid] = 0;
+      state.unreadCount = 0;
+      state.mergedCache = null;
+      state.mergedDirty = true;
+      state.msgIndex = null;
+      state.msgIndexDirty = true;
+      state.lastRenderHash = "";
+      updateUnreadBadge();
+    }
+
     state.loadedPeerUid = pUid;
+    loadPeerIdentityCache(pUid);
+    updateHeaderPeerInfo(null);
 
     await loadChatFromDB(pUid);
     await fetchWukongHistory(pUid, 0, { limit: 20 });
@@ -2368,6 +2520,7 @@
     injectStyle();
     injectRoot();
     cpNormalizeActionIcons();
+    cpStartHeaderActionObserver();
     // 先用路由用户名占位，避免标题长时间停留在“加载中...”
     updateHeaderPeerInfo(null);
     hydratePeerFromRoute().then(function () {
@@ -2440,6 +2593,11 @@
     if (state.lazyObserver) state.lazyObserver.disconnect();
     state.lazyObserver = null;
     state.lazyObserved = typeof WeakSet !== "undefined" ? new WeakSet() : null;
+
+    if (state.headerActionObserver) {
+      try { state.headerActionObserver.disconnect(); } catch (_) {}
+      state.headerActionObserver = null;
+    }
 
     releaseMountedMediaElements();
 
@@ -2515,6 +2673,120 @@
         visibility:hidden!important;
         opacity:0!important;
         pointer-events:none!important;
+      }
+
+      #cp-chat-root .cp-header-actions{
+        width:auto!important;
+        min-width:72px!important;
+        height:38px!important;
+        display:flex!important;
+        align-items:center!important;
+        justify-content:flex-end!important;
+        gap:4px!important;
+        flex-shrink:0!important;
+      }
+      #cp-chat-root .cp-header-actions button,
+      #cp-chat-root .cp-header-actions .cp-harmony-call-entry{
+        width:34px!important;
+        height:34px!important;
+        min-width:34px!important;
+        border-radius:999px!important;
+        display:grid!important;
+        place-items:center!important;
+        padding:0!important;
+      }
+      #cp-chat-root .cp-header-actions #cp-header-more{
+        background:transparent!important;
+        color:#475569!important;
+        font-size:22px!important;
+      }
+      #cp-chat-root .cp-header-actions .cp-more-dots{
+        font-size:24px!important;
+        line-height:1!important;
+      }
+      #cp-chat-root .cp-header > #cp-harmony-call-slot,
+      #cp-chat-root .cp-header .cp-call-slot-near-actions,
+      #cp-chat-root .cp-header-actions .cp-harmony-call-slot,
+      #cp-chat-root .cp-header-actions #cp-harmony-call-slot{
+        position:relative!important;
+        flex:0 0 auto!important;
+        display:flex!important;
+        align-items:center!important;
+        justify-content:center!important;
+        padding:0!important;
+        margin-left:auto!important;
+        margin-right:0!important;
+      }
+      #cp-chat-root .cp-header > #cp-harmony-call-slot + .cp-header-actions{
+        margin-left:0!important;
+      }
+      #cp-chat-root #cp-harmony-call-entry,
+      #cp-chat-root .cp-call-entry-near-actions{
+        width:34px!important;
+        height:34px!important;
+        min-width:34px!important;
+        background:rgba(37,99,235,.10)!important;
+        color:#2563eb!important;
+        border:1px solid rgba(37,99,235,.16)!important;
+        border-radius:999px!important;
+        box-shadow:none!important;
+        font-size:15px!important;
+      }
+      #cp-chat-root #cp-harmony-call-entry i{
+        font-size:15px!important;
+        line-height:1!important;
+      }
+      #cp-chat-root #cp-harmony-call-entry:active{
+        transform:scale(.92)!important;
+      }
+      #cp-chat-root #cp-harmony-call-pop{
+        right:0!important;
+        top:40px!important;
+      }
+
+      #cp-chat-root .cp-fab-bottom{
+        width:32px!important;
+        height:32px!important;
+        right:13px!important;
+        bottom:calc(var(--cp-footer-h) + 14px)!important;
+        border:0!important;
+        background:#2563eb!important;
+        color:#fff!important;
+        box-shadow:0 6px 18px rgba(37,99,235,.28)!important;
+      }
+      #cp-chat-root .cp-fab-v{
+        font-size:14px!important;
+        line-height:1!important;
+        transform:none!important;
+      }
+      #cp-chat-root .cp-fab-badge{
+        top:-5px!important;
+        right:-5px!important;
+        min-width:16px!important;
+        height:16px!important;
+        padding:0 4px!important;
+        line-height:16px!important;
+        font-size:9px!important;
+      }
+
+      #cp-chat-root .cp-quick-trans{
+        width:22px!important;
+        height:22px!important;
+        right:-27px!important;
+        border-radius:999px!important;
+        background:rgba(255,255,255,.96)!important;
+        border:1px solid rgba(226,232,240,.9)!important;
+        box-shadow:0 2px 8px rgba(15,23,42,.12)!important;
+      }
+      #cp-chat-root .cp-quick-trans .cp-trans-wa,
+      #cp-chat-root .cp-quick-trans .cp-trans-stack,
+      #cp-chat-root .cp-quick-trans .cp-ai-glyph{
+        transform:rotate(-12deg) scale(.78)!important;
+      }
+
+      #cp-chat-root .cp-avatar-placeholder i{
+        font-size:15px!important;
+        opacity:.92!important;
       }
     `;
 
@@ -2613,7 +2885,7 @@
             <div class="cp-peer-avatar" id="cp-peer-avatar"></div>
             <div class="cp-header-center" id="cp-peer-info">加载中...</div>
           </div>
-          <div class="cp-header-actions">
+          <div class="cp-header-actions" id="cp-header-actions">
             <button id="cp-header-more" aria-label="设置"><span class="cp-more-dots">⋮</span></button>
           </div>
         </header>
@@ -2626,8 +2898,8 @@
           <div id="cp-bottom-anchor"></div>
         </main>
 
-        <button id="cp-fab-bottom" class="cp-fab-bottom" title="回到底部">
-          <svg class="cp-icon cp-fab-down-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12l7 7 7-7"></path></svg>
+        <button id="cp-fab-bottom" class="cp-fab-bottom" title="回到底部" aria-label="回到底部">
+          <i class="fa fa-chevron-down cp-fab-v" aria-hidden="true"></i>
           <span id="cp-fab-badge" class="cp-fab-badge" hidden>0</span>
         </button>
 
@@ -2862,6 +3134,54 @@
     }
 
     byId("cp-lang-grid").innerHTML = langHtml;
+  }
+
+  function cpNormalizeHeaderActionLayout() {
+    var header = document.querySelector("#cp-chat-root .cp-header");
+    var actions = byId("cp-header-actions") || document.querySelector("#cp-chat-root .cp-header-actions");
+    var slot = byId("cp-harmony-call-slot");
+
+    if (!header || !actions || !slot) return false;
+
+    // Keep the call slot as a direct child of .cp-header because cp-harmony-call.js
+    // expects that parent. Moving it into .cp-header-actions makes the call runtime
+    // remove/reinsert it repeatedly. We only normalize class names and CSS.
+    slot.classList.add("cp-call-slot-near-actions");
+
+    var entry = byId("cp-harmony-call-entry");
+    if (entry) {
+      entry.classList.add("cp-call-entry-near-actions");
+      entry.setAttribute("aria-label", "通话");
+      entry.setAttribute("title", "通话");
+    }
+
+    return true;
+  }
+
+  function cpStartHeaderActionObserver() {
+    if (state.headerActionObserver) {
+      try { state.headerActionObserver.disconnect(); } catch (_) {}
+      state.headerActionObserver = null;
+    }
+
+    var header = document.querySelector("#cp-chat-root .cp-header");
+    if (!header || typeof MutationObserver === "undefined") {
+      cpNormalizeHeaderActionLayout();
+      return;
+    }
+
+    state.headerActionObserver = new MutationObserver(function () {
+      cpNormalizeHeaderActionLayout();
+    });
+
+    state.headerActionObserver.observe(header, { childList: true, subtree: true });
+    cpNormalizeHeaderActionLayout();
+
+    // The call runtime may inject after its own async boot. A few cheap retries cover
+    // script ordering without a permanent interval.
+    [80, 260, 700, 1500].forEach(function (delay) {
+      setTimeout(cpNormalizeHeaderActionLayout, delay);
+    });
   }
 
   function clearAllMessageTranslations() {
@@ -3486,7 +3806,8 @@
     var unreadList = [];
     var viewTop = main.scrollTop;
     var viewBottom = viewTop + main.clientHeight;
-    var nodes = document.querySelectorAll(".cp-row.other");
+    var listRoot = byId("cp-msg-list") || document;
+    var nodes = listRoot.querySelectorAll(".cp-row.other");
 
     nodes.forEach(function (n) {
       var top = n.offsetTop;
@@ -3963,14 +4284,25 @@
     return msg;
   }
 
+  function cpMergeRenderMode(a, b) {
+    var rank = { keep: 0, restore: 1, prepend: 2, bottom: 3 };
+    a = a || "keep";
+    b = b || "keep";
+    return (rank[b] || 0) > (rank[a] || 0) ? b : a;
+  }
+
   function incrementalRender(mode) {
+    state.renderPendingMode = cpMergeRenderMode(state.renderPendingMode, mode || "keep");
+
     if (state.renderPending) return;
 
     state.renderPending = true;
 
     requestAnimationFrame(function () {
+      var nextMode = state.renderPendingMode || "keep";
+      state.renderPendingMode = "";
       state.renderPending = false;
-      doIncrementalRender(mode);
+      doIncrementalRender(nextMode);
     });
   }
 
@@ -4061,15 +4393,9 @@
       return { enabled: false, start: 0, end: len, topHeight: 0, bottomHeight: 0, messages: arr || [] };
     }
 
-    // Media cells resize after thumbnails/posters load. Keep the recent media window
-    // fully rendered to avoid video/image messages disappearing after send or refresh.
-    var recent = arr.slice(Math.max(0, len - 48));
-    for (var rm = 0; rm < recent.length; rm++) {
-      if (recent[rm] && /^(image|video|voice|gallery)$/.test(recent[rm].type || "")) {
-        return { enabled: false, start: 0, end: len, topHeight: 0, bottomHeight: 0, messages: arr || [] };
-      }
-    }
-
+    // Keep virtualization enabled even when recent messages contain media. The lazy
+    // media loader plus measured row heights prevents disappearing thumbnails, while
+    // avoiding a full 600+ row DOM after long chats.
     var viewportTop = Math.max(0, main.scrollTop || 0);
     var viewportBottom = viewportTop + Math.max(main.clientHeight || 0, 500);
 
@@ -4480,6 +4806,7 @@
     observeLazyElements();
     if (typeof cpHydrateVideoPosters === "function") cpHydrateVideoPosters(list);
     updateFooterHeight();
+    cpNormalizeHeaderActionLayout();
   }
 
   function initLazyObserver() {
@@ -4508,8 +4835,10 @@
   }
 
   function observeLazyElements() {
+    var scope = byId("cp-msg-list") || document;
+
     if (state.lazyObserver) {
-      document.querySelectorAll(".cp-lazy-media,.cp-lazy-audio").forEach(function (el) {
+      scope.querySelectorAll(".cp-lazy-media,.cp-lazy-audio").forEach(function (el) {
         if (state.lazyObserved && state.lazyObserved.has(el)) return;
         if (!state.lazyObserved && el.dataset.observed === "1") return;
 
@@ -4519,13 +4848,14 @@
         state.lazyObserver.observe(el);
       });
     } else {
-      processLazyMediaFallback();
+      processLazyMediaFallback(scope);
     }
   }
 
-  function processLazyMediaFallback() {
-    document.querySelectorAll(".cp-lazy-media").forEach(loadLazyMedia);
-    document.querySelectorAll(".cp-lazy-audio").forEach(loadLazyAudio);
+  function processLazyMediaFallback(scope) {
+    scope = scope || byId("cp-msg-list") || document;
+    scope.querySelectorAll(".cp-lazy-media").forEach(loadLazyMedia);
+    scope.querySelectorAll(".cp-lazy-audio").forEach(loadLazyAudio);
   }
 
   function loadLazyMedia(el) {
