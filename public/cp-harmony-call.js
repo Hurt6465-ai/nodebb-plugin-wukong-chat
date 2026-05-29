@@ -1471,16 +1471,16 @@
     if (mic) {
       mic.classList.toggle("off", !State.isMicOn);
       mic.innerHTML = State.isMicOn
-        ? '<i class="fa fa-microphone"></i><span>麦克风</span>'
-        : '<i class="fa fa-microphone-slash"></i><span>静音</span>';
+        ? '<span class="cp-call-ui-icon"><i class="fa fa-microphone"></i><span class="cp-call-ui-fallback">麦</span></span><span>麦克风</span>'
+        : '<span class="cp-call-ui-icon"><i class="fa fa-microphone-slash"></i><span class="cp-call-ui-fallback">静</span></span><span>静音</span>';
     }
 
     if (cam) {
       cam.style.display = State.mode === "video" ? "inline-flex" : "none";
       cam.classList.toggle("off", !State.isCamOn);
       cam.innerHTML = State.isCamOn
-        ? '<i class="fa fa-video-camera"></i><span>摄像头</span>'
-        : '<i class="fa fa-video-camera"></i><span>关闭</span>';
+        ? '<span class="cp-call-ui-icon"><i class="fa fa-video-camera"></i><span class="cp-call-ui-fallback">像</span></span><span>摄像头</span>'
+        : '<span class="cp-call-ui-icon"><i class="fa fa-video-camera"></i><span class="cp-call-ui-fallback">关</span></span><span>关闭</span>';
     }
   }
 
@@ -1489,23 +1489,23 @@
 
     var css = `
       .cp-harmony-call-slot{position:relative;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;margin-left:auto;margin-right:2px;z-index:30;}
-      .cp-harmony-call-entry{width:36px;height:36px;min-width:36px;padding:0;border:1px solid rgba(59,130,246,.22);border-radius:999px;background:rgba(239,246,255,.94);color:#2563eb;display:grid;place-items:center;cursor:pointer;box-shadow:0 2px 8px rgba(59,130,246,.12);-webkit-tap-highlight-color:transparent;}
+      .cp-harmony-call-entry{width:36px;height:36px;min-width:36px;padding:0;border:1px solid rgba(37,99,235,.22);border-radius:999px;background:linear-gradient(180deg,#f8fbff,#dbeafe);color:#1d4ed8;display:grid;place-items:center;cursor:pointer;box-shadow:0 4px 12px rgba(37,99,235,.16);-webkit-tap-highlight-color:transparent;font-family:Arial,sans-serif;}
       .cp-harmony-call-entry:hover{background:#dbeafe;opacity:1;}
       .cp-harmony-call-entry:active{transform:scale(.92);}
-      .cp-harmony-call-entry i{font-size:15px;line-height:1;}.cp-phone-glyph,.cp-video-glyph{width:18px;height:18px;position:relative;display:grid;place-items:center;line-height:1;}.cp-call-fallback{font-size:17px;font-weight:800;line-height:1;}.cp-fa-ok .cp-call-fallback{display:none!important;}.cp-fa-missing i{display:none!important;}.cp-fa-missing .cp-call-fallback{display:inline-block!important;}
-      .cp-harmony-call-pop{position:absolute;right:-4px;top:44px;width:176px;min-width:176px;padding:8px;border-radius:18px;background:rgba(255,255,255,.98);backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);border:1px solid rgba(226,232,240,.88);box-shadow:0 18px 42px rgba(15,23,42,.18);z-index:2147483450;overflow:visible;animation:cp-harmony-call-pop-in .16s cubic-bezier(.2,.8,.2,1);}
+      .cp-harmony-call-entry i{font-size:16px;line-height:1;color:currentColor;}.cp-phone-glyph,.cp-video-glyph{width:18px;height:18px;position:relative;display:grid;place-items:center;line-height:1;}.cp-call-fallback{font-family:Arial,sans-serif;font-size:18px;font-weight:900;line-height:1;color:currentColor;}.cp-fa-ok .cp-call-fallback{display:none!important;}.cp-fa-missing i{display:none!important;}.cp-fa-missing .cp-call-fallback{display:inline-block!important;}
+      .cp-harmony-call-pop{position:absolute;right:0;top:42px;width:180px;min-width:180px;padding:8px;border-radius:18px;background:rgba(255,255,255,.98);backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);border:1px solid rgba(226,232,240,.92);box-shadow:0 16px 38px rgba(15,23,42,.18);z-index:2147483450;overflow:visible;animation:cp-harmony-call-pop-in .16s cubic-bezier(.2,.8,.2,1);}
       .cp-harmony-call-pop[hidden]{display:none!important;}
       @keyframes cp-harmony-call-pop-in{from{opacity:0;transform:translateY(-6px) scale(.96);}to{opacity:1;transform:translateY(0) scale(1);}}
       .cp-harmony-call-pop::before{content:"";position:absolute;right:22px;top:-6px;width:12px;height:12px;background:rgba(255,255,255,.97);border-left:1px solid rgba(15,23,42,.06);border-top:1px solid rgba(15,23,42,.06);transform:rotate(45deg);}
-      .cp-harmony-call-pop button{width:100%;min-height:46px;border:none;background:transparent;border-radius:14px;padding:7px 8px;display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;cursor:pointer;text-align:left;color:#0f172a;writing-mode:horizontal-tb;white-space:nowrap;}
+      .cp-harmony-call-pop button{width:100%;height:48px;min-height:48px;border:none;background:transparent;border-radius:14px;padding:7px 9px;display:grid;grid-template-columns:34px 1fr;align-items:center;justify-content:flex-start;column-gap:10px;cursor:pointer;text-align:left;color:#0f172a;writing-mode:horizontal-tb;white-space:nowrap;}
       .cp-harmony-call-pop button:hover{background:#f8fafc;}
       .cp-harmony-call-pop button:active{background:#f1f5f9;transform:scale(.98);}
-      .cp-harmony-call-pop-icon{width:30px;height:30px;min-width:30px;border-radius:999px;display:grid;place-items:center;color:#fff;flex-shrink:0;box-shadow:none;}
+      .cp-harmony-call-pop-icon{width:32px;height:32px;min-width:32px;border-radius:999px;display:grid;place-items:center;color:#fff;flex-shrink:0;box-shadow:none;}
       .cp-harmony-call-pop-icon.audio{background:#e0f2fe;color:#0284c7;}
       .cp-harmony-call-pop-icon.video{background:#ede9fe;color:#7c3aed;}
-      .cp-harmony-call-pop-main{display:flex;flex-direction:column;min-width:0;}
-      .cp-harmony-call-pop-main b{font-size:14px;line-height:1.15;color:#0f172a;font-weight:800;white-space:nowrap;}
-      @media (max-width:390px){.cp-harmony-call-entry{width:34px;min-width:34px;}.cp-harmony-call-pop{right:-4px;width:172px;min-width:172px;}}
+      .cp-harmony-call-pop-main{display:block;min-width:0;width:auto;writing-mode:horizontal-tb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .cp-harmony-call-pop-main b{display:block;font-size:14px;line-height:1.15;color:#0f172a;font-weight:800;white-space:nowrap;writing-mode:horizontal-tb;overflow:hidden;text-overflow:ellipsis;}
+      @media (max-width:390px){.cp-harmony-call-entry{width:36px;min-width:36px;}.cp-harmony-call-pop{right:0;width:180px;min-width:180px;}}
       #cp-call-root{position:fixed;inset:0;z-index:2147483500;display:none;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;-webkit-tap-highlight-color:transparent;}
       #cp-call-bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(34px) brightness(.45);transform:scale(1.08);background-color:#101827;}
       #cp-call-mask{position:absolute;inset:0;background:linear-gradient(180deg,rgba(15,23,42,.18),rgba(15,23,42,.78));}
@@ -1534,6 +1534,11 @@
       .cp-call-in-circle{width:28px;height:28px;border-radius:10px;display:grid;place-items:center;font-size:16px;color:inherit;background:transparent;}
       .cp-call-in-action.reject{color:#fecaca;background:rgba(239,68,68,.18);border-color:rgba(248,113,113,.25);}.cp-call-in-circle.red{background:transparent;box-shadow:none;}
       .cp-call-in-action.accept{color:#fff;background:#2563eb;border-color:rgba(59,130,246,.36);box-shadow:0 10px 24px rgba(37,99,235,.24);}.cp-call-in-circle.green{background:transparent;box-shadow:none;}
+      .cp-call-ui-icon{width:22px;height:22px;min-width:22px;border-radius:9px;display:grid;place-items:center;background:rgba(255,255,255,.12);position:relative;}
+      .cp-call-ui-icon i,.cp-call-in-circle i{font-size:15px;line-height:1;display:inline-block;}
+      .cp-call-ui-fallback{display:none;font-size:13px;font-weight:900;line-height:1;color:currentColor;}
+      .cp-fa-missing .cp-call-ui-icon i,.cp-fa-missing .cp-call-in-circle i{display:none!important;}
+      .cp-fa-missing .cp-call-ui-fallback{display:inline-block!important;}
       .cp-call-hidden-signal{display:none!important;}
     `;
 
@@ -1566,9 +1571,9 @@
           '<video id="cp-call-local-video" autoplay muted playsinline></video>' +
         '</div>' +
         '<div id="cp-call-controls">' +
-          '<button type="button" class="cp-call-control" id="cp-call-btn-mic"><i class="fa fa-microphone"></i><span>麦克风</span></button>' +
-          '<button type="button" class="cp-call-control danger" id="cp-call-btn-end"><i class="fa fa-phone fa-rotate-135"></i></button>' +
-          '<button type="button" class="cp-call-control" id="cp-call-btn-cam"><i class="fa fa-video-camera"></i><span>摄像头</span></button>' +
+          '<button type="button" class="cp-call-control" id="cp-call-btn-mic"><span class="cp-call-ui-icon"><i class="fa fa-microphone"></i><span class="cp-call-ui-fallback">麦</span></span><span>麦克风</span></button>' +
+          '<button type="button" class="cp-call-control danger" id="cp-call-btn-end"><span class="cp-call-ui-icon"><i class="fa fa-phone fa-rotate-135"></i><span class="cp-call-ui-fallback">挂</span></span><span>挂断</span></button>' +
+          '<button type="button" class="cp-call-control" id="cp-call-btn-cam"><span class="cp-call-ui-icon"><i class="fa fa-video-camera"></i><span class="cp-call-ui-fallback">像</span></span><span>摄像头</span></button>' +
         '</div>' +
       '</div>' +
       '<div id="cp-call-incoming">' +
@@ -1576,8 +1581,8 @@
         '<div id="cp-call-in-name">好友</div>' +
         '<div id="cp-call-in-tip">邀请你通话</div>' +
         '<div id="cp-call-in-actions">' +
-          '<div class="cp-call-in-action reject" id="cp-call-reject"><div class="cp-call-in-circle red"><i class="fa fa-phone fa-rotate-135"></i></div><div>拒绝</div></div>' +
-          '<div class="cp-call-in-action accept" id="cp-call-accept"><div class="cp-call-in-circle green"><i class="fa fa-phone"></i></div><div>接听</div></div>' +
+          '<div class="cp-call-in-action reject" id="cp-call-reject"><div class="cp-call-in-circle red"><i class="fa fa-phone fa-rotate-135"></i><span class="cp-call-ui-fallback">拒</span></div><div>拒绝</div></div>' +
+          '<div class="cp-call-in-action accept" id="cp-call-accept"><div class="cp-call-in-circle green"><i class="fa fa-phone"></i><span class="cp-call-ui-fallback">接</span></div><div>接听</div></div>' +
         '</div>' +
       '</div>';
 
@@ -1619,8 +1624,8 @@
     slot.id = "cp-harmony-call-slot";
     slot.className = "cp-harmony-call-slot";
 
-    var phoneGlyph = '<span class="cp-phone-glyph"><i class="fa fa-phone" aria-hidden="true"></i><span class="cp-call-fallback" aria-hidden="true">☎</span></span>';
-    var videoGlyph = '<span class="cp-video-glyph"><i class="fa fa-video-camera" aria-hidden="true"></i><span class="cp-call-fallback" aria-hidden="true">▣</span></span>';
+    var phoneGlyph = '<span class="cp-phone-glyph"><i class="fa fa-phone" aria-hidden="true"></i><span class="cp-call-fallback" aria-hidden="true">✆</span></span>';
+    var videoGlyph = '<span class="cp-video-glyph"><i class="fa fa-video-camera" aria-hidden="true"></i><span class="cp-call-fallback" aria-hidden="true">▸</span></span>';
 
     var videoButton = UserConfig.enableVideo === false ? "" :
       '<button type="button" data-mode="video">' +
@@ -1651,6 +1656,7 @@
         if (!ok && /FontAwesome|Font Awesome/i.test(String(family || "")) && test && test.offsetWidth > 2) ok = true;
         slot.classList.toggle("cp-fa-ok", !!ok);
         slot.classList.toggle("cp-fa-missing", !ok);
+        try { var root = byId("cp-call-root"); if (root) root.classList.toggle("cp-fa-missing", !ok); } catch (_) {}
       } catch (_) {
         slot.classList.add("cp-fa-missing");
       }
