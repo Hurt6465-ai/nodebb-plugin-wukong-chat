@@ -184,7 +184,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.4-p0-p1-stability";
+  window.__cpNodebbHarmonyVersion = "1.0.5-wukong-single-source";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -405,12 +405,20 @@
     myUid: "",
     peerUidCache: "",
     peerUsernameCache: "",
+    peerUserslugCache: "",
+    peerPictureCache: "",
+    peerIconTextCache: "",
+    peerIconBgCache: "",
+    peerRouteSlug: "",
     suppressNativeIds: {},
     pendingSentTexts: {},
     loadedPeerUid: "",
 
     isPreloading: false,
-    hasNoMoreHistory: false,
+    loadingOldHistory: false,
+    offlineSyncRunning: false,
+    noMoreOldHistory: false,
+    hasNoMoreHistory: false, // legacy alias for old-history UI checks
     initialLoadDone: false,
 
     scrollCache: {},
@@ -419,6 +427,11 @@
 
     blobUrlCache: {},
     blobKeys: [],
+    blobLastUsed: {},
+    videoPosterCache: {},
+    heightMap: {},
+    heightObserved: {},
+    virtualRenderPending: false,
 
     mergedCache: null,
     mergedDirty: true,
@@ -504,6 +517,107 @@
     return Number(m.message_seq || m.messageSeq || m.seq || 0) || 0;
   }
 
+  function getWkTimestampMs(m) {
+    if (!m) return Date.now();
+    var raw = m.timestamp || m.timestamp_ms || m.time || m.ts || 0;
+    var n = Number(raw) || 0;
+    if (!n) return Date.now();
+    return n > 100000000000 ? n : n * 1000;
+  }
+
+  function getWkMessageIdentity(raw, fallbackText, fromUid) {
+    raw = raw || {};
+    var seq = getWkSeq(raw);
+    var clientNo = getWkClientMsgNo(raw);
+    var stableId = getWkStableMessageId(raw);
+    var ts = getWkTimestampMs(raw);
+    var id = stableId || clientNo || (seq ? ("wk_seq_" + seq) : ("wk_fallback_" + String(fromUid || "") + "_" + shortHash(String(fallbackText || "")) + "_" + ts));
+    return {
+      id: String(id),
+      seq: seq,
+      clientNo: clientNo,
+      stableId: stableId,
+      ts: ts
+    };
+  }
+
+  function findExistingWkMessage(msgId, clientNo, seq) {
+    for (var i = 0; i < state.wkMessages.length; i++) {
+      var m = state.wkMessages[i];
+      if (msgIdentityMatches(m, msgId, clientNo, seq)) return m;
+    }
+    return null;
+  }
+
+  function serializeWkMeta(wkMsg) {
+    if (!wkMsg) return null;
+    return {
+      message_id: wkMsg.message_id || wkMsg.messageID || wkMsg.messageId || "",
+      client_msg_no: wkMsg.client_msg_no || wkMsg.clientMsgNo || wkMsg.clientMsgNO || "",
+      message_seq: Number(wkMsg.message_seq || wkMsg.messageSeq || wkMsg.seq || 0) || 0,
+      from_uid: String(wkMsg.from_uid || wkMsg.fromUID || wkMsg.fromUid || ""),
+      timestamp: Number(wkMsg.timestamp || wkMsg.timestamp_ms || wkMsg.time || wkMsg.ts || 0) || 0,
+      contentType: wkMsg.contentType || wkMsg.content_type || 0
+    };
+  }
+
+  function serializeMessageForDB(m) {
+    if (!m) return null;
+    var copy = {
+      id: String(m.id || ""),
+      seq: Number(m.seq || 0) || 0,
+      clientMsgNo: String(m.clientMsgNo || ""),
+      mine: !!m.mine,
+      ts: Number(m.ts || Date.now()) || Date.now(),
+      username: String(m.username || ""),
+      userslug: String(m.userslug || ""),
+      uid: String(m.uid || ""),
+      avatarHtml: String(m.avatarHtml || ""),
+      type: String(m.type || "text"),
+      text: String(m.text || ""),
+      html: String(m.html || ""),
+      quote: String(m.quote || ""),
+      quoteUser: String(m.quoteUser || ""),
+      recalled: !!m.recalled,
+      mediaUrl: String(m.mediaUrl || ""),
+      audioUrl: String(m.audioUrl || ""),
+      translation: String(m.translation || ""),
+      translationOpen: !!m.translationOpen,
+      durationStr: String(m.durationStr || ""),
+      read: !!m.read,
+      serverText: String(m.serverText || ""),
+      pendingLocal: !!m.pendingLocal,
+      failedLocal: !!m.failedLocal,
+      wkMeta: serializeWkMeta(m.wkMsg) || m.wkMeta || null,
+      _ver: Number(m._ver || 1) || 1
+    };
+    if (Array.isArray(m.items)) {
+      copy.items = m.items.slice(0, 9).map(function (it) { return { url: String((it && it.url) || "") }; });
+    }
+    return copy;
+  }
+
+  function hydrateMessageFromDB(m) {
+    if (!m) return null;
+    m.wkMsg = null;
+    if (m.wkMeta) {
+      m.message_id = m.wkMeta.message_id || "";
+      m.client_msg_no = m.wkMeta.client_msg_no || "";
+      m.message_seq = m.wkMeta.message_seq || 0;
+    }
+    m.pendingLocal = false;
+    m.failedLocal = false;
+    if (!m._ver) m._ver = 1;
+    return normalizeMineFlag(m);
+  }
+
+  function getPeerPersistKey(peerUid) {
+    var uid = String(peerUid || getPeerUid() || "").trim();
+    if (!/^\d+$/.test(uid)) return "";
+    var channelType = Number((window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.channelType) || cpPluginConfig().channelType || 1) || 1;
+    return "uid:" + uid + ":ct:" + channelType;
+  }
+
   function msgIdentityMatches(msg, msgId, clientNo, seq) {
     if (!msg) return false;
 
@@ -513,6 +627,8 @@
       msg.client_msg_no,
       msg.messageID,
       msg.message_id,
+      msg.wkMeta && msg.wkMeta.message_id,
+      msg.wkMeta && msg.wkMeta.client_msg_no,
       msg.wkMsg && msg.wkMsg.messageID,
       msg.wkMsg && msg.wkMsg.message_id,
       msg.wkMsg && msg.wkMsg.clientMsgNo,
@@ -576,6 +692,7 @@
 
     if (serverMsg && localMsg.wkMsg !== serverMsg) {
       localMsg.wkMsg = serverMsg;
+      localMsg.wkMeta = serializeWkMeta(serverMsg);
       changed = true;
     }
 
@@ -601,9 +718,16 @@
   }
 
   function bindOutgoingAck(wkMsgObj, localMsg) {
-    if (!wkMsgObj || !localMsg) return;
+    if (!localMsg) return;
+    if (!wkMsgObj) {
+      localMsg.pendingLocal = false;
+      localMsg.failedLocal = true;
+      msgTouch(localMsg);
+      return;
+    }
 
     localMsg.pendingLocal = true;
+    localMsg.failedLocal = false;
 
     var sync = function (ack) {
       var source = ack || wkMsgObj;
@@ -612,6 +736,7 @@
       var seq = getWkSeq(source) || getWkSeq(wkMsgObj);
 
       if (adoptServerIdentity(localMsg, source, msgId, seq, clientNo, localMsg.serverText || localMsg.text || "", localMsg.text || "")) {
+        localMsg.failedLocal = false;
         schedulePersistChat(getPeerUid());
         incrementalRender("keep");
       }
@@ -640,6 +765,12 @@
       sync(wkMsgObj);
       if (tries >= 12 || (!localMsg.pendingLocal && localMsg.seq && localMsg.seq !== Number.MAX_SAFE_INTEGER)) {
         clearInterval(timer);
+        if (tries >= 12 && localMsg.pendingLocal && (!localMsg.seq || localMsg.seq === Number.MAX_SAFE_INTEGER)) {
+          localMsg.pendingLocal = false;
+          localMsg.failedLocal = true;
+          msgTouch(localMsg);
+          incrementalRender("keep");
+        }
       }
     }, 250);
   }
@@ -985,11 +1116,53 @@
     }
   }
 
+  function cpBlobUrlInUse(blobUrl) {
+    if (!blobUrl || !/^blob:/i.test(blobUrl)) return false;
+    try {
+      var nodes = document.querySelectorAll('#cp-chat-root img,#cp-chat-root video,#cp-chat-root audio,#cp-preview-body img,#cp-preview-body video,#cp-preview-body audio');
+      for (var i = 0; i < nodes.length; i++) {
+        if (nodes[i].src === blobUrl || nodes[i].currentSrc === blobUrl) return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function cpRevokeBlobUrl(originalUrl, force) {
+    var blobUrl = state.blobUrlCache && state.blobUrlCache[originalUrl];
+    if (!blobUrl) return true;
+    if (!force && cpBlobUrlInUse(blobUrl)) return false;
+    try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+    delete state.blobUrlCache[originalUrl];
+    if (state.blobLastUsed) delete state.blobLastUsed[originalUrl];
+    return true;
+  }
+
+  function cpTrimBlobUrlCache(force) {
+    if (!state.blobKeys) state.blobKeys = [];
+    var seen = {};
+    state.blobKeys = state.blobKeys.filter(function (k) {
+      if (!k || seen[k] || !state.blobUrlCache[k]) return false;
+      seen[k] = true;
+      return true;
+    });
+
+    while (state.blobKeys.length > 60) {
+      var oldUrl = state.blobKeys.shift();
+      if (!cpRevokeBlobUrl(oldUrl, !!force)) {
+        state.blobKeys.push(oldUrl);
+        break;
+      }
+    }
+  }
+
   async function getOrFetchMediaBlob(url, type) {
     if (!url || url.indexOf("blob:") === 0 || url.indexOf("data:") === 0) return url;
     if (type === "video" || /\.(mp4|mov|webm|m4v)(?:\?|#|$)/i.test(url)) return url;
 
-    if (state.blobUrlCache[url]) return state.blobUrlCache[url];
+    if (state.blobUrlCache[url]) {
+      state.blobLastUsed[url] = Date.now();
+      return state.blobUrlCache[url];
+    }
 
     var blobUrl = null;
     var cached = await idbGet("media", url);
@@ -1014,32 +1187,28 @@
     }
 
     state.blobUrlCache[url] = blobUrl;
+    state.blobLastUsed[url] = Date.now();
     state.blobKeys.push(url);
-
-    if (state.blobKeys.length > 60) {
-      var oldUrl = state.blobKeys.shift();
-
-      // 不主动 revoke 正在 DOM 中使用的 objectURL，避免历史图片滚动回来后破图。
-      // 这些 URL 会在页面 unmount 时统一释放。
-      delete state.blobUrlCache[oldUrl];
-    }
+    cpTrimBlobUrlCache(false);
 
     return blobUrl;
   }
 
   function schedulePersistChat(peerUid) {
-    if (!peerUid) return;
+    var key = getPeerPersistKey(peerUid);
+    if (!key) return;
     if (persistTimer) clearTimeout(persistTimer);
 
     persistTimer = setTimeout(function () {
       persistTimer = null;
       persistChatToDB(peerUid);
-    }, 1600);
+    }, 900);
   }
 
   async function persistChatToDB(peerUid) {
     var db = await dbPromise;
-    if (!db || !peerUid) return;
+    var persistKey = getPeerPersistKey(peerUid);
+    if (!db || !persistKey) return;
 
     var maxSeq = 0;
 
@@ -1048,15 +1217,20 @@
       if (s && s < Number.MAX_SAFE_INTEGER && s > maxSeq) maxSeq = s;
     }
 
+    var safeMessages = state.wkMessages.filter(function (m) {
+      return !isCallSignalMessage(m);
+    }).slice(-MAX_PERSIST_MESSAGES).map(serializeMessageForDB).filter(Boolean);
+
     try {
-      db.transaction("chats", "readwrite").objectStore("chats").put({
-        peerUid: peerUid,
-        messages: state.wkMessages.filter(function (m) {
-          return !isCallSignalMessage(m);
-        }).slice(-MAX_PERSIST_MESSAGES),
+      var tx = db.transaction("chats", "readwrite");
+      tx.objectStore("chats").put({
+        peerUid: persistKey,
+        canonicalPeerUid: String(peerUid || getPeerUid() || ""),
+        messages: safeMessages,
         maxSeq: maxSeq,
         ts: Date.now()
       });
+      tx.onerror = function (e) { warn("persist-chat-tx", e); };
     } catch (e) {
       warn("persist-chat", e);
     }
@@ -1064,33 +1238,44 @@
 
   async function loadChatFromDB(peerUid) {
     ensureSelfUid();
-    var data = await idbGet("chats", peerUid);
+    var persistKey = getPeerPersistKey(peerUid);
+    if (!persistKey) return;
+    var data = await idbGet("chats", persistKey);
+    if ((!data || !data.messages) && peerUid) {
+      // v1.0.5 migration: older builds used raw peerUid as the IndexedDB key.
+      data = await idbGet("chats", String(peerUid));
+      if (data && data.messages) {
+        setTimeout(function () { persistChatToDB(peerUid); }, 0);
+      }
+    }
     if (!data || !data.messages) return;
 
     var restored = data.messages
+      .map(hydrateMessageFromDB)
       .filter(function (m) {
-        return !isCallSignalMessage(m);
+        return m && !isCallSignalMessage(m);
       })
       .slice(-MAX_PERSIST_MESSAGES);
 
-    var seen = new Set(state.wkMessages.map(function (m) {
-      return String(m.id || m.seq || ((m.uid || "") + "|" + (m.serverText || m.text || "") + "|" + (m.ts || "")));
-    }));
-
     for (var ri = 0; ri < restored.length; ri++) {
-      var rm = normalizeMineFlag(restored[ri]);
-      var rk = String(rm.id || rm.seq || ((rm.uid || "") + "|" + (rm.serverText || rm.text || "") + "|" + (rm.ts || "")));
-      if (seen.has(rk)) continue;
-      if (!rm._ver) rm._ver = 1;
+      var rm = restored[ri];
+      var ident = {
+        id: rm.id || "",
+        clientNo: rm.clientMsgNo || (rm.wkMeta && rm.wkMeta.client_msg_no) || "",
+        seq: rm.seq || (rm.wkMeta && rm.wkMeta.message_seq) || 0
+      };
+      if (findExistingWkMessage(ident.id, ident.clientNo, ident.seq)) continue;
       state.wkMessages.push(rm);
-      seen.add(rk);
     }
 
     state.wkMessages.sort(function (a, b) {
+      var as = Number(a.seq || 0);
+      var bs = Number(b.seq || 0);
+      if (as && bs && as !== Number.MAX_SAFE_INTEGER && bs !== Number.MAX_SAFE_INTEGER && as !== bs) return as - bs;
       return (a.ts || 0) - (b.ts || 0);
     });
 
-    if (data.maxSeq) state.localMaxSeq = data.maxSeq;
+    if (data.maxSeq) state.localMaxSeq = Math.max(Number(state.localMaxSeq || 0), Number(data.maxSeq || 0));
 
     state.renderVersion++;
     state.mergedDirty = true;
@@ -1108,28 +1293,12 @@
     state.msgIndexDirty = true;
   }
 
-  // 修复：内存裁剪逻辑修正
+  // 修复：内存裁剪逻辑。NodeBB 原生消息不再作为可信消息源，悟空消息只按较高上限裁剪。
   function pruneAllMessagesInMemory() {
-    var total = state.messages.length + state.wkMessages.length;
-    if (total <= MAX_TOTAL_MESSAGES_IN_MEMORY) return;
-
-    var extra = total - MAX_TOTAL_MESSAGES_IN_MEMORY;
-
-    // 优先裁 native messages（保留至少 200 条）
-    if (state.messages.length > 200) {
-      var canRemove = state.messages.length - 200;
-      var removeNative = Math.min(extra, canRemove);
-
-      if (removeNative > 0) {
-        state.messages = state.messages.slice(removeNative);
-        extra -= removeNative;
-      }
-    }
-
-    if (extra > 0 && state.wkMessages.length > 0) {
-      state.wkMessages = state.wkMessages.slice(extra);
-    }
-
+    if (state.messages.length) state.messages = [];
+    var max = Math.max(MAX_WK_MESSAGES_IN_MEMORY, MAX_TOTAL_MESSAGES_IN_MEMORY || 800);
+    if (state.wkMessages.length <= max) return;
+    state.wkMessages = state.wkMessages.slice(-max);
     state.renderVersion++;
     state.mergedDirty = true;
     state.msgIndexDirty = true;
@@ -1137,10 +1306,7 @@
 
   function rebuildMsgIndex() {
     var map = new Map();
-
-    for (var i = 0; i < state.messages.length; i++) map.set(String(state.messages[i].id), state.messages[i]);
     for (var j = 0; j < state.wkMessages.length; j++) map.set(String(state.wkMessages[j].id), state.wkMessages[j]);
-
     state.msgIndex = map;
     state.msgIndexDirty = false;
   }
@@ -1154,46 +1320,40 @@
     ensureSelfUid();
     if (!state.mergedDirty && state.mergedCache) return state.mergedCache;
 
-    var allRawMsgs = state.messages.concat(state.wkMessages || []).filter(function (m) {
+    var allRawMsgs = (state.wkMessages || []).filter(function (m) {
       normalizeMineFlag(m);
       return !isCallSignalMessage(m);
     });
 
     allRawMsgs.sort(function (a, b) {
+      var as = Number(a.seq || 0);
+      var bs = Number(b.seq || 0);
+      if (as && bs && as !== Number.MAX_SAFE_INTEGER && bs !== Number.MAX_SAFE_INTEGER && as !== bs) return as - bs;
       return (a.ts || 0) - (b.ts || 0);
     });
 
-    var seenIds = new Set();
-    var seenFallback = new Map();
+    var seenStable = new Set();
     var allMsgs = [];
 
     for (var k = 0; k < allRawMsgs.length; k++) {
       var ms = allRawMsgs[k];
-      var idKey = String(ms.id || "");
+      var seq = Number(ms.seq || 0);
+      var clientNo = String(ms.clientMsgNo || ms.client_msg_no || (ms.wkMeta && ms.wkMeta.client_msg_no) || "");
+      var stableId = String(ms.message_id || (ms.wkMeta && ms.wkMeta.message_id) || "");
+      var id = String(ms.id || "");
+      var key = "";
 
-      if (idKey && !/^wk_/.test(idKey) && !/^m_/.test(idKey)) {
-        if (seenIds.has(idKey)) continue;
-        seenIds.add(idKey);
+      if (seq && seq !== Number.MAX_SAFE_INTEGER) key = "seq:" + seq;
+      else if (clientNo) key = "client:" + clientNo;
+      else if (stableId) key = "stable:" + stableId;
+      else if (id && !/^wk_\d+_\d+/.test(id)) key = "id:" + id;
+
+      if (key) {
+        if (seenStable.has(key)) continue;
+        seenStable.add(key);
       }
 
-      // 修复：dedup key 优先使用 serverText（这是发送/接收的实际服务器文本）
-      var payloadKey =
-        ms.type === "text"
-          ? (ms.serverText || ms.text || "")
-          : (ms.mediaUrl || ms.audioUrl || "");
-
-      var dedupKey =
-        (ms.mine ? state.myUid : ms.uid) +
-        "|" +
-        (ms.type || "text") +
-        "|" +
-        normalizeTextKey(payloadKey) +
-        "|" +
-        Math.floor((ms.ts || 0) / 5000);
-
-      if (payloadKey && seenFallback.has(dedupKey)) continue;
-
-      seenFallback.set(dedupKey, ms);
+      // 不再按“文本内容 + 时间窗口”去重，避免用户连续发送相同文本被误删。
       allMsgs.push(ms);
     }
 
@@ -1303,19 +1463,37 @@
     }
   }
 
+  function cpNormalizeSlug(str) {
+    str = String(str || "").trim();
+    if (!str) return "";
+    try { str = decodeURIComponent(str); } catch (_) {}
+    return String(str).toLowerCase();
+  }
+
+  function getPeerDisplayNameFallback(slug) {
+    slug = String(slug || "").trim();
+    if (!slug || /^\d+$/.test(slug)) return "";
+    try { slug = decodeURIComponent(slug); } catch (_) {}
+    return slug;
+  }
+
   function setPeerFromUser(u) {
     if (!u || typeof u !== "object") return false;
 
     var myUidStr = getSelfUid();
-    var uid = u.uid || u.userId || u.id;
-    var username = u.username || u.displayname || u.name || u.title || u.fullname || u.userslug || u.slug || "";
+    var rawUid = u.uid || u.userId || u.id;
+    var uid = /^\d+$/.test(String(rawUid || "")) ? String(rawUid) : "";
+    var username = u.username || u.displayname || u.name || u.title || u.fullname || "";
     if (/^\d+$/.test(String(username || ""))) username = "";
     var userslug = u.userslug || u.slug || (username ? encodeURIComponent(String(username).toLowerCase().replace(/ /g, "-")) : "");
     var picture = u.picture || u.uploadedpicture || u.uploadedPicture || u.pictureUrl || u.avatarUrl || u.avatar || "";
 
-    if (uid && String(uid) !== myUidStr && String(uid) !== "0") state.peerUidCache = String(uid);
+    if (uid && uid !== myUidStr && uid !== "0") state.peerUidCache = uid;
     if (username) state.peerUsernameCache = String(username);
-    if (userslug) state.peerUserslugCache = String(userslug);
+    if (userslug) {
+      state.peerUserslugCache = String(userslug);
+      state.peerRouteSlug = state.peerRouteSlug || String(userslug);
+    }
     if (picture) state.peerPictureCache = picture;
     if (u.icontext || u["icon:text"]) state.peerIconTextCache = u.icontext || u["icon:text"];
     if (u.iconbgColor || u["icon:bgColor"]) state.peerIconBgCache = u.iconbgColor || u["icon:bgColor"];
@@ -1349,7 +1527,7 @@
       var uid = u.uid || u.userId || u.id;
       var slug = u.userslug || u.slug || u.username || "";
       if (uid && String(uid) === myUidStr) continue;
-      if (routeSlug && slug && String(slug).toLowerCase() !== String(routeSlug).toLowerCase() && String(u.username || "").toLowerCase() !== String(routeSlug).toLowerCase()) {
+      if (routeSlug && slug && cpNormalizeSlug(slug) !== cpNormalizeSlug(routeSlug) && cpNormalizeSlug(u.username || "") !== cpNormalizeSlug(routeSlug)) {
         continue;
       }
       return u;
@@ -1399,10 +1577,12 @@
     var slug = getRoutePeerSlug();
     if (!slug) return false;
 
-    state.peerUidCache = state.peerUidCache || String(slug);
+    state.peerRouteSlug = String(slug);
     if (!/^\d+$/.test(String(slug))) {
-      state.peerUsernameCache = state.peerUsernameCache || String(slug);
+      state.peerUsernameCache = state.peerUsernameCache || getPeerDisplayNameFallback(slug);
       state.peerUserslugCache = state.peerUserslugCache || String(slug);
+    } else {
+      state.peerUidCache = state.peerUidCache || String(slug);
     }
     updateHeaderPeerInfo(null);
 
@@ -1439,57 +1619,59 @@
   }
 
   function getPeerUid() {
-    if (state.peerUidCache) return state.peerUidCache;
+    if (/^\d+$/.test(String(state.peerUidCache || ""))) return String(state.peerUidCache);
 
     var page = window.__NBB_WUKONG_PAGE__ || {};
     var cfg = cpPluginConfig() || {};
     var direct = page.targetUid || cfg.targetUid || cfg.uid || "";
 
-    if (direct) {
+    if (/^\d+$/.test(String(direct || ""))) {
       state.peerUidCache = String(direct);
-      if (!/^\d+$/.test(String(direct))) {
-        if (!state.peerUsernameCache) state.peerUsernameCache = String(direct);
-        if (!state.peerUserslugCache) state.peerUserslugCache = String(direct);
-      }
       return state.peerUidCache;
+    }
+
+    if (direct) {
+      state.peerRouteSlug = state.peerRouteSlug || String(direct);
+      if (!state.peerUsernameCache) state.peerUsernameCache = getPeerDisplayNameFallback(direct);
+      if (!state.peerUserslugCache) state.peerUserslugCache = String(direct);
     }
 
     setPeerFromUser(getPeerFromAjaxify());
-    if (state.peerUidCache) return state.peerUidCache;
-
-    var peerMsg = state.messages.find(function (m) {
-      return !m.mine && m.uid;
-    });
-
-    if (peerMsg && peerMsg.uid) {
-      state.peerUidCache = String(peerMsg.uid);
-      state.peerUsernameCache = state.peerUsernameCache || peerMsg.username || "";
-      state.peerUserslugCache = state.peerUserslugCache || peerMsg.userslug || "";
-      return state.peerUidCache;
-    }
+    if (/^\d+$/.test(String(state.peerUidCache || ""))) return String(state.peerUidCache);
 
     var slug = getRoutePeerSlug();
     if (slug) {
-      state.peerUidCache = String(slug);
-      if (!/^\d+$/.test(String(slug))) {
-        state.peerUsernameCache = state.peerUsernameCache || String(slug);
-        state.peerUserslugCache = state.peerUserslugCache || String(slug);
+      state.peerRouteSlug = state.peerRouteSlug || String(slug);
+      if (/^\d+$/.test(String(slug))) {
+        state.peerUidCache = String(slug);
+        return state.peerUidCache;
       }
-      return state.peerUidCache;
+      state.peerUsernameCache = state.peerUsernameCache || getPeerDisplayNameFallback(slug);
+      state.peerUserslugCache = state.peerUserslugCache || String(slug);
     }
 
     return "";
   }
 
+  function getAvatarInitial(username, uid) {
+    var name = String(username || "").trim();
+    if (!name || /^\d+$/.test(name) || name === cpT("unknown_user", "用户")) {
+      if (uid && String(uid) === String(state.peerUidCache || "") && state.peerIconTextCache) return String(state.peerIconTextCache).charAt(0).toUpperCase();
+      return "?";
+    }
+    return name.charAt(0).toUpperCase();
+  }
+
   function getAvatarHtml(uid, username, fallbackHtml) {
     var pic = "";
-    var text = /^\d+$/.test(String(username || "")) ? "用" : String(username || "?").charAt(0).toUpperCase();
+    var text = getAvatarInitial(username, uid);
     var bg = "#72a5f2";
 
     if (cpIsMineUid(uid) && window.app && window.app.user) {
-      pic = app.user.picture;
+      pic = app.user.picture || "";
       if (app.user.icontext) text = app.user.icontext;
       if (app.user.iconbgColor) bg = app.user.iconbgColor;
+      if (!pic && fallbackHtml && fallbackHtml.indexOf("<img") > -1) return fallbackHtml;
     } else {
       var u = null;
 
@@ -1516,8 +1698,8 @@
       }
 
       if (u) {
-        pic = u.picture;
-        if (u.icontext) text = u.icontext;
+        pic = u.picture || "";
+        if (u.icontext) text = String(u.icontext).charAt(0).toUpperCase();
         if (u.iconbgColor) bg = u.iconbgColor;
       }
     }
@@ -1582,7 +1764,7 @@
       pInfo.innerHTML = '<a href="' + profileHref + '" title="访问主页">' + esc(name) + "</a>";
       if (avatar) {
         avatar.innerHTML = '<a class="cp-peer-avatar-link" href="' + profileHref + '" title="访问主页">' +
-          (avatarHtml || getAvatarHtml(String(uid || getPeerUid() || ""), name, null)) +
+          (avatarHtml || getAvatarHtml(String(uid || ""), name, null)) +
           "</a>";
       }
     } else {
@@ -1667,14 +1849,10 @@
   }
 
   function createMessageObj(text, isMine, uid, wkMsg, payloadObj) {
-    var peerMsg = state.messages.find(function (m) {
-      return !m.mine && m.username;
-    });
-
-    var username = isMine ? (window.app && app.user ? app.user.username : "我") : peerMsg ? peerMsg.username : state.peerUsernameCache || cpT("unknown_user", "用户");
+    var username = isMine ? (window.app && app.user ? app.user.username : "我") : state.peerUsernameCache || cpT("unknown_user", "用户");
     if (!isMine && /^\d+$/.test(String(username || ""))) username = cpT("unknown_user", "用户");
-    var userslug = isMine ? (window.app && app.user ? app.user.userslug || "" : "") : peerMsg ? peerMsg.userslug : "";
-    var avatarHtml = getAvatarHtml(String(uid), username, peerMsg ? peerMsg.avatarHtml : null);
+    var userslug = isMine ? (window.app && app.user ? app.user.userslug || "" : "") : (state.peerUserslugCache || "");
+    var avatarHtml = getAvatarHtml(String(uid), username, null);
 
     var type = "text";
     var mediaUrl = "";
@@ -1720,6 +1898,7 @@
       translationOpen: false,
       durationStr: "",
       wkMsg: wkMsg || null,
+      wkMeta: serializeWkMeta(wkMsg),
       read: false,
       serverText: "",
       _ver: 1
@@ -1850,11 +2029,18 @@
           if (!t) return;
           if (isCallSignalText(t)) return;
 
-          var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
-          newMsg.serverText = t;
+          var ident = getWkMessageIdentity(m, t, fromUid);
+          if (findExistingWkMessage(ident.id, ident.clientNo, ident.seq)) return;
 
-          var incomingSeq = m.messageSeq || m.message_seq || 0;
-          if (incomingSeq > state.localMaxSeq) state.localMaxSeq = incomingSeq;
+          var newMsg = createMessageObj(t, false, fromUid, m, payloadObj);
+          newMsg.id = ident.id;
+          newMsg.seq = ident.seq || 0;
+          newMsg.clientMsgNo = ident.clientNo || "";
+          newMsg.ts = ident.ts || Date.now();
+          newMsg.serverText = t;
+          newMsg.wkMeta = serializeWkMeta(m);
+
+          if (newMsg.seq && newMsg.seq > state.localMaxSeq) state.localMaxSeq = newMsg.seq;
 
           state.wkMessages.push(newMsg);
           pruneWkMessages();
@@ -1914,16 +2100,22 @@
   }
 
   async function fetchWukongHistory(peerUid, startSeq, opts) {
-    if (!peerUid || state.isPreloading || state.hasNoMoreHistory) return;
-
     opts = opts || {};
+    var isOfflineSync = !!opts.isOfflineSync;
+    if (!peerUid) return 0;
+    if (!isOfflineSync && (state.loadingOldHistory || state.noMoreOldHistory)) return 0;
+    if (isOfflineSync && state.offlineSyncRunning && !opts._insideOfflineLoop) return 0;
+
     var limit = opts.limit || 20;
     var apiBase = cpPluginConfig().apiBase || "/api/wukong";
     var channelId = (window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.channelId) || cpPluginConfig().channelId || peerUid;
     var channelType = Number((window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.channelType) || cpPluginConfig().channelType || 1);
 
-    state.isPreloading = true;
-    if (byId("cp-top-spinner")) byId("cp-top-spinner").hidden = false;
+    if (!isOfflineSync) {
+      state.loadingOldHistory = true;
+      state.isPreloading = true;
+      if (byId("cp-top-spinner")) byId("cp-top-spinner").hidden = false;
+    }
 
     try {
       var urls = [];
@@ -1962,37 +2154,56 @@
       else if (json.response && Array.isArray(json.response.messages)) msgs = json.response.messages;
 
       if (msgs.length) {
-        processWukongMessages(msgs, !!startSeq && !opts.isOfflineSync);
-        if (msgs.length < limit) state.hasNoMoreHistory = true;
-      } else {
+        var before = state.wkMessages.length;
+        processWukongMessages(msgs, !!startSeq && !isOfflineSync);
+        if (!isOfflineSync && msgs.length < limit) {
+          state.noMoreOldHistory = true;
+          state.hasNoMoreHistory = true;
+        }
+        return Math.max(0, state.wkMessages.length - before);
+      }
+
+      if (!isOfflineSync) {
+        state.noMoreOldHistory = true;
         state.hasNoMoreHistory = true;
       }
+      return 0;
     } catch (e) {
       warn("wk-history", e);
+      return 0;
     } finally {
-      state.isPreloading = false;
-      if (byId("cp-top-spinner")) byId("cp-top-spinner").hidden = true;
+      if (!isOfflineSync) {
+        state.loadingOldHistory = false;
+        state.isPreloading = false;
+        if (byId("cp-top-spinner")) byId("cp-top-spinner").hidden = true;
+      }
     }
   }
 
   async function fetchOfflineMessages(peerUid) {
-    if (!peerUid || !state.localMaxSeq) return;
+    if (!peerUid || !state.localMaxSeq || state.offlineSyncRunning) return;
 
-    var startSeq = state.localMaxSeq + 1;
-    var hasMore = true;
+    state.offlineSyncRunning = true;
+    try {
+      var startSeq = state.localMaxSeq + 1;
+      var hasMore = true;
+      var guard = 0;
 
-    while (hasMore) {
-      var before = state.wkMessages.length;
-      await fetchWukongHistory(peerUid, startSeq, { limit: 50, isOfflineSync: true });
-      var after = state.wkMessages.length;
-
-      if (after <= before) {
-        hasMore = false;
-      } else {
+      while (hasMore && guard < 20) {
+        guard += 1;
+        var beforeMax = state.localMaxSeq || 0;
+        var added = await fetchWukongHistory(peerUid, startSeq, { limit: 50, isOfflineSync: true, _insideOfflineLoop: true });
         var batchMaxSeq = state.localMaxSeq || 0;
-        startSeq = batchMaxSeq + 1;
-        if (after - before < 50) hasMore = false;
+
+        if (!added || batchMaxSeq <= beforeMax) {
+          hasMore = false;
+        } else {
+          startSeq = batchMaxSeq + 1;
+          if (added < 50) hasMore = false;
+        }
       }
+    } finally {
+      state.offlineSyncRunning = false;
     }
   }
 
@@ -2036,13 +2247,24 @@
       // 双保险：originalText 如果也是通话信令，也跳过
       if (isCallSignalText(t)) continue;
 
-      var seq = getWkSeq(m);
-      var clientNo = getWkClientMsgNo(m);
-      var stableId = getWkStableMessageId(m);
-      var ts = m.timestamp ? Number(m.timestamp) * 1000 : Date.now();
-      var msgId = String(stableId || (seq ? ("wk_seq_" + seq) : ("wk_hist_" + fromUid + "_" + shortHash(serverT || t) + "_" + ts)));
+      var ident = getWkMessageIdentity(m, serverT || t, fromUid);
+      var seq = ident.seq;
+      var clientNo = ident.clientNo;
+      var msgId = ident.id;
+      var ts = ident.ts;
 
-      if (existingIds.has(msgId) || (clientNo && existingIds.has(String(clientNo))) || (seq && existingSeqs.has(String(seq)))) {
+      var existing = findExistingWkMessage(msgId, clientNo, seq);
+      if (existing) {
+        var touched = adoptServerIdentity(existing, m, msgId, seq, clientNo, serverT || t, t);
+        if (ts && (!existing.ts || Math.abs(existing.ts - ts) > 1000)) {
+          existing.ts = ts;
+          touched = true;
+        }
+        if (touched) touchedExisting = true;
+        if (seq && seq > state.localMaxSeq) state.localMaxSeq = seq;
+        existingIds.add(String(existing.id || msgId));
+        if (clientNo) existingIds.add(String(clientNo));
+        if (seq) existingSeqs.add(String(seq));
         continue;
       }
 
@@ -2050,7 +2272,7 @@
         var pending = findPendingOutgoingMessage(serverT || t, msgId, clientNo, seq, ts, "");
         if (pending) {
           adoptServerIdentity(pending, m, msgId, seq, clientNo, serverT || t, t);
-          pending.ts = pending.ts || ts;
+          pending.ts = ts || pending.ts;
           existingIds.add(String(pending.id || msgId));
           if (clientNo) existingIds.add(String(clientNo));
           if (seq) existingSeqs.add(String(seq));
@@ -2063,10 +2285,11 @@
       newMsg.id = msgId;
       newMsg.seq = seq || 0;
       newMsg.clientMsgNo = clientNo || "";
+      newMsg.wkMeta = serializeWkMeta(m);
       // 修复：始终设置 serverText（实际发送/接收的服务器文本）
       newMsg.serverText = serverT || t;
 
-      if (m.timestamp) newMsg.ts = ts;
+      if (ts) newMsg.ts = ts;
 
       if (newMsg.seq && newMsg.seq < Number.MAX_SAFE_INTEGER && newMsg.seq > state.localMaxSeq) {
         state.localMaxSeq = newMsg.seq;
@@ -2132,64 +2355,55 @@
     }
 
     var peerUid = getPeerUid();
+    var displayText = originalText || text;
 
-    try {
-      var nativeInput = document.querySelector('[component="chat/input"]');
-      var nativeBtn = document.querySelector('[component="chat/send"]');
-
-      if (nativeInput && nativeBtn) {
-        var setter =
-          Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set ||
-          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-
-        if (setter) setter.call(nativeInput, text);
-        else nativeInput.value = text;
-
-        nativeInput.dispatchEvent(new Event("input", { bubbles: true }));
-        nativeInput.dispatchEvent(new Event("change", { bubbles: true }));
-
-        setTimeout(function () {
-          nativeBtn.click();
-        }, 30);
-      }
-    } catch (e) {
-      warn("native-send", e);
+    if (!peerUid || !state.wkReady || !window.wk || !window.wk.WKSDK) {
+      toast("悟空连接中，暂时无法发送");
+      warn("wk-send-not-ready", { peerUid: peerUid, wkReady: state.wkReady, hasWk: !!window.wk });
+      return;
     }
 
     var wkMsgObj = null;
-    var displayText = originalText || text;
 
-    if (peerUid && state.wkReady && window.wk) {
-      try {
-        var channel = new window.wk.Channel(peerUid, 1);
-        var msgContent = new window.wk.MessageText(text);
+    try {
+      var channel = new window.wk.Channel(peerUid, 1);
+      var msgContent = new window.wk.MessageText(text);
 
-        if (originalText) {
-          var origEncode = msgContent.encode.bind(msgContent);
-
-          msgContent.encode = function () {
-            var p = origEncode();
-
-            if (typeof p === "string") {
-              try {
-                var pObj = JSON.parse(p);
-                pObj.originalText = originalText;
-                return JSON.stringify(pObj);
-              } catch (e) {
-                warn("wk-encode-original", e);
-              }
-            } else if (p && typeof p === "object") {
-              p.originalText = originalText;
-            }
-
-            return p;
-          };
-        }
-
-        wkMsgObj = window.wk.WKSDK.shared().chatManager.send(msgContent, channel);
-      } catch (e) {
-        warn("wk-send", e);
+      var quotePayload = null;
+      if (state.quoteTarget) {
+        quotePayload = {
+          text: state.quoteTarget.text || "",
+          username: state.quoteTarget.username || "",
+          id: state.quoteTarget.id || ""
+        };
       }
+
+      if (originalText || quotePayload) {
+        var origEncode = msgContent.encode.bind(msgContent);
+
+        msgContent.encode = function () {
+          var p = origEncode();
+          var pObj = null;
+
+          if (typeof p === "string") {
+            try { pObj = JSON.parse(p); } catch (_) { pObj = { text: text, content: text }; }
+          } else if (p && typeof p === "object") {
+            pObj = p;
+          } else {
+            pObj = { text: text, content: text };
+          }
+
+          if (originalText) pObj.originalText = originalText;
+          if (quotePayload) pObj.quote = quotePayload;
+          return typeof p === "string" ? JSON.stringify(pObj) : pObj;
+        };
+      }
+
+      wkMsgObj = window.wk.WKSDK.shared().chatManager.send(msgContent, channel);
+    } catch (e) {
+      warn("wk-send", e);
+      toast("发送失败，请检查连接");
+      return;
     }
 
     var newMsg = createMessageObj(displayText, true, state.myUid, wkMsgObj, {
@@ -2199,8 +2413,8 @@
 
     newMsg.serverText = text;
     newMsg.pendingLocal = true;
-
-    markPendingNativeText(text, newMsg.id);
+    newMsg.failedLocal = false;
+    newMsg.wkMeta = serializeWkMeta(wkMsgObj);
 
     if (state.quoteTarget) {
       newMsg.quote = state.quoteTarget.text || "";
@@ -2223,7 +2437,6 @@
     state.unreadCount = 0;
     updateUnreadBadge();
 
-    // 修复：自己发的消息一定滚到底部
     incrementalRender("bottom");
     requestAnimationFrame(forceScrollToBottom);
 
@@ -2290,12 +2503,15 @@
     if (!pUid || state.loadedPeerUid === pUid) return;
 
     state.loadedPeerUid = pUid;
+    state.noMoreOldHistory = false;
+    state.hasNoMoreHistory = false;
 
     await loadChatFromDB(pUid);
     await fetchWukongHistory(pUid, 0, { limit: 20 });
 
     if (state.localMaxSeq > 0) await fetchOfflineMessages(pUid);
 
+    cpHydratePeerMessagesFromCache();
     state.initialLoadDone = true;
 
     // 修复：初始加载完成后滚到底
@@ -2338,6 +2554,7 @@
     state.peerIconTextCache = "";
     state.peerIconBgCache = "";
     state.peerHydrating = false;
+    state.peerRouteSlug = "";
     state.suppressNativeIds = {};
     state.pendingSentTexts = {};
     state.loadedPeerUid = "";
@@ -2349,6 +2566,9 @@
     state.lastRenderHash = "";
     state.renderVersion = 0;
     state.isPreloading = false;
+    state.loadingOldHistory = false;
+    state.offlineSyncRunning = false;
+    state.noMoreOldHistory = false;
     state.hasNoMoreHistory = false;
     state.mergedCache = null;
     state.mergedDirty = true;
@@ -2361,6 +2581,9 @@
     state.translateInflight = {};
     state.stickToBottom = true;
     state.lazyObserved = typeof WeakSet !== "undefined" ? new WeakSet() : null;
+    state.heightMap = {};
+    state.heightObserved = {};
+    state.virtualRenderPending = false;
     bindAudioEndedHandler();
 
     cleanUpOldMedia();
@@ -2463,15 +2686,12 @@
     document.body.classList.remove("cp-shell-on");
 
     state.blobKeys.forEach(function (k) {
-      try {
-        URL.revokeObjectURL(state.blobUrlCache[k]);
-      } catch (e) {
-        warn("revoke-blob-on-unmount", e);
-      }
+      try { cpRevokeBlobUrl(k, true); } catch (e) { warn("revoke-blob-on-unmount", e); }
     });
 
     state.blobUrlCache = {};
     state.blobKeys = [];
+    state.blobLastUsed = {};
     state.wkMessages = [];
     state.messages = [];
     state.peerUidCache = "";
@@ -2481,6 +2701,7 @@
     state.peerIconTextCache = "";
     state.peerIconBgCache = "";
     state.peerHydrating = false;
+    state.peerRouteSlug = "";
     state.suppressNativeIds = {};
     state.pendingSentTexts = {};
     state.loadedPeerUid = "";
@@ -2515,6 +2736,22 @@
         visibility:hidden!important;
         opacity:0!important;
         pointer-events:none!important;
+      }
+      #cp-chat-root .cp-row.is-pending .cp-bubble-wrap::after {
+        content:"发送中";
+        display:block;
+        font-size:10px;
+        color:#94a3b8;
+        margin-top:3px;
+        text-align:right;
+      }
+      #cp-chat-root .cp-row.is-failed .cp-bubble-wrap::after {
+        content:"发送失败";
+        display:block;
+        font-size:10px;
+        color:#ef4444;
+        margin-top:3px;
+        text-align:right;
       }
     `;
 
@@ -3531,19 +3768,21 @@
     clearTimeout(state.readTimer);
     state.readTimer = setTimeout(markVisibleAsRead, 300);
 
-    if (mainEl.scrollTop < 300 && !state.isPreloading && !state.hasNoMoreHistory) {
+    if (mainEl.scrollTop < 300 && !state.loadingOldHistory && !state.noMoreOldHistory) {
       var allLen = state.messages.length + state.wkMessages.length;
 
       if (state.renderLimit < allLen) {
+        state.loadingOldHistory = true;
         state.isPreloading = true;
         byId("cp-top-spinner").hidden = false;
 
         setTimeout(function () {
           state.renderLimit += 80;
+          state.loadingOldHistory = false;
           state.isPreloading = false;
           byId("cp-top-spinner").hidden = true;
           incrementalRender("prepend");
-        }, 120);
+        }, 80);
       } else {
         var peerUid = getPeerUid();
         if (!peerUid) return;
@@ -3557,7 +3796,10 @@
         }
 
         if (oldestSeq !== Number.MAX_SAFE_INTEGER && oldestSeq > 1) fetchWukongHistory(peerUid, oldestSeq - 1);
-        else state.hasNoMoreHistory = true;
+        else {
+          state.noMoreOldHistory = true;
+          state.hasNoMoreHistory = true;
+        }
       }
     }
 
@@ -3675,10 +3917,6 @@
       }
     }
 
-    state.messages = state.messages.filter(function (m) {
-      return String(m.id) !== String(id);
-    });
-
     state.wkMessages = state.wkMessages.filter(function (m) {
       return String(m.id) !== String(id);
     });
@@ -3703,6 +3941,8 @@
     state.mergedDirty = true;
     state.msgIndexDirty = true;
     state.localMaxSeq = 0;
+    state.noMoreOldHistory = false;
+    state.hasNoMoreHistory = false;
 
     await persistChatToDB(peerUid);
 
@@ -3753,74 +3993,45 @@
   }
 
   function syncFromNative() {
+    // Wukong is the only trusted message channel. NodeBB DOM is used only to hydrate
+    // route/user/avatar information so refreshes do not show a numeric or fallback avatar.
     var rootRows = Array.prototype.slice.call(document.querySelectorAll('[component="chat/messages"] [component="chat/message"]'));
-
-    if (!rootRows.length) {
-      if (state.messages.length > 0) {
-        state.messages = [];
-        state.renderVersion++;
-        state.mergedDirty = true;
-        state.msgIndexDirty = true;
-        incrementalRender("restore");
-      }
-
-      return;
-    }
-
-    var keepMap = {};
-
-    for (var i = 0; i < state.messages.length; i++) keepMap[state.messages[i].id] = state.messages[i];
-
-    var next = [];
-    var changed = false;
-    var wasAtBottom = isMainAtBottom();
+    var peerMsg = null;
 
     for (var idx = 0; idx < rootRows.length; idx++) {
       var row = rootRows[idx];
-      var id = row.getAttribute("data-mid") || row.getAttribute("data-id");
+      if (row.getAttribute("data-self") === "1") continue;
+      var uid = row.getAttribute("data-uid") || "";
+      var userLink = row.querySelector(".message-header a[href*='/user/']");
+      var username = row.querySelector(".chat-user-name") ? row.querySelector(".chat-user-name").textContent.trim() : "";
+      var userslug = "";
+      var avatarWrap = row.querySelector(".message-header img.chat-user-avatar, .message-header .avatar, .message-header .user-icon");
+      var picture = avatarWrap && avatarWrap.tagName === "IMG" ? avatarWrap.getAttribute("src") : "";
 
-      if (state.suppressNativeIds[String(id)]) continue;
+      if (userLink && userLink.getAttribute("href")) {
+        var sm = userLink.getAttribute("href").match(/\/user\/([^/?#]+)/);
+        if (sm) userslug = sm[1];
+      }
 
-      if (id && keepMap[id]) {
-        next.push(keepMap[id]);
-      } else {
-        var m = parseNativeMessage(row);
-
-        if (m) {
-          next.push(m);
-          changed = true;
-        }
+      if (uid || username || userslug || picture) {
+        setPeerFromUser({ uid: uid, username: username, userslug: userslug, picture: picture });
+        peerMsg = { uid: uid, username: username, userslug: userslug, avatarHtml: getAvatarHtml(uid, username, picture ? '<img class="avatar" src="' + escAttr(picture) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" />' : null) };
+        break;
       }
     }
 
-    if (next.length !== state.messages.length) changed = true;
-
-    if (!changed) {
-      ensurePeerLoaded();
-      return;
-    }
-
-    state.messages = next;
-    pruneAllMessagesInMemory();
-
-    state.renderVersion++;
-    state.mergedDirty = true;
-    state.msgIndexDirty = true;
-
-    var peerMsg = next.find(function (m) {
-      return !m.mine && m.username;
-    });
-
-    updateHeaderPeerInfo(peerMsg);
-    ensurePeerLoaded();
-
-    // 修复：原生消息更新后，如果在底部就跟随
-    if (wasAtBottom) {
-      incrementalRender("bottom");
-      requestAnimationFrame(forceScrollToBottom);
+    if (peerMsg) {
+      updateHeaderPeerInfo(peerMsg);
+      cpHydratePeerMessagesFromCache();
+      state.renderVersion++;
+      state.mergedDirty = true;
+      state.msgIndexDirty = true;
+      incrementalRender("keep");
     } else {
-      incrementalRender("restore");
+      updateHeaderPeerInfo(null);
     }
+
+    ensurePeerLoaded();
   }
 
   function parseNativeMessage(row) {
@@ -4001,6 +4212,8 @@
       m.translationOpen ? "T" : "",
       isLastInGroup ? "L" : "",
       m.durationStr || "",
+      m.pendingLocal ? "P" : "",
+      m.failedLocal ? "F" : "",
       m.text || "",
       m.mediaUrl || "",
       m.audioUrl || "",
@@ -4036,14 +4249,15 @@
     var id = String(m.id || "");
     if (state.heightMap && state.heightMap[id]) return state.heightMap[id];
 
-    if (m.type === "image" || m.type === "video") return 210;
-    if (m.type === "gallery") return 230;
-    if (m.type === "voice") return 64;
+    if (m.type === "image") return 260;
+    if (m.type === "video") return 280;
+    if (m.type === "gallery") return 320;
+    if (m.type === "voice") return 76;
     if (m.recalled) return 44;
 
     var text = String(m.text || m.serverText || "");
     var lines = Math.max(1, Math.ceil(text.length / 18));
-    return Math.min(180, 42 + lines * 22);
+    return Math.min(240, 48 + lines * 22 + (m.quote ? 56 : 0) + (m.translationOpen ? 44 : 0));
   }
 
   function cpRangeHeight(arr, start, end) {
@@ -4061,20 +4275,15 @@
       return { enabled: false, start: 0, end: len, topHeight: 0, bottomHeight: 0, messages: arr || [] };
     }
 
-    // Media cells resize after thumbnails/posters load. Keep the recent media window
-    // fully rendered to avoid video/image messages disappearing after send or refresh.
-    var recent = arr.slice(Math.max(0, len - 48));
-    for (var rm = 0; rm < recent.length; rm++) {
-      if (recent[rm] && /^(image|video|voice|gallery)$/.test(recent[rm].type || "")) {
-        return { enabled: false, start: 0, end: len, topHeight: 0, bottomHeight: 0, messages: arr || [] };
-      }
-    }
+    // Do not disable virtualization just because media exists. Media heights are
+    // estimated conservatively and corrected by ResizeObserver, otherwise long
+    // chats with many videos/images can render thousands of DOM nodes.
 
     var viewportTop = Math.max(0, main.scrollTop || 0);
     var viewportBottom = viewportTop + Math.max(main.clientHeight || 0, 500);
 
     if (mode === "bottom" || mode === "restore") {
-      var lastStart = Math.max(0, len - 88);
+      var lastStart = Math.max(0, len - 110);
       return {
         enabled: true,
         start: lastStart,
@@ -4107,7 +4316,8 @@
       }
     }
 
-    if (end <= start) end = Math.min(len, start + 40);
+    if (end <= start) end = Math.min(len, start + 50);
+    if (end - start > 140) end = Math.min(len, start + 140);
 
     return {
       enabled: true,
@@ -4185,8 +4395,11 @@
         renderArr[h].recalled ? "R" : "",
         renderArr[h].translationOpen ? "T" : "",
         renderArr[h].translation || "",
+        renderArr[h].type || "",
         renderArr[h].text || "",
-        renderArr[h].serverText || ""
+        renderArr[h].serverText || "",
+        renderArr[h].mediaUrl || "",
+        renderArr[h].audioUrl || ""
       ].join("|");
     }
 
@@ -4269,6 +4482,8 @@
         (isMediaType ? " media-shell" : "");
 
       var rowClass = "cp-row " + (m.mine ? "mine" : "other");
+      if (m.pendingLocal) rowClass += " is-pending";
+      if (m.failedLocal) rowClass += " is-failed";
 
       if (showTail) rowClass += " has-tail";
       if (isLastInGroup) rowClass += " is-last";
@@ -4380,14 +4595,15 @@
               "</button>"
             : "";
 
-        var safeUserSlug = m.userslug || encodeURIComponent(String(m.username || "guest").toLowerCase().replace(/ /g, "-"));
+        var safeUserSlug = m.userslug || state.peerUserslugCache || encodeURIComponent(String(m.username || "guest").toLowerCase().replace(/ /g, "-"));
+        var avatarHtml = m.avatarHtml || getAvatarHtml(m.uid || state.peerUidCache || "", m.username || state.peerUsernameCache || "", null);
 
         var avatarWrapHtml = m.mine
           ? ""
-          : '<a href="/user/' +
+          : '<a href="' + getRelativePath() + '/user/' +
             escAttr(safeUserSlug) +
             '" class="cp-avatar-wrap" title="访问主页">' +
-            m.avatarHtml +
+            avatarHtml +
             "</a>";
 
         var innerContent =
@@ -4478,6 +4694,7 @@
     }
 
     observeLazyElements();
+    cpTrimBlobUrlCache(false);
     if (typeof cpHydrateVideoPosters === "function") cpHydrateVideoPosters(list);
     updateFooterHeight();
   }
@@ -5219,7 +5436,7 @@
       if (typeof r === "string") {
         return {
           label: "回复",
-          text: r.slice(0, 10),
+          text: String(r).trim().slice(0, 40),
           style: "自然",
           affinity_risk: "安全"
         };
@@ -5227,7 +5444,7 @@
 
       return {
         label: String(r.label || r.style || "回复").slice(0, 6),
-        text: String(r.text || r.reply || "").trim().slice(0, 10),
+        text: String(r.text || r.reply || "").trim().slice(0, 40),
         style: String(r.style || "自然"),
         affinity_risk: String(r.affinity_risk || r.risk || "安全")
       };
@@ -5372,7 +5589,7 @@
 
     for (var i = 0; i < Math.min(5, repliesList.length); i++) {
       var item = repliesList[i];
-      var text = String(item.text || "").trim().slice(0, 10);
+      var text = String(item.text || "").trim().slice(0, 40);
 
       if (!text) continue;
 
@@ -5794,7 +6011,7 @@
       if (err && (err.code === "VIDEO_TOO_LONG" || err.code === "VIDEO_TOO_LARGE")) throw err;
       return file;
     } finally {
-      URL.revokeObjectURL(inputUrl);
+      try { URL.revokeObjectURL(inputUrl); } catch (_) {}
     }
   }
 
