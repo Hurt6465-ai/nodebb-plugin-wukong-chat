@@ -4301,149 +4301,159 @@ body.cp-has-bg #cp-chat-root .cp-header {
 }
 
 /* =========================================================
-   v47 compact call/translate/bottom polish
-   - smaller blue back-to-bottom button
+   Wukong Chat v49 visual fix
+   - bottom button: light blue with visible white arrow
    - smaller peer quick translate button
-   - call button sits inside the top-right action cluster
+   - call button/menu visual protection in header
    ========================================================= */
-#cp-chat-root .cp-header-actions-with-call,
-#cp-chat-root .cp-header-actions {
-  width: auto !important;
-  min-width: 72px !important;
-  height: 36px !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: flex-end !important;
-  gap: 3px !important;
-  flex-shrink: 0 !important;
+#cp-chat-root .cp-fab-bottom{
+  width:34px!important;
+  height:34px!important;
+  right:14px!important;
+  bottom:calc(var(--cp-footer-h) + 13px)!important;
+  border:0!important;
+  border-radius:999px!important;
+  background:#7bb7ff!important;
+  color:#fff!important;
+  display:grid!important;
+  place-items:center!important;
+  box-shadow:0 6px 16px rgba(96,165,250,.24)!important;
 }
-
-#cp-chat-root .cp-header-actions > button {
-  width: 34px !important;
-  height: 34px !important;
-  min-width: 34px !important;
-  font-size: 23px !important;
+#cp-chat-root .cp-fab-v{
+  display:block!important;
+  color:#fff!important;
+  font-size:19px!important;
+  font-weight:900!important;
+  line-height:1!important;
+  transform:translateY(-1px)!important;
 }
-
-#cp-chat-root .cp-harmony-call-slot {
-  position: relative !important;
-  width: 34px !important;
-  height: 34px !important;
-  min-width: 34px !important;
-  margin: 0 2px 0 0 !important;
-  padding: 0 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  flex: 0 0 auto !important;
+#cp-chat-root .cp-fab-down-icon{display:none!important;}
+#cp-chat-root .cp-quick-trans{
+  width:20px!important;
+  height:20px!important;
+  right:-25px!important;
+  border-radius:999px!important;
+  background:rgba(255,255,255,.96)!important;
+  border:1px solid rgba(226,232,240,.85)!important;
+  box-shadow:0 2px 7px rgba(15,23,42,.11)!important;
 }
-
-#cp-chat-root .cp-harmony-call-entry {
-  width: 34px !important;
-  height: 34px !important;
-  min-width: 34px !important;
-  border-radius: 999px !important;
-  background: rgba(59, 130, 246, .10) !important;
-  color: #2563eb !important;
-  border: 0 !important;
-  box-shadow: none !important;
-}
-
-#cp-chat-root .cp-harmony-call-entry i {
-  font-size: 16px !important;
-  line-height: 1 !important;
-}
-
-#cp-chat-root .cp-harmony-call-entry:active {
-  transform: scale(.92) !important;
-}
-
-#cp-chat-root .cp-fab-bottom {
-  width: 32px !important;
-  height: 32px !important;
-  right: 14px !important;
-  bottom: calc(var(--cp-footer-h) + 14px) !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: #2563eb !important;
-  color: #fff !important;
-  box-shadow: 0 8px 20px rgba(37, 99, 235, .28) !important;
-}
-
-#cp-chat-root .cp-fab-bottom i,
-#cp-chat-root .cp-fab-bottom .fa {
-  font-size: 18px !important;
-  line-height: 1 !important;
-  color: #fff !important;
-  transform: translateY(1px) !important;
-}
-
-#cp-chat-root .cp-fab-bottom .cp-fab-down-icon,
-#cp-chat-root .cp-fab-bottom svg {
-  width: 18px !important;
-  height: 18px !important;
-  color: #fff !important;
-  stroke-width: 3 !important;
-}
-
-#cp-chat-root .cp-quick-trans {
-  width: 22px !important;
-  height: 22px !important;
-  right: -27px !important;
-  border-radius: 999px !important;
-  background: rgba(255, 255, 255, .95) !important;
-  border: 1px solid rgba(226, 232, 240, .95) !important;
-  box-shadow: 0 3px 10px rgba(15, 23, 42, .13) !important;
-}
-
 #cp-chat-root .cp-quick-trans .cp-trans-wa,
 #cp-chat-root .cp-quick-trans .cp-trans-stack,
-#cp-chat-root .cp-quick-trans .cp-ai-glyph {
-  width: 17px !important;
-  height: 15px !important;
-  transform: rotate(-12deg) scale(.86) !important;
+#cp-chat-root .cp-quick-trans .cp-ai-glyph{
+  transform:rotate(-12deg) scale(.68)!important;
 }
-
-#cp-chat-root .cp-quick-trans .cp-trans-wa b,
-#cp-chat-root .cp-quick-trans .cp-trans-stack b {
-  font-size: 10px !important;
+#cp-chat-root .cp-header > #cp-harmony-call-slot{
+  position:relative!important;
+  flex:0 0 auto!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  padding:0!important;
+  margin-left:auto!important;
+  margin-right:2px!important;
+  z-index:30!important;
 }
-
-#cp-chat-root .cp-toggle-ai-send {
-  min-width: 34px !important;
-  height: 28px !important;
-  padding: 3px 3px 3px 13px !important;
+#cp-chat-root .cp-header > #cp-harmony-call-slot + .cp-header-actions{margin-left:0!important;}
+#cp-chat-root #cp-harmony-call-entry{
+  width:36px!important;
+  height:36px!important;
+  min-width:36px!important;
+  border:1px solid rgba(59,130,246,.22)!important;
+  background:rgba(239,246,255,.94)!important;
+  color:#2563eb!important;
+  border-radius:999px!important;
+  display:grid!important;
+  place-items:center!important;
+  padding:0!important;
+  box-shadow:0 2px 8px rgba(59,130,246,.12)!important;
 }
-
-#cp-chat-root .cp-toggle-ai-send .cp-trans-wa,
-#cp-chat-root .cp-toggle-ai-send .cp-trans-stack {
-  width: 17px !important;
-  height: 15px !important;
-  transform: rotate(-12deg) scale(.9) !important;
+#cp-chat-root #cp-harmony-call-entry .cp-phone-glyph,
+#cp-chat-root .cp-harmony-call-pop .cp-phone-glyph,
+#cp-chat-root .cp-harmony-call-pop .cp-video-glyph{
+  width:18px!important;
+  height:18px!important;
+  position:relative!important;
+  display:grid!important;
+  place-items:center!important;
+  line-height:1!important;
 }
-
-@media (max-width: 380px) {
-  #cp-chat-root .cp-header-actions-with-call,
-  #cp-chat-root .cp-header-actions {
-    min-width: 68px !important;
-    gap: 2px !important;
-  }
-
-  #cp-chat-root .cp-header-actions > button,
-  #cp-chat-root .cp-harmony-call-slot,
-  #cp-chat-root .cp-harmony-call-entry {
-    width: 32px !important;
-    height: 32px !important;
-    min-width: 32px !important;
-  }
-
-  #cp-chat-root .cp-harmony-call-entry i {
-    font-size: 15px !important;
-  }
-
-  #cp-chat-root .cp-quick-trans {
-    width: 21px !important;
-    height: 21px !important;
-    right: -25px !important;
-  }
+#cp-chat-root #cp-harmony-call-entry i,
+#cp-chat-root .cp-harmony-call-pop i{
+  font-size:15px!important;
+  line-height:1!important;
+}
+#cp-chat-root #cp-harmony-call-slot.cp-fa-ok .cp-call-fallback{display:none!important;}
+#cp-chat-root #cp-harmony-call-slot.cp-fa-missing i{display:none!important;}
+#cp-chat-root #cp-harmony-call-slot.cp-fa-missing .cp-call-fallback{display:inline-block!important;}
+#cp-chat-root .cp-call-fallback{
+  font-size:17px!important;
+  font-weight:800!important;
+  line-height:1!important;
+}
+#cp-chat-root #cp-harmony-call-pop{
+  top:44px!important;
+  right:-4px!important;
+  width:176px!important;
+  min-width:176px!important;
+  padding:8px!important;
+  border-radius:18px!important;
+  background:rgba(255,255,255,.98)!important;
+  border:1px solid rgba(226,232,240,.88)!important;
+  box-shadow:0 18px 42px rgba(15,23,42,.18)!important;
+  backdrop-filter:blur(18px) saturate(1.25)!important;
+  -webkit-backdrop-filter:blur(18px) saturate(1.25)!important;
+  z-index:2147483450!important;
+  overflow:visible!important;
+}
+#cp-chat-root #cp-harmony-call-pop::before{
+  right:20px!important;
+  background:rgba(255,255,255,.98)!important;
+}
+#cp-chat-root #cp-harmony-call-pop button{
+  width:100%!important;
+  min-height:46px!important;
+  border:0!important;
+  background:transparent!important;
+  border-radius:14px!important;
+  padding:7px 8px!important;
+  display:flex!important;
+  flex-direction:row!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  gap:10px!important;
+  color:#0f172a!important;
+  text-align:left!important;
+  writing-mode:horizontal-tb!important;
+  white-space:nowrap!important;
+}
+#cp-chat-root #cp-harmony-call-pop button:active{background:#eff6ff!important;transform:scale(.98)!important;}
+#cp-chat-root #cp-harmony-call-pop .cp-harmony-call-pop-icon{
+  width:30px!important;
+  height:30px!important;
+  min-width:30px!important;
+  border-radius:999px!important;
+  display:grid!important;
+  place-items:center!important;
+  box-shadow:none!important;
+}
+#cp-chat-root #cp-harmony-call-pop .cp-harmony-call-pop-icon.audio{
+  background:#e0f2fe!important;
+  color:#0284c7!important;
+}
+#cp-chat-root #cp-harmony-call-pop .cp-harmony-call-pop-icon.video{
+  background:#ede9fe!important;
+  color:#7c3aed!important;
+}
+#cp-chat-root #cp-harmony-call-pop .cp-harmony-call-pop-main{
+  min-width:0!important;
+  display:flex!important;
+  flex-direction:column!important;
+  writing-mode:horizontal-tb!important;
+}
+#cp-chat-root #cp-harmony-call-pop .cp-harmony-call-pop-main b{
+  font-size:14px!important;
+  line-height:1.15!important;
+  color:#0f172a!important;
+  font-weight:800!important;
+  white-space:nowrap!important;
 }
