@@ -1488,25 +1488,24 @@
     if (byId("cp-harmony-call-style")) return;
 
     var css = `
-      .cp-harmony-call-slot{position:relative;flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:34px;height:34px;margin-right:3px;padding:0;}
-      .cp-harmony-call-entry{width:34px;height:34px;min-width:34px;padding:0;border:none;border-radius:999px;background:rgba(59,130,246,.10);color:#2563eb;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:none;-webkit-tap-highlight-color:transparent;transition:background .16s ease,color .16s ease,transform .12s ease;}
-      .cp-harmony-call-entry:hover{background:rgba(59,130,246,.16);color:#1d4ed8;}
+      .cp-harmony-call-slot{position:relative;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;margin-left:auto;margin-right:2px;z-index:30;}
+      .cp-harmony-call-entry{width:36px;height:36px;min-width:36px;padding:0;border:1px solid rgba(59,130,246,.22);border-radius:999px;background:rgba(239,246,255,.94);color:#2563eb;display:grid;place-items:center;cursor:pointer;box-shadow:0 2px 8px rgba(59,130,246,.12);-webkit-tap-highlight-color:transparent;}
+      .cp-harmony-call-entry:hover{background:#dbeafe;opacity:1;}
       .cp-harmony-call-entry:active{transform:scale(.92);}
-      .cp-harmony-call-entry i{font-size:16px;line-height:1;}
-      .cp-harmony-call-pop{position:absolute;right:-42px;top:40px;width:154px;padding:7px;border-radius:18px;background:rgba(255,255,255,.98);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(226,232,240,.9);box-shadow:0 18px 46px rgba(15,23,42,.18);z-index:2147483300;animation:cp-harmony-call-pop-in .16s cubic-bezier(.2,.8,.2,1);}
+      .cp-harmony-call-entry i{font-size:15px;line-height:1;}.cp-phone-glyph,.cp-video-glyph{width:18px;height:18px;position:relative;display:grid;place-items:center;line-height:1;}.cp-call-fallback{font-size:17px;font-weight:800;line-height:1;}.cp-fa-ok .cp-call-fallback{display:none!important;}.cp-fa-missing i{display:none!important;}.cp-fa-missing .cp-call-fallback{display:inline-block!important;}
+      .cp-harmony-call-pop{position:absolute;right:-4px;top:44px;width:176px;min-width:176px;padding:8px;border-radius:18px;background:rgba(255,255,255,.98);backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);border:1px solid rgba(226,232,240,.88);box-shadow:0 18px 42px rgba(15,23,42,.18);z-index:2147483450;overflow:visible;animation:cp-harmony-call-pop-in .16s cubic-bezier(.2,.8,.2,1);}
       .cp-harmony-call-pop[hidden]{display:none!important;}
-      @keyframes cp-harmony-call-pop-in{from{opacity:0;transform:translateY(-5px) scale(.97);}to{opacity:1;transform:translateY(0) scale(1);}}
-      .cp-harmony-call-pop::before{content:"";position:absolute;right:52px;top:-6px;width:12px;height:12px;background:rgba(255,255,255,.98);border-left:1px solid rgba(226,232,240,.8);border-top:1px solid rgba(226,232,240,.8);transform:rotate(45deg);}
-      .cp-harmony-call-pop button{width:100%;min-height:44px;border:none;background:transparent;border-radius:14px;padding:7px 8px;display:flex;align-items:center;gap:9px;cursor:pointer;text-align:left;color:#0f172a;font-family:inherit;}
+      @keyframes cp-harmony-call-pop-in{from{opacity:0;transform:translateY(-6px) scale(.96);}to{opacity:1;transform:translateY(0) scale(1);}}
+      .cp-harmony-call-pop::before{content:"";position:absolute;right:22px;top:-6px;width:12px;height:12px;background:rgba(255,255,255,.97);border-left:1px solid rgba(15,23,42,.06);border-top:1px solid rgba(15,23,42,.06);transform:rotate(45deg);}
+      .cp-harmony-call-pop button{width:100%;min-height:46px;border:none;background:transparent;border-radius:14px;padding:7px 8px;display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;cursor:pointer;text-align:left;color:#0f172a;writing-mode:horizontal-tb;white-space:nowrap;}
       .cp-harmony-call-pop button:hover{background:#f8fafc;}
-      .cp-harmony-call-pop button:active{background:#eff6ff;transform:scale(.98);}
-      .cp-harmony-call-pop-icon{width:30px;height:30px;border-radius:999px;display:grid;place-items:center;flex-shrink:0;box-shadow:none;background:#eff6ff;color:#2563eb;}
-      .cp-harmony-call-pop-icon.audio{background:#eff6ff;color:#2563eb;}
-      .cp-harmony-call-pop-icon.video{background:#f5f3ff;color:#7c3aed;}
-      .cp-harmony-call-pop-icon i{font-size:14px;line-height:1;}
+      .cp-harmony-call-pop button:active{background:#f1f5f9;transform:scale(.98);}
+      .cp-harmony-call-pop-icon{width:30px;height:30px;min-width:30px;border-radius:999px;display:grid;place-items:center;color:#fff;flex-shrink:0;box-shadow:none;}
+      .cp-harmony-call-pop-icon.audio{background:#e0f2fe;color:#0284c7;}
+      .cp-harmony-call-pop-icon.video{background:#ede9fe;color:#7c3aed;}
       .cp-harmony-call-pop-main{display:flex;flex-direction:column;min-width:0;}
-      .cp-harmony-call-pop-main b{font-size:13px;line-height:1.2;color:#0f172a;font-weight:800;}
-      @media (max-width:390px){.cp-harmony-call-slot{width:32px;height:32px;margin-right:2px;}.cp-harmony-call-entry{width:32px;height:32px;min-width:32px;}.cp-harmony-call-entry i{font-size:15px;}.cp-harmony-call-pop{right:-42px;}}
+      .cp-harmony-call-pop-main b{font-size:14px;line-height:1.15;color:#0f172a;font-weight:800;white-space:nowrap;}
+      @media (max-width:390px){.cp-harmony-call-entry{width:34px;min-width:34px;}.cp-harmony-call-pop{right:-4px;width:172px;min-width:172px;}}
       #cp-call-root{position:fixed;inset:0;z-index:2147483500;display:none;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;-webkit-tap-highlight-color:transparent;}
       #cp-call-bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(34px) brightness(.45);transform:scale(1.08);background-color:#101827;}
       #cp-call-mask{position:absolute;inset:0;background:linear-gradient(180deg,rgba(15,23,42,.18),rgba(15,23,42,.78));}
@@ -1522,19 +1521,19 @@
       #cp-call-local-wrap{position:absolute;right:14px;top:92px;width:104px;height:148px;border-radius:18px;overflow:hidden;background:#000;display:none;z-index:5;box-shadow:0 16px 34px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.14);}
       #cp-call-local-video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
       #cp-call-controls{position:absolute;left:0;right:0;bottom:0;z-index:6;padding:20px 18px calc(22px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:center;gap:16px;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.42));}
-      .cp-call-control{min-width:68px;height:54px;border:none;border-radius:999px;padding:0 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;background:rgba(255,255,255,.13);color:#fff;backdrop-filter:blur(10px);font-size:13px;font-weight:800;cursor:pointer;}
-      .cp-call-control i{font-size:16px;}.cp-call-control.off{color:#ff8585;background:rgba(255,255,255,.10);}
-      .cp-call-control.danger{width:68px;min-width:68px;height:68px;border-radius:999px;background:linear-gradient(180deg,#ff6d67,#ef4444);box-shadow:0 14px 30px rgba(239,68,68,.32);font-size:20px;}
+      .cp-call-control{min-width:70px;height:48px;border:1px solid rgba(255,255,255,.18);border-radius:16px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;gap:6px;background:rgba(255,255,255,.14);color:#fff;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);font-size:13px;font-weight:800;cursor:pointer;}
+      .cp-call-control i{font-size:16px;}.cp-call-control.off{color:#fca5a5;background:rgba(255,255,255,.10);}
+      .cp-call-control.danger{width:86px;min-width:86px;height:48px;border-radius:16px;background:rgba(248,113,113,.94);box-shadow:0 10px 24px rgba(239,68,68,.24);font-size:18px;border-color:rgba(248,113,113,.20);}
       .cp-call-control:active{transform:scale(.96);}
       #cp-call-incoming{position:absolute;inset:0;z-index:7;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(8,13,20,.76);backdrop-filter:blur(20px);text-align:center;}
       #cp-call-in-avatar{width:112px;height:112px;border-radius:50%;object-fit:cover;background:#334155;border:1px solid rgba(255,255,255,.14);box-shadow:0 16px 40px rgba(0,0,0,.34);}
       #cp-call-in-name{margin-top:22px;font-size:27px;font-weight:900;}
       #cp-call-in-tip{margin-top:10px;font-size:15px;opacity:.78;}
-      #cp-call-in-actions{display:flex;gap:72px;margin-top:54px;}
-      .cp-call-in-action{display:flex;flex-direction:column;align-items:center;gap:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;}
-      .cp-call-in-circle{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;font-size:28px;color:#fff;}
-      .cp-call-in-circle.red{background:linear-gradient(180deg,#ff6d67,#ef4444);box-shadow:0 14px 30px rgba(239,68,68,.32);}
-      .cp-call-in-circle.green{background:linear-gradient(180deg,#55df8a,#22c55e);box-shadow:0 14px 30px rgba(34,197,94,.26);}
+      #cp-call-in-actions{display:flex;gap:14px;margin-top:44px;align-items:center;justify-content:center;}
+      .cp-call-in-action{min-width:110px;height:50px;border-radius:16px;display:inline-flex;flex-direction:row;align-items:center;justify-content:center;gap:8px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);}
+      .cp-call-in-circle{width:28px;height:28px;border-radius:10px;display:grid;place-items:center;font-size:16px;color:inherit;background:transparent;}
+      .cp-call-in-action.reject{color:#fecaca;background:rgba(239,68,68,.18);border-color:rgba(248,113,113,.25);}.cp-call-in-circle.red{background:transparent;box-shadow:none;}
+      .cp-call-in-action.accept{color:#fff;background:#2563eb;border-color:rgba(59,130,246,.36);box-shadow:0 10px 24px rgba(37,99,235,.24);}.cp-call-in-circle.green{background:transparent;box-shadow:none;}
       .cp-call-hidden-signal{display:none!important;}
     `;
 
@@ -1577,8 +1576,8 @@
         '<div id="cp-call-in-name">好友</div>' +
         '<div id="cp-call-in-tip">邀请你通话</div>' +
         '<div id="cp-call-in-actions">' +
-          '<div class="cp-call-in-action" id="cp-call-reject"><div class="cp-call-in-circle red"><i class="fa fa-phone fa-rotate-135"></i></div><div>拒绝</div></div>' +
-          '<div class="cp-call-in-action" id="cp-call-accept"><div class="cp-call-in-circle green"><i class="fa fa-phone"></i></div><div>接听</div></div>' +
+          '<div class="cp-call-in-action reject" id="cp-call-reject"><div class="cp-call-in-circle red"><i class="fa fa-phone fa-rotate-135"></i></div><div>拒绝</div></div>' +
+          '<div class="cp-call-in-action accept" id="cp-call-accept"><div class="cp-call-in-circle green"><i class="fa fa-phone"></i></div><div>接听</div></div>' +
         '</div>' +
       '</div>';
 
@@ -1612,35 +1611,52 @@
 
     if (!header || !actions) return;
 
-    actions.classList.add("cp-header-actions-with-call");
-
     var existing = byId("cp-harmony-call-slot");
-    if (existing && existing.parentNode === actions) return;
+    if (existing && existing.parentNode === header) return;
     if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
 
     var slot = document.createElement("div");
     slot.id = "cp-harmony-call-slot";
     slot.className = "cp-harmony-call-slot";
 
+    var phoneGlyph = '<span class="cp-phone-glyph"><i class="fa fa-phone" aria-hidden="true"></i><span class="cp-call-fallback" aria-hidden="true">☎</span></span>';
+    var videoGlyph = '<span class="cp-video-glyph"><i class="fa fa-video-camera" aria-hidden="true"></i><span class="cp-call-fallback" aria-hidden="true">▣</span></span>';
+
     var videoButton = UserConfig.enableVideo === false ? "" :
       '<button type="button" data-mode="video">' +
-        '<span class="cp-harmony-call-pop-icon video"><i class="fa fa-video-camera"></i></span>' +
+        '<span class="cp-harmony-call-pop-icon video">' + videoGlyph + '</span>' +
         '<span class="cp-harmony-call-pop-main"><b>视频通话</b></span>' +
       '</button>';
 
     slot.innerHTML =
       '<button type="button" class="cp-harmony-call-entry" id="cp-harmony-call-entry" aria-label="通话" title="通话">' +
-        '<i class="fa fa-phone"></i>' +
+        phoneGlyph +
       '</button>' +
       '<div class="cp-harmony-call-pop" id="cp-harmony-call-pop" hidden>' +
         '<button type="button" data-mode="audio">' +
-          '<span class="cp-harmony-call-pop-icon audio"><i class="fa fa-phone"></i></span>' +
+          '<span class="cp-harmony-call-pop-icon audio">' + phoneGlyph + '</span>' +
           '<span class="cp-harmony-call-pop-main"><b>语音通话</b></span>' +
         '</button>' +
         videoButton +
       '</div>';
 
-    actions.insertBefore(slot, actions.firstChild);
+    header.insertBefore(slot, actions);
+
+    function updateFaState() {
+      try {
+        var test = slot.querySelector(".cp-phone-glyph i");
+        var before = test && window.getComputedStyle ? window.getComputedStyle(test, "::before").content : "";
+        var family = test && window.getComputedStyle ? window.getComputedStyle(test).fontFamily : "";
+        var ok = !!(before && before !== "none" && before !== "normal" && before !== '""');
+        if (!ok && /FontAwesome|Font Awesome/i.test(String(family || "")) && test && test.offsetWidth > 2) ok = true;
+        slot.classList.toggle("cp-fa-ok", !!ok);
+        slot.classList.toggle("cp-fa-missing", !ok);
+      } catch (_) {
+        slot.classList.add("cp-fa-missing");
+      }
+    }
+    updateFaState();
+    setTimeout(updateFaState, 600);
 
     var entry = byId("cp-harmony-call-entry");
     var pop = byId("cp-harmony-call-pop");
@@ -1800,7 +1816,7 @@
   }
 
   window.CPHarmonyCall = {
-    version: "v6-fontawesome-compact-call",
+    version: "v6-global-wukong-call",
     boot: boot,
     refresh: function () {
       injectHeaderButton();
