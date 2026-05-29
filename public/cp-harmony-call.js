@@ -1464,20 +1464,6 @@
     syncButtons();
   }
 
-
-  var CPCallIcons = {
-    phone: '<svg class="cp-call-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.56 0 1 .44 1 1V20c0 .56-.44 1-1 1C10.61 21 3 13.39 3 4c0-.56.44-1 1-1h3.5c.56 0 1 .44 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    phoneDown: '<svg class="cp-call-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.5 15.2c0 .53-.42.96-.95.96h-3.47c-.5 0-.92-.38-.97-.88l-.26-2.25a1.1 1.1 0 0 0-.7-.9 9.05 9.05 0 0 0-6.3 0 1.1 1.1 0 0 0-.7.9l-.26 2.25c-.06.5-.48.88-.98.88H3.45a.95.95 0 0 1-.95-.96v-1.14c0-.42.18-.82.5-1.09C5.43 10.88 8.58 9.75 12 9.75s6.57 1.13 9 3.22c.32.27.5.67.5 1.09v1.14Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    video: '<svg class="cp-call-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4.75 6.75h9.5a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2h-9.5a2 2 0 0 1-2-2v-6.5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m16.25 10.25 3.64-2.1c.62-.36 1.36.09 1.36.8v6.1c0 .71-.74 1.16-1.36.8l-3.64-2.1v-3.5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
-    videoOff: '<svg class="cp-call-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10.8 6.75h3.45a2 2 0 0 1 2 2v6.5c0 .15-.02.3-.05.44M13.25 17.25h-8.5a2 2 0 0 1-2-2v-6.5a2 2 0 0 1 2-2h1.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="m16.25 10.25 3.64-2.1c.62-.36 1.36.09 1.36.8v4.47" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    mic: '<svg class="cp-call-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 14.75a3.75 3.75 0 0 0 3.75-3.75V6a3.75 3.75 0 0 0-7.5 0v5A3.75 3.75 0 0 0 12 14.75Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.75 10.75a6.25 6.25 0 0 0 12.5 0M12 17v4M8.5 21h7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    micOff: '<svg class="cp-call-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M9.25 6v5A3.75 3.75 0 0 0 14 14.62M15.75 11V6a3.75 3.75 0 0 0-6.03-2.98" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.75 10.75a6.25 6.25 0 0 0 9.92 5.07M18.25 10.75a6.22 6.22 0 0 1-1.12 3.58M12 17v4M8.5 21h7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-  };
-
-  function icon(name) {
-    return CPCallIcons[name] || "";
-  }
-
   function syncButtons() {
     var mic = byId("cp-call-btn-mic");
     var cam = byId("cp-call-btn-cam");
@@ -1485,16 +1471,16 @@
     if (mic) {
       mic.classList.toggle("off", !State.isMicOn);
       mic.innerHTML = State.isMicOn
-        ? icon("mic") + '<span>麦克风</span>'
-        : icon("micOff") + '<span>静音</span>';
+        ? '<i class="fa fa-microphone"></i><span>麦克风</span>'
+        : '<i class="fa fa-microphone-slash"></i><span>静音</span>';
     }
 
     if (cam) {
       cam.style.display = State.mode === "video" ? "inline-flex" : "none";
       cam.classList.toggle("off", !State.isCamOn);
       cam.innerHTML = State.isCamOn
-        ? icon("video") + '<span>摄像头</span>'
-        : icon("videoOff") + '<span>关闭</span>';
+        ? '<i class="fa fa-video-camera"></i><span>摄像头</span>'
+        : '<i class="fa fa-video-camera"></i><span>关闭</span>';
     }
   }
 
@@ -1502,57 +1488,53 @@
     if (byId("cp-harmony-call-style")) return;
 
     var css = `
-      .cp-harmony-call-slot{position:relative;flex-shrink:0;display:flex;align-items:center;padding-bottom:2px;}
-      .cp-harmony-call-entry{width:38px;height:38px;min-width:38px;padding:0;border:1px solid rgba(15,23,42,.08);border-radius:999px;background:rgba(255,255,255,.58);color:#0f172a;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 8px 24px rgba(15,23,42,.06);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);-webkit-tap-highlight-color:transparent;transition:transform .16s ease,background .16s ease,box-shadow .16s ease,opacity .16s ease;}
-      .cp-harmony-call-entry:hover{background:#fff;box-shadow:0 12px 28px rgba(15,23,42,.10);}
-      .cp-harmony-call-entry:active{transform:scale(.93);}
-      .cp-call-svg{width:20px;height:20px;display:block;flex-shrink:0;}
-      .cp-harmony-call-entry .cp-call-svg{width:19px;height:19px;}
-      .cp-harmony-call-pop{position:absolute;right:0;top:46px;width:176px;padding:8px;border-radius:22px;background:rgba(255,255,255,.92);backdrop-filter:blur(22px) saturate(1.35);-webkit-backdrop-filter:blur(22px) saturate(1.35);border:1px solid rgba(15,23,42,.08);box-shadow:0 22px 56px rgba(15,23,42,.18);z-index:2147483300;animation:cp-harmony-call-pop-in .18s cubic-bezier(.2,.8,.2,1);}
+      .cp-harmony-call-slot{position:relative;flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:34px;height:34px;margin-right:3px;padding:0;}
+      .cp-harmony-call-entry{width:34px;height:34px;min-width:34px;padding:0;border:none;border-radius:999px;background:rgba(59,130,246,.10);color:#2563eb;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:none;-webkit-tap-highlight-color:transparent;transition:background .16s ease,color .16s ease,transform .12s ease;}
+      .cp-harmony-call-entry:hover{background:rgba(59,130,246,.16);color:#1d4ed8;}
+      .cp-harmony-call-entry:active{transform:scale(.92);}
+      .cp-harmony-call-entry i{font-size:16px;line-height:1;}
+      .cp-harmony-call-pop{position:absolute;right:-42px;top:40px;width:154px;padding:7px;border-radius:18px;background:rgba(255,255,255,.98);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(226,232,240,.9);box-shadow:0 18px 46px rgba(15,23,42,.18);z-index:2147483300;animation:cp-harmony-call-pop-in .16s cubic-bezier(.2,.8,.2,1);}
       .cp-harmony-call-pop[hidden]{display:none!important;}
-      @keyframes cp-harmony-call-pop-in{from{opacity:0;transform:translateY(-8px) scale(.96);}to{opacity:1;transform:translateY(0) scale(1);}}
-      .cp-harmony-call-pop::before{content:"";position:absolute;right:20px;top:-6px;width:12px;height:12px;background:rgba(255,255,255,.92);border-left:1px solid rgba(15,23,42,.06);border-top:1px solid rgba(15,23,42,.06);transform:rotate(45deg);}
-      .cp-harmony-call-pop button{width:100%;border:none;background:transparent;border-radius:16px;padding:11px 10px;display:flex;align-items:center;gap:11px;cursor:pointer;text-align:left;color:#0f172a;transition:background .14s ease,transform .14s ease;}
-      .cp-harmony-call-pop button:hover{background:rgba(15,23,42,.05);}
-      .cp-harmony-call-pop button:active{background:rgba(15,23,42,.08);transform:scale(.985);}
-      .cp-harmony-call-pop-icon{width:38px;height:38px;border-radius:14px;display:grid;place-items:center;flex-shrink:0;box-shadow:none;}
-      .cp-harmony-call-pop-icon .cp-call-svg{width:19px;height:19px;}
-      .cp-harmony-call-pop-icon.audio{background:#0f172a;color:#fff;}
-      .cp-harmony-call-pop-icon.video{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;}
+      @keyframes cp-harmony-call-pop-in{from{opacity:0;transform:translateY(-5px) scale(.97);}to{opacity:1;transform:translateY(0) scale(1);}}
+      .cp-harmony-call-pop::before{content:"";position:absolute;right:52px;top:-6px;width:12px;height:12px;background:rgba(255,255,255,.98);border-left:1px solid rgba(226,232,240,.8);border-top:1px solid rgba(226,232,240,.8);transform:rotate(45deg);}
+      .cp-harmony-call-pop button{width:100%;min-height:44px;border:none;background:transparent;border-radius:14px;padding:7px 8px;display:flex;align-items:center;gap:9px;cursor:pointer;text-align:left;color:#0f172a;font-family:inherit;}
+      .cp-harmony-call-pop button:hover{background:#f8fafc;}
+      .cp-harmony-call-pop button:active{background:#eff6ff;transform:scale(.98);}
+      .cp-harmony-call-pop-icon{width:30px;height:30px;border-radius:999px;display:grid;place-items:center;flex-shrink:0;box-shadow:none;background:#eff6ff;color:#2563eb;}
+      .cp-harmony-call-pop-icon.audio{background:#eff6ff;color:#2563eb;}
+      .cp-harmony-call-pop-icon.video{background:#f5f3ff;color:#7c3aed;}
+      .cp-harmony-call-pop-icon i{font-size:14px;line-height:1;}
       .cp-harmony-call-pop-main{display:flex;flex-direction:column;min-width:0;}
-      .cp-harmony-call-pop-main b{font-size:14px;line-height:1.2;color:#111827;font-weight:800;letter-spacing:.01em;}
-      @media (max-width:390px){.cp-harmony-call-entry{width:34px;height:34px;min-width:34px;}.cp-harmony-call-pop{right:-42px;}}
-      #cp-call-root{position:fixed;inset:0;z-index:2147483500;display:none;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-tap-highlight-color:transparent;}
-      #cp-call-bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(34px) brightness(.48);transform:scale(1.08);background:radial-gradient(circle at 50% 20%,#334155 0,#0f172a 52%,#020617 100%);}
-      #cp-call-mask{position:absolute;inset:0;background:linear-gradient(180deg,rgba(2,6,23,.18),rgba(2,6,23,.82));}
-      #cp-call-main{position:absolute;inset:0;display:none;overflow:hidden;background:#020617;}
-      #cp-call-remote-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#020617;display:none;}
+      .cp-harmony-call-pop-main b{font-size:13px;line-height:1.2;color:#0f172a;font-weight:800;}
+      @media (max-width:390px){.cp-harmony-call-slot{width:32px;height:32px;margin-right:2px;}.cp-harmony-call-entry{width:32px;height:32px;min-width:32px;}.cp-harmony-call-entry i{font-size:15px;}.cp-harmony-call-pop{right:-42px;}}
+      #cp-call-root{position:fixed;inset:0;z-index:2147483500;display:none;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;-webkit-tap-highlight-color:transparent;}
+      #cp-call-bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(34px) brightness(.45);transform:scale(1.08);background-color:#101827;}
+      #cp-call-mask{position:absolute;inset:0;background:linear-gradient(180deg,rgba(15,23,42,.18),rgba(15,23,42,.78));}
+      #cp-call-main{position:absolute;inset:0;display:none;overflow:hidden;background:#080d14;}
+      #cp-call-remote-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#080d14;display:none;}
       #cp-call-main.is-audio #cp-call-remote-video{display:none!important;}
-      #cp-call-top{position:absolute;top:0;left:0;right:0;z-index:3;padding:58px 20px 0;display:flex;flex-direction:column;align-items:center;text-align:center;pointer-events:none;}
-      #cp-call-avatar{width:106px;height:106px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,.22);box-shadow:0 18px 48px rgba(0,0,0,.36);background:#334155;}
-      #cp-call-name{margin-top:18px;font-size:26px;font-weight:900;text-shadow:0 2px 10px rgba(0,0,0,.28);letter-spacing:.01em;}
-      #cp-call-status{margin-top:8px;font-size:14px;opacity:.84;}
+      #cp-call-top{position:absolute;top:0;left:0;right:0;z-index:3;padding:54px 20px 0;display:flex;flex-direction:column;align-items:center;text-align:center;pointer-events:none;}
+      #cp-call-avatar{width:104px;height:104px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,.18);box-shadow:0 16px 40px rgba(0,0,0,.32);background:#334155;}
+      #cp-call-name{margin-top:18px;font-size:26px;font-weight:900;text-shadow:0 2px 6px rgba(0,0,0,.25);}
+      #cp-call-status{margin-top:8px;font-size:14px;opacity:.82;}
       #cp-call-main.is-video #cp-call-top{padding-top:28px;}
       #cp-call-main.is-video #cp-call-avatar,#cp-call-main.is-video #cp-call-name{display:none!important;}
-      #cp-call-local-wrap{position:absolute;right:14px;top:92px;width:104px;height:148px;border-radius:22px;overflow:hidden;background:#000;display:none;z-index:5;box-shadow:0 18px 42px rgba(0,0,0,.38);border:1px solid rgba(255,255,255,.16);}
+      #cp-call-local-wrap{position:absolute;right:14px;top:92px;width:104px;height:148px;border-radius:18px;overflow:hidden;background:#000;display:none;z-index:5;box-shadow:0 16px 34px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.14);}
       #cp-call-local-video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
-      #cp-call-controls{position:absolute;left:0;right:0;bottom:0;z-index:6;padding:20px 18px calc(24px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:center;gap:15px;background:linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,.52));}
-      .cp-call-control{min-width:70px;height:56px;border:1px solid rgba(255,255,255,.10);border-radius:999px;padding:0 15px;display:inline-flex;align-items:center;justify-content:center;gap:7px;background:rgba(255,255,255,.14);color:#fff;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 10px 28px rgba(0,0,0,.16);transition:transform .14s ease,background .14s ease,opacity .14s ease;}
-      .cp-call-control .cp-call-svg{width:18px;height:18px;}.cp-call-control.off{color:#fecaca;background:rgba(239,68,68,.18);border-color:rgba(248,113,113,.20);}
-      .cp-call-control.danger{width:70px;min-width:70px;height:70px;border-radius:999px;background:linear-gradient(180deg,#ff6b64,#ef4444);border:none;box-shadow:0 16px 34px rgba(239,68,68,.34);}
-      .cp-call-control.danger .cp-call-svg{width:27px;height:27px;}
-      .cp-call-control:active{transform:scale(.95);}
-      #cp-call-incoming{position:absolute;inset:0;z-index:7;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(2,6,23,.72);backdrop-filter:blur(24px) saturate(1.15);-webkit-backdrop-filter:blur(24px) saturate(1.15);text-align:center;}
-      #cp-call-in-avatar{width:114px;height:114px;border-radius:50%;object-fit:cover;background:#334155;border:1px solid rgba(255,255,255,.18);box-shadow:0 18px 48px rgba(0,0,0,.38);}
+      #cp-call-controls{position:absolute;left:0;right:0;bottom:0;z-index:6;padding:20px 18px calc(22px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:center;gap:16px;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.42));}
+      .cp-call-control{min-width:68px;height:54px;border:none;border-radius:999px;padding:0 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;background:rgba(255,255,255,.13);color:#fff;backdrop-filter:blur(10px);font-size:13px;font-weight:800;cursor:pointer;}
+      .cp-call-control i{font-size:16px;}.cp-call-control.off{color:#ff8585;background:rgba(255,255,255,.10);}
+      .cp-call-control.danger{width:68px;min-width:68px;height:68px;border-radius:999px;background:linear-gradient(180deg,#ff6d67,#ef4444);box-shadow:0 14px 30px rgba(239,68,68,.32);font-size:20px;}
+      .cp-call-control:active{transform:scale(.96);}
+      #cp-call-incoming{position:absolute;inset:0;z-index:7;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(8,13,20,.76);backdrop-filter:blur(20px);text-align:center;}
+      #cp-call-in-avatar{width:112px;height:112px;border-radius:50%;object-fit:cover;background:#334155;border:1px solid rgba(255,255,255,.14);box-shadow:0 16px 40px rgba(0,0,0,.34);}
       #cp-call-in-name{margin-top:22px;font-size:27px;font-weight:900;}
-      #cp-call-in-tip{margin-top:10px;font-size:15px;opacity:.8;}
-      #cp-call-in-actions{display:flex;gap:74px;margin-top:54px;}
+      #cp-call-in-tip{margin-top:10px;font-size:15px;opacity:.78;}
+      #cp-call-in-actions{display:flex;gap:72px;margin-top:54px;}
       .cp-call-in-action{display:flex;flex-direction:column;align-items:center;gap:10px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;}
-      .cp-call-in-circle{width:76px;height:76px;border-radius:999px;display:grid;place-items:center;color:#fff;box-shadow:0 16px 34px rgba(0,0,0,.26);transition:transform .14s ease;}
-      .cp-call-in-circle .cp-call-svg{width:30px;height:30px;}
-      .cp-call-in-circle.red{background:linear-gradient(180deg,#ff6b64,#ef4444);}
-      .cp-call-in-circle.green{background:linear-gradient(180deg,#34d399,#16a34a);}
-      .cp-call-in-action:active .cp-call-in-circle{transform:scale(.95);}
+      .cp-call-in-circle{width:74px;height:74px;border-radius:999px;display:grid;place-items:center;font-size:28px;color:#fff;}
+      .cp-call-in-circle.red{background:linear-gradient(180deg,#ff6d67,#ef4444);box-shadow:0 14px 30px rgba(239,68,68,.32);}
+      .cp-call-in-circle.green{background:linear-gradient(180deg,#55df8a,#22c55e);box-shadow:0 14px 30px rgba(34,197,94,.26);}
       .cp-call-hidden-signal{display:none!important;}
     `;
 
@@ -1585,9 +1567,9 @@
           '<video id="cp-call-local-video" autoplay muted playsinline></video>' +
         '</div>' +
         '<div id="cp-call-controls">' +
-          '<button type="button" class="cp-call-control" id="cp-call-btn-mic">' + icon("mic") + '<span>麦克风</span></button>' +
-          '<button type="button" class="cp-call-control danger" id="cp-call-btn-end" aria-label="挂断">' + icon("phoneDown") + '</button>' +
-          '<button type="button" class="cp-call-control" id="cp-call-btn-cam">' + icon("video") + '<span>摄像头</span></button>' +
+          '<button type="button" class="cp-call-control" id="cp-call-btn-mic"><i class="fa fa-microphone"></i><span>麦克风</span></button>' +
+          '<button type="button" class="cp-call-control danger" id="cp-call-btn-end"><i class="fa fa-phone fa-rotate-135"></i></button>' +
+          '<button type="button" class="cp-call-control" id="cp-call-btn-cam"><i class="fa fa-video-camera"></i><span>摄像头</span></button>' +
         '</div>' +
       '</div>' +
       '<div id="cp-call-incoming">' +
@@ -1595,8 +1577,8 @@
         '<div id="cp-call-in-name">好友</div>' +
         '<div id="cp-call-in-tip">邀请你通话</div>' +
         '<div id="cp-call-in-actions">' +
-          '<div class="cp-call-in-action" id="cp-call-reject"><div class="cp-call-in-circle red">' + icon("phoneDown") + '</div><div>拒绝</div></div>' +
-          '<div class="cp-call-in-action" id="cp-call-accept"><div class="cp-call-in-circle green">' + icon("phone") + '</div><div>接听</div></div>' +
+          '<div class="cp-call-in-action" id="cp-call-reject"><div class="cp-call-in-circle red"><i class="fa fa-phone fa-rotate-135"></i></div><div>拒绝</div></div>' +
+          '<div class="cp-call-in-action" id="cp-call-accept"><div class="cp-call-in-circle green"><i class="fa fa-phone"></i></div><div>接听</div></div>' +
         '</div>' +
       '</div>';
 
@@ -1630,8 +1612,10 @@
 
     if (!header || !actions) return;
 
+    actions.classList.add("cp-header-actions-with-call");
+
     var existing = byId("cp-harmony-call-slot");
-    if (existing && existing.parentNode === header) return;
+    if (existing && existing.parentNode === actions) return;
     if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
 
     var slot = document.createElement("div");
@@ -1640,23 +1624,23 @@
 
     var videoButton = UserConfig.enableVideo === false ? "" :
       '<button type="button" data-mode="video">' +
-        '<span class="cp-harmony-call-pop-icon video">' + icon("video") + '</span>' +
+        '<span class="cp-harmony-call-pop-icon video"><i class="fa fa-video-camera"></i></span>' +
         '<span class="cp-harmony-call-pop-main"><b>视频通话</b></span>' +
       '</button>';
 
     slot.innerHTML =
       '<button type="button" class="cp-harmony-call-entry" id="cp-harmony-call-entry" aria-label="通话" title="通话">' +
-        icon("phone") +
+        '<i class="fa fa-phone"></i>' +
       '</button>' +
       '<div class="cp-harmony-call-pop" id="cp-harmony-call-pop" hidden>' +
         '<button type="button" data-mode="audio">' +
-          '<span class="cp-harmony-call-pop-icon audio">' + icon("phone") + '</span>' +
+          '<span class="cp-harmony-call-pop-icon audio"><i class="fa fa-phone"></i></span>' +
           '<span class="cp-harmony-call-pop-main"><b>语音通话</b></span>' +
         '</button>' +
         videoButton +
       '</div>';
 
-    header.insertBefore(slot, actions);
+    actions.insertBefore(slot, actions.firstChild);
 
     var entry = byId("cp-harmony-call-entry");
     var pop = byId("cp-harmony-call-pop");
@@ -1816,7 +1800,7 @@
   }
 
   window.CPHarmonyCall = {
-    version: "v6-global-wukong-call-modern-icons",
+    version: "v6-fontawesome-compact-call",
     boot: boot,
     refresh: function () {
       injectHeaderButton();
