@@ -4457,3 +4457,153 @@ body.cp-has-bg #cp-chat-root .cp-header {
   font-weight:800!important;
   white-space:nowrap!important;
 }
+
+
+/* =========================================================
+   Wukong Chat v50 final visual fix
+   - no exposed 文A quick icon
+   - thicker white bottom arrow on light-blue button
+   - phone button/menu locked to horizontal clean layout
+   ========================================================= */
+#cp-chat-root .cp-trans-wa,
+#cp-chat-root .cp-trans-wa b {
+  display: none !important;
+}
+#cp-chat-root .cp-trans-icon {
+  width: 15px !important;
+  height: 15px !important;
+  min-width: 15px !important;
+  display: grid !important;
+  place-items: center !important;
+  color: #8b5cf6 !important;
+  line-height: 1 !important;
+  overflow: hidden !important;
+  transform: none !important;
+  background: none !important;
+}
+#cp-chat-root .cp-trans-icon i {
+  display: inline-block !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  color: #8b5cf6 !important;
+}
+#cp-chat-root .cp-trans-icon .cp-trans-fallback {
+  display: none !important;
+  font-size: 11px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  color: #8b5cf6 !important;
+}
+#cp-chat-root .cp-quick-trans {
+  width: 18px !important;
+  height: 18px !important;
+  right: -22px !important;
+  border-radius: 999px !important;
+  display: grid !important;
+  place-items: center !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: rgba(255,255,255,.96) !important;
+  border: 1px solid rgba(226,232,240,.92) !important;
+  box-shadow: 0 2px 8px rgba(15,23,42,.12) !important;
+}
+#cp-chat-root .cp-quick-trans .cp-trans-icon {
+  width: 13px !important;
+  height: 13px !important;
+  min-width: 13px !important;
+}
+#cp-chat-root .cp-quick-trans .cp-trans-icon i {
+  font-size: 12px !important;
+}
+#cp-chat-root .cp-toggle-ai-send .cp-trans-icon {
+  width: 16px !important;
+  height: 16px !important;
+}
+#cp-chat-root .cp-toggle-ai-send .cp-trans-icon i {
+  font-size: 14px !important;
+}
+#cp-chat-root .cp-fab-bottom {
+  width: 34px !important;
+  height: 34px !important;
+  right: 14px !important;
+  bottom: calc(var(--cp-footer-h) + 14px) !important;
+  border: 1px solid rgba(255,255,255,.72) !important;
+  background: #7fc3ff !important;
+  color: #fff !important;
+  box-shadow: 0 8px 18px rgba(96,165,250,.28) !important;
+}
+#cp-chat-root .cp-fab-fa {
+  display: inline-block !important;
+  font-size: 18px !important;
+  line-height: 1 !important;
+  color: #fff !important;
+  -webkit-text-stroke: .55px #fff !important;
+}
+#cp-chat-root .cp-fab-v {
+  display: none !important;
+}
+#cp-chat-root #cp-harmony-call-entry {
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(37,99,235,.22) !important;
+  background: linear-gradient(180deg,#f8fbff,#dbeafe) !important;
+  color: #1d4ed8 !important;
+  box-shadow: 0 4px 12px rgba(37,99,235,.16) !important;
+  font-family: Arial, sans-serif !important;
+}
+#cp-chat-root #cp-harmony-call-entry i {
+  font-size: 16px !important;
+  color: #1d4ed8 !important;
+}
+#cp-chat-root #cp-harmony-call-entry .cp-call-fallback {
+  color: #1d4ed8 !important;
+  font-family: Arial, sans-serif !important;
+  font-size: 18px !important;
+  line-height: 1 !important;
+}
+#cp-chat-root #cp-harmony-call-pop {
+  width: 180px !important;
+  min-width: 180px !important;
+  right: 0 !important;
+  top: 42px !important;
+  padding: 8px !important;
+  border-radius: 18px !important;
+  background: rgba(255,255,255,.98) !important;
+  border: 1px solid rgba(226,232,240,.92) !important;
+  box-shadow: 0 16px 38px rgba(15,23,42,.18) !important;
+  overflow: visible !important;
+}
+#cp-chat-root #cp-harmony-call-pop button {
+  width: 100% !important;
+  height: 48px !important;
+  min-height: 48px !important;
+  display: grid !important;
+  grid-template-columns: 34px 1fr !important;
+  align-items: center !important;
+  column-gap: 10px !important;
+  padding: 7px 9px !important;
+  border-radius: 14px !important;
+  writing-mode: horizontal-tb !important;
+  white-space: nowrap !important;
+  text-align: left !important;
+}
+#cp-chat-root #cp-harmony-call-pop .cp-harmony-call-pop-main,
+#cp-chat-root #cp-harmony-call-pop .cp-harmony-call-pop-main b {
+  display: block !important;
+  width: auto !important;
+  min-width: 0 !important;
+  writing-mode: horizontal-tb !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  font-size: 14px !important;
+  line-height: 1.15 !important;
+}
+#cp-chat-root #cp-harmony-call-pop .cp-harmony-call-pop-icon {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  border-radius: 999px !important;
+}
