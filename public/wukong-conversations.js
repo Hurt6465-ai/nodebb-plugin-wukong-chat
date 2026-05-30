@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v17.1 - fixed notifications, lifecycle, safety and call-control preview */
+/* Wukong independent conversation list v17.2 - fixed notification red dot and online badge offset */
 (function () {
   "use strict";
 
@@ -1440,11 +1440,20 @@
       if (data[keys[i]] !== undefined && data[keys[i]] !== null) return numberFromAny(data[keys[i]]);
     }
 
-    if (Array.isArray(data.notifications)) {
+    var nestedCountContainers = [data.counts, data.count, data.meta, data.pagination, data.result];
+    for (var cidx = 0; cidx < nestedCountContainers.length; cidx++) {
+      var cobj = nestedCountContainers[cidx];
+      if (cobj && typeof cobj === "object") {
+        var cn = extractNotificationCount(cobj);
+        if (cn > 0) return cn;
+      }
+    }
+
+    var list = extractNotificationList(data);
+    if (list.length) {
       var total = 0;
-      data.notifications.forEach(function (n) {
-        if (!n) return;
-        if (n.read === false || n.is_read === false || n.unread === true || n.readAt === 0 || n.read_at === 0) total++;
+      list.forEach(function (n) {
+        if (notificationUnread(n)) total++;
       });
       return total;
     }
@@ -1506,10 +1515,32 @@
 
   function notificationUnread(n) {
     if (!n) return false;
-    if (n.read === false || n.is_read === false || n.isRead === false) return true;
-    if (n.unread === true || n.isUnread === true) return true;
-    if (n.readAt === 0 || n.read_at === 0) return true;
-    if (n.read === 0 || n.is_read === 0) return true;
+
+    function hasOwn(obj, key) {
+      return Object.prototype.hasOwnProperty.call(obj, key);
+    }
+
+    function truthyValue(v) {
+      if (v === true || v === 1) return true;
+      var s = String(v == null ? "" : v).trim().toLowerCase();
+      return s === "1" || s === "true" || s === "yes" || s === "y" || s === "unread" || s === "new";
+    }
+
+    function falsyReadValue(v) {
+      if (v === false || v === 0 || v === null) return true;
+      var s = String(v == null ? "" : v).trim().toLowerCase();
+      return s === "" || s === "0" || s === "false" || s === "no" || s === "n" || s === "unread" || s === "new";
+    }
+
+    if (truthyValue(n.unread) || truthyValue(n.isUnread) || truthyValue(n.is_unread)) return true;
+    if (hasOwn(n, "read") && falsyReadValue(n.read)) return true;
+    if (hasOwn(n, "is_read") && falsyReadValue(n.is_read)) return true;
+    if (hasOwn(n, "isRead") && falsyReadValue(n.isRead)) return true;
+    if (hasOwn(n, "readAt") && falsyReadValue(n.readAt)) return true;
+    if (hasOwn(n, "read_at") && falsyReadValue(n.read_at)) return true;
+    if (hasOwn(n, "read_at_iso") && falsyReadValue(n.read_at_iso)) return true;
+    if (truthyValue(n.new) || truthyValue(n.isNew)) return true;
+
     return false;
   }
 
@@ -1701,7 +1732,7 @@
       state.notificationsLoaded = true;
 
       if (state.tab === "notifications") markVisibleNotificationsRead(reason || "load");
-      else setNotificationDot(countUnreadNotifications());
+      else setNotificationDot(Math.max(extractNotificationCount(data), countUnreadNotifications()));
     } catch (err) {
       state.notificationsError = err && err.message ? err.message : String(err || "error");
       state.notificationsLoaded = true;
@@ -1824,7 +1855,8 @@
             markVisibleNotificationsRead(reason || "badge");
             renderNotifications();
           } else {
-            setNotificationDot(countUnreadNotifications());
+            var apiUnread = suppress ? 0 : extractNotificationCount(data);
+            setNotificationDot(Math.max(apiUnread, countUnreadNotifications()));
           }
         } else {
           setNotificationDot(suppress ? 0 : extractNotificationCount(data));
