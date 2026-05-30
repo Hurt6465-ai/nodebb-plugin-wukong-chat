@@ -1002,9 +1002,12 @@
     if (typeof data === "number") return numberFromAny(data);
     if (typeof data !== "object") return 0;
 
+    // Only trust keys that explicitly mean "unread". Generic keys such as
+    // "count" leak unrelated values (e.g. ajaxify.data.count = topic count),
+    // which used to keep the notification dot permanently lit.
     var keys = [
-      "unread", "unreadCount", "unread_count", "notificationCount", "notificationsCount",
-      "notifications_unread", "count", "unreadNotifications"
+      "unread", "unreadCount", "unread_count",
+      "notifications_unread", "unreadNotifications"
     ];
 
     for (var i = 0; i < keys.length; i++) {
@@ -1026,25 +1029,24 @@
   }
 
   function readNotificationCountFromGlobals() {
-    var candidates = [];
-    try { candidates.push(W.app && app.user); } catch (_) {}
-    try { candidates.push(W.ajaxify && ajaxify.data); } catch (_) {}
-    try { candidates.push(W.ajaxify && ajaxify.data && ajaxify.data.loggedInUser); } catch (_) {}
-    try { candidates.push(W.config); } catch (_) {}
-
-    for (var i = 0; i < candidates.length; i++) {
-      var count = extractNotificationCount(candidates[i]);
-      if (count > 0) return count;
-    }
-
+    // The NodeBB top-bar notification badge is the only reliable client-side
+    // source of the *unread notification* count; arbitrary globals like
+    // ajaxify.data/config carry unrelated counts and caused a stuck red dot.
     try {
       var badge = D.querySelector(
+        '[component="notifications/icon"] [data-content],' +
         '[component="notifications/icon"] [data-count],' +
         '[component="notifications/icon"] .badge,' +
         '[component="notifications"] .badge,' +
         '.notifications .badge'
       );
-      if (badge) return numberFromAny(badge.getAttribute("data-count") || badge.textContent || "");
+      if (badge) {
+        return numberFromAny(
+          badge.getAttribute("data-content") ||
+          badge.getAttribute("data-count") ||
+          badge.textContent || ""
+        );
+      }
     } catch (_) {}
 
     return 0;
@@ -1616,9 +1618,6 @@
             '<button class="wkconv-tab wkconv-tab-notifications" data-tab="notifications" role="tab" type="button">' + esc(t("notifications", "通知")) + '</button>' +
             '<div class="wkconv-status"></div>' +
             '<div class="wkconv-actions">' +
-              '<button class="wkconv-notify-link" data-tab="notifications" type="button" aria-label="' + esc(t("notifications", "通知")) + '">' +
-                '<span class="wkconv-notify-icon" aria-hidden="true">🔔</span><span class="wkconv-notify-dot"></span>' +
-              '</button>' +
               '<button class="wkconv-drawer-open" type="button" aria-label="menu"><span></span></button>' +
             '</div>' +
           '</div>' +

@@ -260,12 +260,38 @@ function parseMaybeJson(value) {
   return value;
 }
 
+const CALL_SIGNAL_PREFIXES = ['__cp_harmony_call__:', '__wkcall__:', '__wkcall__：'];
+const CALL_RECORD_PREFIX = '__wkcall_record__:';
+
+function callTextKind(value) {
+  const s = String(value == null ? '' : value).trim();
+  if (!s) return '';
+  if (s.indexOf(CALL_RECORD_PREFIX) === 0) return 'record';
+  for (const p of CALL_SIGNAL_PREFIXES) {
+    if (s.indexOf(p) === 0) return 'signal';
+  }
+  return '';
+}
+
+function callRecordPreview(value) {
+  try {
+    const data = JSON.parse(String(value).slice(CALL_RECORD_PREFIX.length));
+    return String(data && data.mode) === 'video' ? '[视频通话]' : '[语音通话]';
+  } catch (err) {
+    return '[通话]';
+  }
+}
+
 function conversationPayloadText(value) {
   const raw = parseMaybeJson(value);
   if (raw && typeof raw === 'object') {
     const type = firstNonEmpty(raw.type, raw.content_type, raw.contentType, '');
     const text = firstNonEmpty(raw.text, raw.content, raw.body, raw.msg, raw.message, '');
     const url = firstNonEmpty(raw.url, raw.remoteUrl, raw.remote_url, raw.path, raw.src, '');
+
+    const callKind = callTextKind(text);
+    if (callKind === 'signal') return '';
+    if (callKind === 'record') return callRecordPreview(text);
 
     if (String(type) === '1006' || raw.revoke || raw.recalled) return '此消息已被撤回';
     if (/image/i.test(String(type)) || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(String(url))) return '[图片]';
@@ -276,6 +302,9 @@ function conversationPayloadText(value) {
 
   const s = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
   if (!s) return '';
+  const sCallKind = callTextKind(s);
+  if (sCallKind === 'signal') return '';
+  if (sCallKind === 'record') return callRecordPreview(s);
   if (/!\[[^\]]*\]\([^)]+\)/.test(s)) return '[图片]';
   if (/\[(?:视频|video)\]\([^)]+\)/i.test(s)) return '[视频]';
   if (/\[(?:语音消息|voice|audio)\]\([^)]+\)/i.test(s)) return '[语音]';

@@ -107,5 +107,14 @@
   "sdk_loading": "ဝူခုံး SDK ဖွင့်နေသည်...",
   "sdk_failed": "ဝူခုံး SDK ဖွင့်မရပါ",
   "empty_history": "မှတ်တမ်း မရှိသေးပါ",
-  "unknown_user": "အသုံးပြုသူ"
+  "unknown_user": "အသုံးပြုသူ",
+  "call_voice": "အသံခေါ်ဆိုမှု",
+  "call_video": "ဗီဒီယိုခေါ်ဆိုမှု",
+  "call_canceled": "ပယ်ဖျက်ပြီး",
+  "call_no_answer": "တစ်ဖက်က မဖြေပါ",
+  "call_peer_rejected": "တစ်ဖက်က ငြင်းပယ်လိုက်သည်",
+  "call_peer_busy": "တစ်ဖက်က အလုပ်များနေသည်",
+  "call_missed": "လွတ်သွားသော ခေါ်ဆိုမှု",
+  "call_declined": "ငြင်းပယ်ပြီး"
+
 }

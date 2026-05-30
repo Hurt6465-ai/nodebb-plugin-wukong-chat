@@ -1089,16 +1089,51 @@
     syncButtons();
   }
 
-  function endCall(remoteEnded) {
+  var recordedCalls = {};
+
+  function computeCallRecord(hint) {
+    var mine = State.direction === "outgoing";
+    var connected = State.connected;
+    var kind;
+    if (connected) kind = "completed";
+    else if (hint) kind = hint;
+    else if (mine) kind = "canceled";
+    else kind = "missed";
+    return {
+      callId: State.callId,
+      peerUid: State.remoteUser.uid,
+      mine: mine,
+      mode: State.mode,
+      kind: kind,
+      durationSec: connected ? State.sec : 0
+    };
+  }
+
+  function logCallRecord(rec) {
+    try {
+      if (!rec || !rec.callId || !rec.peerUid) return;
+      if (recordedCalls[rec.callId]) return;
+      recordedCalls[rec.callId] = 1;
+      var api = window.CPChatHarmony;
+      if (!api || typeof api.addCallRecord !== "function") return;
+      api.addCallRecord(rec);
+    } catch (e) {
+      warn("log-call-record", e);
+    }
+  }
+
+  function endCall(remoteEnded, hint) {
     if (State.ending) return;
     State.ending = true;
     var oldCallId = State.callId;
     var oldRemoteUid = State.remoteUser.uid;
     var type = State.direction === "outgoing" && !State.connected ? "cancel" : "end";
+    var rec = computeCallRecord(hint);
     if (oldCallId) markClosedCall(oldCallId);
     if (!remoteEnded && oldCallId && oldRemoteUid) {
       sendSignal({ type: type, callId: oldCallId, to: oldRemoteUid }).catch(noop);
     }
+    logCallRecord(rec);
     playHangupTone();
     cleanupCall();
     hideUI();
@@ -1149,7 +1184,7 @@
 
     clearTimeout(State.timeoutTimer);
     State.timeoutTimer = setTimeout(function () {
-      if (State.callId && !State.connected) { showToast("对方无应答"); endCall(false); }
+      if (State.callId && !State.connected) { showToast("对方无应答"); endCall(false, "no_answer"); }
     }, CALL_TIMEOUT_MS);
   }
 
@@ -1187,9 +1222,11 @@
 
   function rejectCall() {
     if (!State.incomingInvite) return;
+    var rec = computeCallRecord("declined");
     if (State.callId) markClosedCall(State.callId);
     stopRing();
     sendSignal({ type: "reject", callId: State.callId, to: State.remoteUser.uid }).catch(noop);
+    logCallRecord(rec);
     cleanupCall();
     hideUI();
   }
@@ -1221,8 +1258,10 @@
       clearTimeout(State.timeoutTimer);
       State.timeoutTimer = setTimeout(function () {
         if (State.callId && !State.connected) {
+          var rec = computeCallRecord("missed");
           markClosedCall(State.callId);
           stopRing();
+          logCallRecord(rec);
           cleanupCall();
           hideUI();
         }
@@ -1239,8 +1278,8 @@
       startConnectGuard();
       return;
     }
-    if (packet.type === "reject") { showToast("对方已拒绝"); endCall(true); return; }
-    if (packet.type === "busy") { showToast("对方忙线中"); endCall(true); return; }
+    if (packet.type === "reject") { showToast("对方已拒绝"); endCall(true, "rejected"); return; }
+    if (packet.type === "busy") { showToast("对方忙线中"); endCall(true, "busy"); return; }
     if (packet.type === "cancel" || packet.type === "end") { endCall(true); }
   }
 

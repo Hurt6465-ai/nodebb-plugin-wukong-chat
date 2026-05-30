@@ -839,9 +839,9 @@ body.wkconv-page {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: #ef4444;
+  background: #22c55e;
   border: 1.5px solid rgba(255,255,255,.96);
-  box-shadow: 0 1px 5px rgba(239,68,68,.32);
+  box-shadow: 0 1px 5px rgba(34,197,94,.36);
 }
 
 .wkconv-actions {
