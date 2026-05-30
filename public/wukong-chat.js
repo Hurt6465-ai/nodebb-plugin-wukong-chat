@@ -189,7 +189,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.5-wukong-single-source";
+  window.__cpNodebbHarmonyVersion = "1.0.6-wukong-call-record-persist";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -213,15 +213,90 @@
 
 
   var CALL_SIGNAL_PREFIX = "__cp_harmony_call__:";
+  var CALL_RECORD_PREFIX = "__cp_harmony_call_record__:";
 
-  function isCallSignalText(text) {
+  function isCallRecordText(text) {
+    var s = String(text == null ? "" : text).trim();
+    return s.indexOf(CALL_RECORD_PREFIX) === 0;
+  }
+
+  function isCallControlSignalText(text) {
     var s = String(text == null ? "" : text).trim();
     return s.indexOf(CALL_SIGNAL_PREFIX) === 0 || s.indexOf("__wkcall__:") === 0 || s.indexOf("__wkcall__：") === 0;
   }
 
+  function isCallSignalText(text) {
+    return isCallControlSignalText(text) || isCallRecordText(text);
+  }
+
   function isCallSignalMessage(m) {
     if (!m) return false;
+    if (m.type === "call") return false;
     return isCallSignalText(m.serverText || m.text || m.html || "");
+  }
+
+  function safeParseJsonObject(raw) {
+    try {
+      var obj = JSON.parse(String(raw || ""));
+      return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function normalizeCallRecordKind(kind) {
+    kind = String(kind || "").trim();
+    var allowed = {
+      completed: 1,
+      canceled: 1,
+      no_answer: 1,
+      rejected: 1,
+      busy: 1,
+      missed: 1,
+      declined: 1
+    };
+    return allowed[kind] ? kind : "completed";
+  }
+
+  function normalizeCallRecordMode(mode) {
+    mode = String(mode || "audio").trim().toLowerCase();
+    if (mode === "voice") mode = "audio";
+    return mode === "video" ? "video" : "audio";
+  }
+
+  function normalizeCallRecordInfo(info) {
+    info = info || {};
+    var out = {
+      type: "call_record",
+      version: 1,
+      callId: String(info.callId || info.call_id || "").trim(),
+      kind: normalizeCallRecordKind(info.kind || info.callKind || info.status),
+      mode: normalizeCallRecordMode(info.mode || info.callMode),
+      durationSec: Math.max(0, Math.floor(Number(info.durationSec || info.duration || info.duration_seconds || 0) || 0)),
+      mine: !!info.mine,
+      ts: Number(info.ts || info.timestamp || Date.now()) || Date.now()
+    };
+    if (!out.callId) {
+      out.callId = "call_" + shortHash([out.kind, out.mode, out.durationSec, out.ts].join("|"));
+    }
+    return out;
+  }
+
+  function buildCallRecordText(info) {
+    var payload = normalizeCallRecordInfo(info);
+    return CALL_RECORD_PREFIX + JSON.stringify(payload);
+  }
+
+  function parseCallRecordText(text) {
+    var s = String(text == null ? "" : text).trim();
+    if (s.indexOf(CALL_RECORD_PREFIX) !== 0) return null;
+    var body = s.slice(CALL_RECORD_PREFIX.length).trim();
+    var obj = safeParseJsonObject(body);
+    if (!obj) {
+      try { obj = safeParseJsonObject(decodeURIComponent(body)); } catch (_) { obj = null; }
+    }
+    if (!obj) return null;
+    return normalizeCallRecordInfo(obj);
   }
 
   var LANG_LIST = [
@@ -465,6 +540,28 @@
     bootRetryTimer: null,
     nativeObserverRetryTimer: null
   };
+
+  function cpFlushPersistOnExit() {
+    try {
+      if (!state || !state.mounted) return;
+      if (persistTimer) {
+        clearTimeout(persistTimer);
+        persistTimer = null;
+      }
+      var pUid = getPeerUid();
+      if (pUid) persistChatToDB(pUid);
+    } catch (e) {
+      warn("flush-persist-exit", e);
+    }
+  }
+
+  try {
+    window.addEventListener("pagehide", cpFlushPersistOnExit);
+    window.addEventListener("beforeunload", cpFlushPersistOnExit);
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") cpFlushPersistOnExit();
+    });
+  } catch (_) {}
 
   function bindAudioEndedHandler() {
     if (!state || !state.audio || !state.audioEndedHandler || state.audioEndedBound) return;
@@ -1443,7 +1540,8 @@
       var id = String(ms.id || "");
       var key = "";
 
-      if (seq && seq !== Number.MAX_SAFE_INTEGER) key = "seq:" + seq;
+      if (ms.type === "call" && ms.callId) key = "call:" + String(ms.callId);
+      else if (seq && seq !== Number.MAX_SAFE_INTEGER) key = "seq:" + seq;
       else if (clientNo) key = "client:" + clientNo;
       else if (stableId) key = "stable:" + stableId;
       else if (id && !/^wk_\d+_\d+/.test(id)) key = "id:" + id;
@@ -2076,48 +2174,111 @@
     }
   }
 
+  function findExistingCallRecordMessage(callId, msgId, clientNo, seq) {
+    callId = String(callId || "");
+    for (var i = state.wkMessages.length - 1; i >= 0; i--) {
+      var m = state.wkMessages[i];
+      if (!m) continue;
+      if (callId && m.callId && String(m.callId) === callId) return m;
+      if (msgIdentityMatches(m, msgId, clientNo, seq)) return m;
+    }
+    return null;
+  }
+
+  function upsertCallRecordMessage(info, mine, uidForMsg, wkMsg, serverText) {
+    info = normalizeCallRecordInfo(info);
+    var ident = getWkMessageIdentity(wkMsg || {}, serverText || info.callId, uidForMsg);
+    var msgId = ident.id || ("call_" + shortHash(info.callId));
+    var existing = findExistingCallRecordMessage(info.callId, msgId, ident.clientNo, ident.seq);
+    var target = existing || createMessageObj("", !!mine, uidForMsg, wkMsg || null, null);
+    var changed = !existing;
+
+    if (target.id !== msgId) { target.id = msgId; changed = true; }
+    if (ident.seq && Number(target.seq || 0) !== Number(ident.seq)) { target.seq = ident.seq; changed = true; }
+    if (ident.clientNo && target.clientMsgNo !== ident.clientNo) { target.clientMsgNo = ident.clientNo; changed = true; }
+    if (ident.ts && Math.abs(Number(target.ts || 0) - Number(ident.ts)) > 1000) { target.ts = ident.ts; changed = true; }
+    else if (!ident.ts && info.ts && Math.abs(Number(target.ts || 0) - Number(info.ts)) > 1000) { target.ts = info.ts; changed = true; }
+    if (wkMsg && target.wkMsg !== wkMsg) { target.wkMsg = wkMsg; target.wkMeta = serializeWkMeta(wkMsg); changed = true; }
+
+    var nextDurationStr = info.durationSec > 0 ? formatDuration(info.durationSec) : "";
+    var nextServerText = serverText || buildCallRecordText(info);
+
+    if (target.type !== "call") changed = true;
+    if (target.mine !== !!mine) changed = true;
+    if (target.uid !== String(uidForMsg || "")) changed = true;
+    if (target.callId !== info.callId) changed = true;
+    if (target.callKind !== info.kind) changed = true;
+    if (target.callMode !== info.mode) changed = true;
+    if (target.durationStr !== nextDurationStr) changed = true;
+    if (target.serverText !== nextServerText) changed = true;
+
+    target.type = "call";
+    target.mine = !!mine;
+    target.uid = String(uidForMsg || "");
+    target.callId = info.callId;
+    target.callKind = info.kind;
+    target.callMode = info.mode;
+    target.durationStr = nextDurationStr;
+    target.html = "";
+    target.serverText = nextServerText;
+    var nextText = callRecordLabel(target);
+    if (target.text !== nextText) changed = true;
+    target.text = nextText;
+    target.pendingLocal = false;
+    target.failedLocal = false;
+
+    if (!existing) {
+      state.wkMessages.push(target);
+    } else if (changed) {
+      msgTouch(target);
+    }
+
+    return { msg: target, added: !existing, touched: changed };
+  }
+
+  function sendCallRecordSignal(info) {
+    return sendCallSignalText(buildCallRecordText(info));
+  }
+
   // Called by cp-harmony-call.js when a call ends, to leave a chat-history
   // record bubble (voice/video, cancelled, missed, rejected, duration...).
   function addCallRecord(info) {
     try {
-      info = info || {};
-      var peerUid = String(info.peerUid || "").replace(/[^\d]/g, "");
+      info = normalizeCallRecordInfo(info || {});
+      var peerUid = String((arguments[0] && arguments[0].peerUid) || "").replace(/[^\d]/g, "");
       if (!peerUid) return;
       var current = String(getPeerUid() || "").replace(/[^\d]/g, "");
       if (!current || current !== peerUid) return; // only log into the open chat
-
-      var callId = String(info.callId || "");
-      if (callId) {
-        for (var i = 0; i < state.wkMessages.length; i++) {
-          if (state.wkMessages[i] && String(state.wkMessages[i].callId) === callId) return;
-        }
-      }
 
       var mine = !!info.mine;
       var uidForMsg = mine
         ? String(state.myUid || (window.app && app.user && app.user.uid) || "")
         : peerUid;
 
-      var obj = createMessageObj("", mine, uidForMsg, null, null);
-      obj.type = "call";
-      obj.callId = callId;
-      obj.callKind = String(info.kind || "");
-      obj.callMode = String(info.mode || "audio");
-      obj.durationStr = info.durationSec ? formatDuration(info.durationSec) : "";
-      obj.html = "";
-      obj.text = callRecordLabel(obj);
+      var signalText = buildCallRecordText(info);
+      var result = upsertCallRecordMessage(info, mine, uidForMsg, null, signalText);
 
-      state.wkMessages.push(obj);
-      state.mergedDirty = true;
-      state.msgIndexDirty = true;
-      state.renderVersion++;
-      incrementalRender("bottom");
-      schedulePersistChat(peerUid);
+      if (result.added || result.touched) {
+        state.mergedDirty = true;
+        state.msgIndexDirty = true;
+        state.renderVersion++;
+        incrementalRender("bottom");
+      }
+
+      // 本地立即落库，避免刷新太快时 900ms 延迟定时器来不及执行。
+      persistChatToDB(peerUid);
+
+      // 同步一条隐藏的通话记录信令到悟空 IM，刷新、换设备、重新拉历史时都能恢复。
+      if (!(arguments[0] && arguments[0].persistToServer === false)) {
+        sendCallRecordSignal(info);
+      }
     } catch (e) {
       warn("add-call-record", e);
     }
   }
   CP_PLUGIN.addCallRecord = addCallRecord;
+  CP_PLUGIN.buildCallRecordText = buildCallRecordText;
+  CP_PLUGIN.parseCallRecordText = parseCallRecordText;
 
   function onAudioEnded() {
     if (state.currentAudioEl) {
@@ -2225,6 +2386,35 @@
 
           var t = payloadObj.text || payloadObj.content || "";
           if (!t) return;
+
+          if (isCallRecordText(t)) {
+            var liveCallInfo = parseCallRecordText(t);
+            if (!liveCallInfo) return;
+            var liveCallResult = upsertCallRecordMessage(liveCallInfo, false, fromUid, m, t);
+            if (liveCallResult.msg && liveCallResult.msg.seq && liveCallResult.msg.seq > state.localMaxSeq) state.localMaxSeq = liveCallResult.msg.seq;
+            if (liveCallResult.added || liveCallResult.touched) {
+              pruneWkMessages();
+              pruneAllMessagesInMemory();
+              state.renderVersion++;
+              state.mergedDirty = true;
+              state.msgIndexDirty = true;
+              schedulePersistChat(currentPeerUid);
+              var callWasAtBottom = isMainAtBottom();
+              if (callWasAtBottom) {
+                state.unreadCount = 0;
+                updateUnreadBadge();
+                incrementalRender("bottom");
+                requestAnimationFrame(forceScrollToBottom);
+              } else {
+                state.unreadCount++;
+                updateUnreadBadge();
+                incrementalRender("keep");
+                if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
+              }
+            }
+            return;
+          }
+
           if (isCallSignalText(t)) return;
 
           var ident = getWkMessageIdentity(m, t, fromUid);
@@ -2463,7 +2653,21 @@
       var isMine = cpIsMineUid(fromUid);
       var serverT = payloadObj.text || payloadObj.content || "";
 
-      // 历史/离线消息里的通话信令不显示
+      // 历史/离线消息里的通话记录信令要还原成通话气泡；普通通话控制信令仍隐藏。
+      if (isCallRecordText(serverT)) {
+        var histCallInfo = parseCallRecordText(serverT);
+        if (!histCallInfo) continue;
+        var histCallResult = upsertCallRecordMessage(histCallInfo, isMine, fromUid, m, serverT);
+        var histCallMsg = histCallResult.msg;
+        if (histCallMsg && histCallMsg.seq && histCallMsg.seq < Number.MAX_SAFE_INTEGER && histCallMsg.seq > state.localMaxSeq) {
+          state.localMaxSeq = histCallMsg.seq;
+        }
+        if (histCallResult.added) added = true;
+        if (histCallResult.touched) touchedExisting = true;
+        continue;
+      }
+
+      // 历史/离线消息里的通话控制信令不显示
       if (isCallSignalText(serverT)) continue;
 
       var t = serverT;
