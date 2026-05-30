@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v16 - merged notifications tab */
+/* Wukong independent conversation list v17.1 - fixed notifications, lifecycle, safety and call-control preview */
 (function () {
   "use strict";
 
@@ -9,6 +9,10 @@
   var cfg = {};
   var i18n = {};
   var ro = null;
+  var sdkLoadPromise = null;
+  var realtimeStarted = false;
+  var booted = false;
+  var cleanups = [];
 
   var state = {
     uid: "",
@@ -41,6 +45,8 @@
     notificationCount: 0,
     notificationCheckInFlight: false,
     notificationTimer: 0,
+    notificationSeenIds: {},
+    notificationSuppressUntil: 0,
     notifications: [],
     notificationsLoaded: false,
     notificationsLoading: false,
@@ -57,41 +63,16 @@
     }
   };
 
-  function initialTabFromUrl() {
-    try {
-      var q = new URLSearchParams(location.search || "");
-      var raw = String(q.get("tab") || q.get("type") || q.get("view") || "").toLowerCase();
-      var hash = String(location.hash || "").toLowerCase();
-      var saved = "";
-      try { saved = String(sessionStorage.getItem("wkconv_preferred_tab") || "").toLowerCase(); } catch (_) {}
-      if (raw === "notifications" || raw === "notice" || raw === "notices" || hash === "#notifications" || hash === "#notice" || saved === "notifications") return "notifications";
-      if (raw === "rooms" || raw === "chatrooms" || raw === "topics" || raw === "topic" || hash === "#rooms" || hash === "#chatrooms" || saved === "rooms") return "rooms";
-      if (raw === "direct" || raw === "messages" || raw === "dm" || hash === "#direct" || saved === "direct") return "direct";
-    } catch (_) {}
-    return "direct";
+  if (W.WukongConversations && typeof W.WukongConversations.destroy === "function") {
+    try { W.WukongConversations.destroy(); } catch (_) {}
   }
 
-  function updateTabUrl(tab) {
-    try {
-      sessionStorage.setItem("wkconv_preferred_tab", tab);
-      var url = new URL(location.href);
-      url.searchParams.set("tab", tab);
-      history.replaceState(history.state, document.title, url.pathname + url.search + url.hash);
-    } catch (_) {}
-  }
-
-  function ensureViewport() {
-    var meta = D.querySelector('meta[name="viewport"]');
-    if (!meta) {
-      meta = D.createElement("meta");
-      meta.name = "viewport";
-      D.head.appendChild(meta);
-    }
-    meta.content = "width=device-width, initial-scale=1.0, viewport-fit=cover";
+  function now() {
+    return Date.now();
   }
 
   function rel() {
-    return (W.config && config.relative_path) || "";
+    return (W.config && W.config.relative_path) || "";
   }
 
   function c() {
@@ -107,7 +88,8 @@
       maxConversations: 500,
       openTopicPage: true,
       virtualOverscan: 10,
-      defaultRowHeight: 70
+      defaultRowHeight: 70,
+      allowExternalNotificationUrls: false
     }, (W.NBBWukongConversations && W.NBBWukongConversations.config) || {});
   }
 
@@ -121,9 +103,163 @@
     return i18n[key] || fallback || key;
   }
 
+  function isPlainObject(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function objectMap(value) {
+    return isPlainObject(value) ? value : {};
+  }
+
+  function get(obj, keys, fallback) {
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var val = obj && obj[key];
+      if (val !== undefined && val !== null && String(val).trim() !== "") return val;
+    }
+    return fallback;
+  }
+
+  function numberFromAny(value) {
+    var n = Number(value);
+    return isFinite(n) && n > 0 ? n : 0;
+  }
+
+  function withRelativePath(path) {
+    path = String(path || "");
+    var base = rel().replace(/\/+$/, "");
+    if (!base) return path;
+    if (path === base || path.indexOf(base + "/") === 0) return path;
+    return base + (path.charAt(0) === "/" ? path : "/" + path);
+  }
+
+  function absoluteAppUrl(url, allowExternal) {
+    var s = String(url || "").trim();
+    if (!s) return "#";
+
+    try {
+      if (/^(?:https?:)?\/\//i.test(s)) {
+        var u = new URL(s, location.href);
+        if (!/^https?:$/.test(u.protocol)) return "#";
+        if (u.origin !== location.origin && !allowExternal) return "#";
+        if (u.origin === location.origin) return u.pathname + u.search + u.hash;
+        return u.href;
+      }
+    } catch (_) {
+      return "#";
+    }
+
+    if (s.charAt(0) !== "/") s = "/" + s;
+    return withRelativePath(s);
+  }
+
+  function safeAssetUrl(url) {
+    var s = String(url || "").trim();
+    if (!s) return "";
+
+    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(s)) return s;
+
+    try {
+      if (/^(?:https?:)?\/\//i.test(s)) {
+        var u = new URL(s, location.href);
+        return /^https?:$/.test(u.protocol) ? u.href : "";
+      }
+    } catch (_) {
+      return "";
+    }
+
+    if (s.charAt(0) !== "/") s = "/" + s;
+    return withRelativePath(s);
+  }
+
+  function safeColor(value, fallback) {
+    var s = String(value || "").trim();
+    fallback = fallback || "#dbeafe";
+    if (
+      /^#[0-9a-f]{3,8}$/i.test(s) ||
+      /^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/i.test(s) ||
+      /^hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/i.test(s) ||
+      /^[a-z]+$/i.test(s)
+    ) {
+      return s;
+    }
+    return fallback;
+  }
+
+  function stripHtml(html) {
+    var text = String(html || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ");
+
+    try {
+      var ta = D.createElement("textarea");
+      ta.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      text = ta.value || text;
+    } catch (_) {}
+
+    return text.replace(/\s+/g, " ").trim();
+  }
+
+  function hashString(input) {
+    var s = String(input || "");
+    var h = 0;
+    for (var i = 0; i < s.length; i++) {
+      h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return String(Math.abs(h));
+  }
+
+  function peerIdFromChannelId(channelId) {
+    var s = String(channelId || "");
+    if (!s) return "";
+    var numeric = s.replace(/[^\d]/g, "");
+    return numeric || s;
+  }
+
+  function directRoomId(room) {
+    return String((room && (room.peer_uid || room.peerUid || room.uid || room.id || room.channel_id || room.channelId)) || "");
+  }
+
+  function listen(target, name, handler, options) {
+    if (!target || !target.addEventListener) return;
+    target.addEventListener(name, handler, options || false);
+    cleanups.push(function () {
+      try { target.removeEventListener(name, handler, options || false); } catch (_) {}
+    });
+  }
+
+  function listenSocket(sock, name, handler) {
+    if (!sock || typeof sock.on !== "function") return;
+    sock.on(name, handler);
+    cleanups.push(function () {
+      try {
+        if (typeof sock.off === "function") sock.off(name, handler);
+        else if (typeof sock.removeListener === "function") sock.removeListener(name, handler);
+      } catch (_) {}
+    });
+  }
+
+  function disconnectResizeObserver() {
+    if (ro) {
+      try { ro.disconnect(); } catch (_) {}
+      ro = null;
+    }
+  }
+
+  function ensureViewport() {
+    var meta = D.querySelector('meta[name="viewport"]');
+    if (!meta) {
+      meta = D.createElement("meta");
+      meta.name = "viewport";
+      D.head.appendChild(meta);
+    }
+    meta.content = "width=device-width, initial-scale=1.0, viewport-fit=cover";
+  }
+
   function locale() {
     var raw = String(
-      (W.app && app.user && (app.user.language || app.user.locale)) ||
+      (W.app && W.app.user && (W.app.user.language || W.app.user.locale)) ||
       (navigator.languages && navigator.languages[0]) ||
       navigator.language ||
       "zh-CN"
@@ -136,38 +272,70 @@
   async function loadI18n() {
     var loc = locale();
     try {
-      var res = await fetch(cfg.i18nBase.replace(/\/+$/, "") + "/wukong-conversations." + loc + ".json?v=6", {
+      var base = String(cfg.i18nBase || "").replace(/\/+$/, "");
+      var res = await fetch(base + "/wukong-conversations." + loc + ".json?v=7", {
         credentials: "same-origin",
         headers: { Accept: "application/json" }
       });
-      if (res.ok) i18n = await res.json();
+      if (res.ok) {
+        var data = await res.json();
+        if (isPlainObject(data)) i18n = data;
+      }
     } catch (_) {}
   }
 
   function storageKey() {
+    return "nbb_wukong_conversations_v7:" + (state.uid || "0");
+  }
+
+  function oldStorageKey() {
     return "nbb_wukong_conversations_v6:" + (state.uid || "0");
   }
 
-  function loadLocal() {
+  function readStorageJson(key) {
     try {
-      var data = JSON.parse(localStorage.getItem(storageKey()) || "{}");
-      state.hiddenRooms = data.hiddenRooms || {};
-      state.pinnedRooms = data.pinnedRooms || {};
-      state.remarks = data.remarks || {};
-      state.rooms = Array.isArray(data.rooms) ? data.rooms : [];
-      state.users = data.users || {};
-      state.topics = data.topics || {};
-      state.heightMap = data.heightMap || {};
-    } catch (_) {}
+      return JSON.parse(localStorage.getItem(key) || "{}");
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function loadLocal() {
+    var data = readStorageJson(storageKey());
+    if (!Object.keys(data).length) data = readStorageJson(oldStorageKey());
+
+    state.hiddenRooms = objectMap(data.hiddenRooms);
+    state.pinnedRooms = objectMap(data.pinnedRooms);
+    state.remarks = objectMap(data.remarks);
+    state.rooms = Array.isArray(data.rooms) ? data.rooms : [];
+    state.users = objectMap(data.users);
+    state.topics = objectMap(data.topics);
+    state.heightMap = objectMap(data.heightMap);
+  }
+
+  function sortRoomsForStorage(rooms) {
+    return (rooms || []).filter(function (room) {
+      return !!(room && (room.channel_id || room.channelId || room.id));
+    }).sort(function (a, b) {
+      var pa = state.pinnedRooms[roomKey(a)] ? 1 : 0;
+      var pb = state.pinnedRooms[roomKey(b)] ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      return Number(b.ts || 0) - Number(a.ts || 0);
+    });
+  }
+
+  function pruneRooms() {
+    state.rooms = sortRoomsForStorage(state.rooms).slice(0, Number(cfg.maxConversations || 500));
   }
 
   function saveLocal() {
     try {
+      pruneRooms();
       localStorage.setItem(storageKey(), JSON.stringify({
         hiddenRooms: state.hiddenRooms,
         pinnedRooms: state.pinnedRooms,
         remarks: state.remarks,
-        rooms: state.rooms.slice(0, cfg.maxConversations || 500),
+        rooms: state.rooms,
         users: state.users,
         topics: state.topics,
         heightMap: state.heightMap
@@ -175,17 +343,52 @@
     } catch (_) {}
   }
 
-  function now() {
-    return Date.now();
+  function notificationSeenStorageKey() {
+    return "nbb_wukong_notification_seen_v3:" + (state.uid || "0");
   }
 
-  function get(obj, keys, fallback) {
-    for (var i = 0; i < keys.length; i++) {
-      var key = keys[i];
-      var val = obj && obj[key];
-      if (val !== undefined && val !== null && String(val).trim() !== "") return val;
+  function oldNotificationSeenStorageKey() {
+    return "nbb_wukong_notification_seen_v2:" + (state.uid || "0");
+  }
+
+  function loadNotificationSeen() {
+    try {
+      var data = readStorageJson(notificationSeenStorageKey());
+      if (!Object.keys(data).length) data = readStorageJson(oldNotificationSeenStorageKey());
+      state.notificationSeenIds = isPlainObject(data) ? data : {};
+    } catch (_) {
+      state.notificationSeenIds = {};
     }
-    return fallback;
+  }
+
+  function saveNotificationSeen() {
+    try {
+      var nowTs = now();
+      var keys = Object.keys(state.notificationSeenIds || {});
+      keys.forEach(function (id) {
+        if (!state.notificationSeenIds[id] || nowTs - Number(state.notificationSeenIds[id]) > 30 * 24 * 3600 * 1000) {
+          delete state.notificationSeenIds[id];
+        }
+      });
+      keys = Object.keys(state.notificationSeenIds || {});
+      if (keys.length > 600) {
+        keys.sort(function (a, b) { return Number(state.notificationSeenIds[a] || 0) - Number(state.notificationSeenIds[b] || 0); });
+        keys.slice(0, keys.length - 600).forEach(function (id) { delete state.notificationSeenIds[id]; });
+      }
+      localStorage.setItem(notificationSeenStorageKey(), JSON.stringify(state.notificationSeenIds || {}));
+    } catch (_) {}
+  }
+
+  function isNotificationSeenId(id) {
+    id = String(id || "");
+    return !!(id && state.notificationSeenIds && state.notificationSeenIds[id]);
+  }
+
+  function markNotificationSeenId(id) {
+    id = String(id || "");
+    if (!id) return;
+    if (!state.notificationSeenIds) state.notificationSeenIds = {};
+    state.notificationSeenIds[id] = now();
   }
 
   function parseJsonMaybe(value) {
@@ -198,8 +401,8 @@
     }
     try {
       if (/^[A-Za-z0-9+/=]+$/.test(s) && s.length > 8) {
-        var decoded = decodeURIComponent(Array.prototype.map.call(atob(s), function (c) {
-          return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+        var decoded = decodeURIComponent(Array.prototype.map.call(atob(s), function (ch) {
+          return "%" + ("00" + ch.charCodeAt(0).toString(16)).slice(-2);
         }).join(""));
         return JSON.parse(decoded);
       }
@@ -225,11 +428,124 @@
     ], "");
   }
 
+  var CALL_CONTROL_PREFIXES = ["__cp_harmony_call__:", "__wkcall__:", "__wkcall__："];
+  var CALL_RECORD_PREFIXES = ["__cp_harmony_call_record__:", "__cp_harmony_call_record__："];
+
+  function startsWithAnyPrefix(text, prefixes) {
+    text = String(text || "").trim();
+    for (var i = 0; i < prefixes.length; i++) {
+      if (text.indexOf(prefixes[i]) === 0) return prefixes[i];
+    }
+    return "";
+  }
+
+  function parseJsonTextLoose(text) {
+    text = String(text || "").trim();
+    if (!text) return null;
+    try { return JSON.parse(text); } catch (_) {}
+    try { return JSON.parse(decodeURIComponent(text)); } catch (_) {}
+    return null;
+  }
+
+  function formatCallDuration(sec) {
+    sec = Math.max(0, Math.floor(Number(sec || 0) || 0));
+    if (!sec) return "";
+    if (sec < 60) return sec + "秒";
+    var min = Math.floor(sec / 60);
+    var rest = sec % 60;
+    return min + "分" + (rest ? rest + "秒" : "");
+  }
+
+  function normalizeCallRecordObject(info) {
+    if (!info || typeof info !== "object") return null;
+
+    var hasCallMark =
+      info.callId !== undefined || info.call_id !== undefined ||
+      info.callKind !== undefined || info.call_kind !== undefined ||
+      info.callMode !== undefined || info.call_mode !== undefined ||
+      info.durationSec !== undefined || info.duration_sec !== undefined ||
+      info.durationSeconds !== undefined ||
+      info.kind === "completed" || info.kind === "canceled" || info.kind === "no_answer" ||
+      info.kind === "rejected" || info.kind === "busy" || info.kind === "missed" || info.kind === "declined";
+
+    if (!hasCallMark) return null;
+
+    return {
+      kind: String(info.callKind || info.call_kind || info.kind || info.status || ""),
+      mode: String(info.callMode || info.call_mode || info.mode || info.media || "audio"),
+      durationSec: Number(info.durationSec || info.duration_sec || info.durationSeconds || info.duration || 0) || 0
+    };
+  }
+
+  function callRecordLabel(info) {
+    info = normalizeCallRecordObject(info);
+    if (!info) return "";
+
+    var isVideo = /video|视频/i.test(info.mode);
+    var base = isVideo ? "视频通话" : "语音通话";
+    var dur = formatCallDuration(info.durationSec);
+
+    switch (info.kind) {
+      case "completed": return base + (dur ? " " + dur : "");
+      case "canceled": return "已取消";
+      case "no_answer": return "对方无应答";
+      case "rejected": return "对方已拒绝";
+      case "busy": return "对方忙线中";
+      case "missed": return "未接听";
+      case "declined": return "已拒绝";
+      default: return base;
+    }
+  }
+
+  function callRecordPreviewFromText(text) {
+    var s = String(text || "").trim();
+    var prefix = startsWithAnyPrefix(s, CALL_RECORD_PREFIXES);
+    if (!prefix) return "";
+    var payload = s.slice(prefix.length).trim();
+    var obj = parseJsonTextLoose(payload);
+    return callRecordLabel(obj) || "通话记录";
+  }
+
+  function callRecordPreviewFromAny(value) {
+    if (!value) return "";
+    if (typeof value === "string") return callRecordPreviewFromText(value);
+    if (typeof value !== "object") return "";
+
+    var direct = callRecordLabel(value);
+    if (direct) return direct;
+
+    var text = get(value, ["conversationDigest", "_conversationDigest", "text", "content", "body", "msg", "message"], "");
+    return callRecordPreviewFromText(text);
+  }
+
+  function isCallSignalText(text) {
+    text = String(text || "").trim();
+    return !!startsWithAnyPrefix(text, CALL_CONTROL_PREFIXES);
+  }
+
+  function isCallControlPayload(value) {
+    var raw = parseJsonMaybe(value);
+
+    if (raw && typeof raw === "object") {
+      var text = get(raw, ["conversationDigest", "_conversationDigest", "text", "content", "body", "msg", "message"], "");
+      if (isCallSignalText(text)) return true;
+      if (text && text !== raw) return isCallControlPayload(text);
+      return false;
+    }
+
+    return isCallSignalText(raw);
+  }
+
   function parsePayloadText(raw, fallbackType) {
     raw = parseJsonMaybe(raw);
+    var callPreview = callRecordPreviewFromAny(raw);
+    if (callPreview) return callPreview;
+
     if (raw && typeof raw === "object") {
       var type = get(raw, ["type", "content_type", "contentType"], fallbackType || "");
       var text = get(raw, ["conversationDigest", "_conversationDigest", "text", "content", "body", "msg", "message"], "");
+      callPreview = callRecordPreviewFromText(text);
+      if (callPreview) return callPreview;
       var url = get(raw, ["url", "remoteUrl", "remote_url", "path", "src"], "");
       if (String(type) === "1006" || raw.revoke || raw.recalled) return t("recalled", "此消息已被撤回");
       if (String(type).match(/image/i) || String(url).match(/\.(png|jpe?g|webp|gif)(\?|$)/i)) return t("image", "[图片]");
@@ -240,17 +556,14 @@
     }
 
     var s = String(raw == null ? "" : raw).trim();
+    callPreview = callRecordPreviewFromText(s);
+    if (callPreview) return callPreview;
+    if (isCallSignalText(s)) return "";
     if (!s) return "";
     if (/!\[[^\]]*\]\([^)]+\)/.test(s)) return t("image", "[图片]");
     if (/\[(?:视频|video)\]\([^)]+\)/i.test(s)) return t("video", "[视频]");
     if (/\[(?:语音消息|voice|audio)\]\([^)]+\)/i.test(s)) return t("voice", "[语音]");
     return s.replace(/\s+/g, " ").slice(0, 180);
-  }
-
-
-  function isCallSignalText(text) {
-    text = String(text || "").trim();
-    return text.indexOf("__cp_harmony_call__:") === 0 || text.indexOf("__wkcall__:") === 0 || text.indexOf("__wkcall__：") === 0;
   }
 
   function isBadPreviewText(text) {
@@ -260,6 +573,8 @@
 
   function cleanPreviewText(text) {
     text = String(text || "").replace(/\s+/g, " ").trim();
+    var callPreview = callRecordPreviewFromText(text);
+    if (callPreview) return callPreview;
     return isBadPreviewText(text) ? "" : text;
   }
 
@@ -281,37 +596,12 @@
 
   async function ensureToken() {
     if (state.uid && state.token) return;
-    var data = await fetchJson(cfg.apiBase + "/token");
+    var data = await fetchJson(withRelativePath(cfg.apiBase) + "/token");
     state.uid = String(data.uid || data.wkUid || "");
     state.token = String(data.token || "");
     state.addr = String(data.addr || data.wsAddr || data.wkws || "");
     loadLocal();
-  }
-
-  async function syncList(reason) {
-    if (state.loading) return;
-    state.loading = true;
-    setStatus(t("syncing", "同步中..."));
-    try {
-      await ensureToken();
-      var data = await fetchJson(cfg.apiBase + "/conversations/list", {
-        method: "POST",
-        body: JSON.stringify({ version: 0, msg_count: 1, reason: reason || "" })
-      });
-
-      mergeServerList(data);
-      state.error = false;
-      state.lastSyncAt = now();
-      setStatus(state.sdkReady ? t("connected", "已连接") : t("offline", "离线"));
-      saveLocal();
-      render();
-    } catch (err) {
-      state.error = true;
-      setStatus(err.message || "error");
-      render();
-    } finally {
-      state.loading = false;
-    }
+    loadNotificationSeen();
   }
 
   function roomKey(room) {
@@ -325,24 +615,28 @@
         if (data.users[uid]) state.users[String(uid)] = data.users[uid];
       });
     }
+
     if (data.topics) {
       Object.keys(data.topics).forEach(function (tid) {
-        if (data.topics[tid]) {
-          state.topics[String(tid)] = data.topics[tid];
-          if (data.topics[tid].poster && data.topics[tid].poster.uid) {
-            state.users[String(data.topics[tid].poster.uid)] = data.topics[tid].poster;
-          }
-          if (Array.isArray(data.topics[tid].members)) {
-            data.topics[tid].members.forEach(function (u) {
-              if (u && u.uid) state.users[String(u.uid)] = u;
-            });
-          }
+        if (!data.topics[tid]) return;
+        state.topics[String(tid)] = data.topics[tid];
+
+        if (data.topics[tid].poster && data.topics[tid].poster.uid) {
+          state.users[String(data.topics[tid].poster.uid)] = data.topics[tid].poster;
+        }
+
+        if (Array.isArray(data.topics[tid].members)) {
+          data.topics[tid].members.forEach(function (u) {
+            if (u && u.uid) state.users[String(u.uid)] = u;
+          });
         }
       });
     }
 
     var map = {};
-    state.rooms.forEach(function (r) { map[roomKey(r)] = r; });
+    state.rooms.forEach(function (r) {
+      if (r && (r.channel_id || r.channelId || r.id)) map[roomKey(r)] = r;
+    });
 
     (data.removed_keys || data.removedKeys || []).forEach(function (key) {
       key = String(key || "");
@@ -351,25 +645,63 @@
 
     if (Array.isArray(data.topic_room_keys) || Array.isArray(data.topicRoomKeys)) {
       var activeTopicKeys = {};
-      (data.topic_room_keys || data.topicRoomKeys || []).forEach(function (key) { activeTopicKeys[String(key)] = 1; });
+      (data.topic_room_keys || data.topicRoomKeys || []).forEach(function (key) {
+        activeTopicKeys[String(key)] = 1;
+      });
+
       Object.keys(map).forEach(function (key) {
         var r = map[key] || {};
-        if ((r.is_topic || r.isTopic || Number(r.channel_type || r.channelType) === 2) && !activeTopicKeys[key]) delete map[key];
+        if ((r.is_topic || r.isTopic || Number(r.channel_type || r.channelType) === 2) && !activeTopicKeys[key]) {
+          delete map[key];
+        }
       });
     }
 
     (data.rooms || []).forEach(function (r) {
+      if (!r) return;
       var key = roomKey(r);
       var old = map[key] || {};
       r.text = cleanPreviewText(r.text);
+
       if (!r.text && old.text && !isBadPreviewText(old.text)) r.text = old.text;
       if (!r.ts && old.ts) r.ts = old.ts;
+
       map[key] = Object.assign({}, old, r);
       map[key].text = cleanPreviewText(map[key].text);
+
       if (r.unread_abs) map[key].unread = Number(r.unread || 0);
     });
 
-    state.rooms = Object.keys(map).map(function (k) { return map[k]; }).slice(0, cfg.maxConversations || 500);
+    state.rooms = sortRoomsForStorage(Object.keys(map).map(function (k) {
+      return map[k];
+    })).slice(0, cfg.maxConversations || 500);
+  }
+
+  async function syncList(reason) {
+    if (state.loading) return;
+    state.loading = true;
+    setStatus(t("syncing", "同步中..."));
+
+    try {
+      await ensureToken();
+      var data = await fetchJson(withRelativePath(cfg.apiBase) + "/conversations/list", {
+        method: "POST",
+        body: JSON.stringify({ version: 0, msg_count: 1, reason: reason || "" })
+      });
+
+      mergeServerList(data);
+      state.error = false;
+      state.lastSyncAt = now();
+      setStatus(state.sdkReady ? t("connected", "已连接") : t("offline", "离线"));
+      saveLocal();
+      render();
+    } catch (err) {
+      state.error = true;
+      setStatus(err && err.message ? err.message : "error");
+      render();
+    } finally {
+      state.loading = false;
+    }
   }
 
   function normalizeMessageToRoom(m) {
@@ -398,8 +730,12 @@
       textFromContentObject(m && m.messageContent) ||
       textFromContentObject(m && m.payload);
 
-    var text = parsePayloadText(contentText || payloadObj || m.payload || "", m && m.contentType);
+    var rawPreviewSource = contentText || payloadObj || (m && m.payload) || "";
+    if (isCallControlPayload(rawPreviewSource)) return null;
+
+    var text = parsePayloadText(rawPreviewSource, m && m.contentType);
     if (isCallSignalText(text)) return null;
+
     var ts = Number(get(m, ["timestamp", "time", "createdAt"], 0));
     if (ts && ts < 10000000000) ts *= 1000;
     if (!ts) ts = now();
@@ -412,7 +748,7 @@
       channel_id: String(channelId),
       channel_type: channelType,
       is_topic: isTopic,
-      peer_uid: isTopic ? "" : String(channelId).replace(/[^\d]/g, ""),
+      peer_uid: isTopic ? "" : peerIdFromChannelId(channelId),
       tid: tid,
       ts: ts,
       text: cleanPreviewText(text) || t("message", "[消息]"),
@@ -425,6 +761,51 @@
     };
   }
 
+  function normalizeConversationWrap(c) {
+    if (!c) return null;
+
+    var channel = c.channel || {};
+    var channelId = get(channel, ["channelID", "channelId", "channel_id", "id"], "");
+    if (!channelId) return null;
+
+    var channelType = Number(
+      get(channel, ["channelType", "channel_type"], String(channelId).indexOf("nbb_topic_") === 0 ? 2 : 1)
+    ) || 1;
+
+    var last = c.lastMessage || c.last_message || {};
+    var payload = extractWkPayload(last);
+
+    var text = parsePayloadText(
+      textFromContentObject(last.content) ||
+      textFromContentObject(payload) ||
+      textFromContentObject(c.remoteExtra && c.remoteExtra.draft) ||
+      payload,
+      last.contentType
+    );
+
+    var ts = Number(c.timestamp || c.updatedAt || now());
+    if (ts && ts < 10000000000) ts *= 1000;
+
+    var isTopic = channelType === 2 || String(channelId).indexOf("nbb_topic_") === 0;
+    var lastFromUid = String(get(last, ["fromUID", "fromUid", "from_uid"], ""));
+
+    return {
+      key: String(channelType) + ":" + String(channelId),
+      channel_id: String(channelId),
+      channel_type: channelType,
+      is_topic: isTopic,
+      peer_uid: isTopic ? "" : peerIdFromChannelId(channelId),
+      tid: isTopic ? String(channelId).replace("nbb_topic_", "").replace(/[^\d]/g, "") : "",
+      ts: ts || now(),
+      text: cleanPreviewText(text) || "",
+      unread: Number(c.unread || 0) || 0,
+      unread_abs: true,
+      event_id: String(get(last, ["messageID", "messageId", "clientMsgNo", "client_msg_no", "clientSeq", "client_seq", "messageSeq"], "")) || "",
+      last_from_uid: lastFromUid,
+      last_from_name: String(get(last, ["fromName", "from_name"], "")),
+      is_self: lastFromUid === String(state.uid || "")
+    };
+  }
 
   function roomEventId(room) {
     if (!room) return "";
@@ -446,8 +827,10 @@
 
   function upsertLocalRoom(room, saveRemote) {
     if (!room || !room.channel_id) return;
+
     var key = roomKey(room);
     var old = null;
+
     for (var i = 0; i < state.rooms.length; i++) {
       if (roomKey(state.rooms[i]) === key) {
         old = state.rooms[i];
@@ -480,11 +863,12 @@
       state.rooms.unshift(Object.assign({}, room, { unread: Math.max(0, nextUnread) }));
     }
 
+    pruneRooms();
     saveLocal();
     render();
 
     if (saveRemote && !duplicate) {
-      fetchJson(cfg.apiBase + "/conversations/upsert", {
+      fetchJson(withRelativePath(cfg.apiBase) + "/conversations/upsert", {
         method: "POST",
         body: JSON.stringify({
           channel_id: room.channel_id,
@@ -503,17 +887,23 @@
     }
   }
 
-  async function markRead(room) {
+  function markReadLocal(room) {
     if (!room) return;
+
     var key = roomKey(room);
     for (var i = 0; i < state.rooms.length; i++) {
       if (roomKey(state.rooms[i]) === key) state.rooms[i].unread = 0;
     }
+
     saveLocal();
     render();
+  }
+
+  async function markReadRemote(room) {
+    if (!room) return;
 
     try {
-      await fetchJson(cfg.apiBase + "/conversations/read", {
+      await fetchJson(withRelativePath(cfg.apiBase) + "/conversations/read", {
         method: "POST",
         body: JSON.stringify({
           channel_id: room.channel_id,
@@ -523,17 +913,9 @@
     } catch (_) {}
   }
 
-  async function loadSdk() {
-    if (D.getElementById("wkconv-sdk")) return true;
-    return new Promise(function (resolve) {
-      var s = D.createElement("script");
-      s.id = "wkconv-sdk";
-      s.async = true;
-      s.src = cfg.wkSdkUrl;
-      s.onload = function () { resolve(true); };
-      s.onerror = function () { resolve(false); };
-      (D.head || D.documentElement).appendChild(s);
-    });
+  async function markRead(room) {
+    markReadLocal(room);
+    await markReadRemote(room);
   }
 
   function sdkShared() {
@@ -544,12 +926,63 @@
     return null;
   }
 
+  async function loadSdk() {
+    if (sdkShared()) return true;
+    if (sdkLoadPromise) return sdkLoadPromise;
+
+    sdkLoadPromise = new Promise(function (resolve) {
+      var settled = false;
+
+      function finish(ok) {
+        if (settled) return;
+        settled = true;
+        if (!ok) sdkLoadPromise = null;
+        resolve(!!ok);
+      }
+
+      var existing = D.getElementById("wkconv-sdk");
+      if (existing) {
+        existing.addEventListener("load", function () {
+          existing.setAttribute("data-loaded", "1");
+          finish(!!sdkShared());
+        }, { once: true });
+        existing.addEventListener("error", function () { finish(false); }, { once: true });
+        W.setTimeout(function () { finish(!!sdkShared()); }, 8000);
+        return;
+      }
+
+      var s = D.createElement("script");
+      s.id = "wkconv-sdk";
+      s.async = true;
+      s.src = cfg.wkSdkUrl;
+      s.onload = function () {
+        s.setAttribute("data-loaded", "1");
+        finish(!!sdkShared());
+      };
+      s.onerror = function () { finish(false); };
+      (D.head || D.documentElement).appendChild(s);
+    });
+
+    return sdkLoadPromise;
+  }
+
   async function startRealtime() {
+    if (realtimeStarted) return;
+    realtimeStarted = true;
+
     try {
       await ensureToken();
-      await loadSdk();
+      var loaded = await loadSdk();
+      if (!loaded) {
+        realtimeStarted = false;
+        return;
+      }
+
       var sdk = sdkShared();
-      if (!sdk || !sdk.config) return;
+      if (!sdk || !sdk.config) {
+        realtimeStarted = false;
+        return;
+      }
 
       sdk.config.uid = state.uid;
       sdk.config.token = state.token;
@@ -589,46 +1022,13 @@
       if (sdk.connectManager && typeof sdk.connectManager.connect === "function") {
         sdk.connectManager.connect();
       }
-    } catch (_) {}
-  }
-
-  function normalizeConversationWrap(c) {
-    if (!c) return null;
-    var channel = c.channel || {};
-    var channelId = get(channel, ["channelID", "channelId", "channel_id", "id"], "");
-    var channelType = Number(get(channel, ["channelType", "channel_type"], channelId && String(channelId).indexOf("nbb_topic_") === 0 ? 2 : 1)) || 1;
-    var last = c.lastMessage || c.last_message || {};
-    var payload = extractWkPayload(last);
-    var text = parsePayloadText(
-      textFromContentObject(last.content) ||
-      textFromContentObject(payload) ||
-      textFromContentObject(c.remoteExtra && c.remoteExtra.draft) ||
-      payload,
-      last.contentType
-    );
-    var ts = Number(c.timestamp || c.updatedAt || now());
-    if (ts && ts < 10000000000) ts *= 1000;
-
-    return {
-      key: String(channelType) + ":" + String(channelId),
-      channel_id: String(channelId),
-      channel_type: channelType,
-      is_topic: channelType === 2 || String(channelId).indexOf("nbb_topic_") === 0,
-      peer_uid: channelType === 1 ? String(channelId).replace(/[^\d]/g, "") : "",
-      tid: channelType === 2 ? String(channelId).replace("nbb_topic_", "").replace(/[^\d]/g, "") : "",
-      ts: ts || now(),
-      text: cleanPreviewText(text) || "",
-      unread: Number(c.unread || 0) || 0,
-      unread_abs: true,
-      event_id: String(get(last, ["messageID", "messageId", "clientMsgNo", "client_msg_no", "clientSeq", "client_seq", "messageSeq"], "")) || "",
-      last_from_uid: String(get(last, ["fromUID", "fromUid", "from_uid"], "")),
-      last_from_name: String(get(last, ["fromName", "from_name"], "")),
-      is_self: String(get(last, ["fromUID", "fromUid", "from_uid"], "")) === String(state.uid || "")
-    };
+    } catch (_) {
+      realtimeStarted = false;
+    }
   }
 
   function topicTid(room) {
-    return String(room.tid || room.channel_id || "").replace("nbb_topic_", "").replace(/[^\d]/g, "");
+    return String((room && (room.tid || room.channel_id)) || "").replace("nbb_topic_", "").replace(/[^\d]/g, "");
   }
 
   function flagEmoji(value) {
@@ -668,14 +1068,17 @@
   }
 
   function userName(uid) {
-    var u = state.users[String(uid)];
-    return (state.remarks[uid] || (u && (u.displayname || u.username || u.userslug)) || ("User-" + uid));
+    uid = String(uid || "");
+    var u = state.users[uid];
+    return (state.remarks[uid] || (u && (u.displayname || u.username || u.userslug)) || (uid ? ("User-" + uid) : t("unknownUser", "未知用户")));
   }
 
   function avatarHtmlForUser(u, fallbackText) {
-    if (u && u.picture) return '<img src="' + esc(u.picture) + '" alt="">';
+    var picture = safeAssetUrl(u && u.picture);
+    if (picture) return '<img src="' + esc(picture) + '" alt="">';
+
     var txt = String((u && (u.icontext || u.username)) || fallbackText || "我").charAt(0).toUpperCase();
-    var bg = (u && u.iconbgColor) || "#dbeafe";
+    var bg = safeColor(u && u.iconbgColor, "#dbeafe");
     return '<span style="background:' + esc(bg) + ';display:grid;place-items:center;">' + esc(txt) + '</span>';
   }
 
@@ -695,26 +1098,27 @@
       var tid = topicTid(room);
       return (state.topics[tid] && state.topics[tid].title) || (t("topic", "聊天室") + " #" + tid);
     }
-    return userName(room.peer_uid || room.id);
+    return userName(directRoomId(room));
   }
 
-  function topicAvatarHtml(room) {
+  function topicAvatarHtml() {
     return '<div class="wkconv-topic-avatar"><i></i><b></b></div>';
   }
 
   function roomAvatar(room) {
     if (room.is_topic || room.isTopic) return topicAvatarHtml(room);
-    return avatarHtmlForUser(state.users[String(room.peer_uid || room.id)] || {}, userName(room.peer_uid || room.id));
+    var id = directRoomId(room);
+    return avatarHtmlForUser(state.users[String(id)] || {}, userName(id));
   }
 
   function roomFlag(room) {
     if (room.is_topic || room.isTopic) return "";
-    return userFlag(state.users[String(room.peer_uid || room.id)]);
+    return userFlag(state.users[String(directRoomId(room))]);
   }
 
   function roomOnline(room) {
     if (room.is_topic || room.isTopic) return false;
-    return isOnlineUser(state.users[String(room.peer_uid || room.id)]);
+    return isOnlineUser(state.users[String(directRoomId(room))]);
   }
 
   function previewText(room) {
@@ -741,24 +1145,31 @@
       if (cfg.openTopicPage !== false) return rel() + cfg.topicBase + "/" + encodeURIComponent(tid) + "?return=" + back;
       return rel() + cfg.chatBase + "?tid=" + encodeURIComponent(tid) + "&return=" + back;
     }
-    return rel() + cfg.chatBase + "/" + encodeURIComponent(room.peer_uid || room.id);
+
+    var id = directRoomId(room);
+    if (!id) return rel() + cfg.chatBase;
+    return rel() + cfg.chatBase + "/" + encodeURIComponent(id);
   }
 
   function fmtTime(ts) {
     if (!ts) return "";
     var d = new Date(ts);
+    if (isNaN(d.getTime())) return "";
     var today = new Date();
+
     if (d.toDateString() === today.toDateString()) {
       return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
     }
+
     var yest = new Date(today.getTime() - 86400000);
     if (d.toDateString() === yest.toDateString()) return "昨天";
+
     return (d.getMonth() + 1) + "/" + d.getDate();
   }
 
   function getFiltered() {
     return state.rooms.filter(function (room) {
-      if (state.hiddenRooms[roomKey(room)]) return false;
+      if (!room || state.hiddenRooms[roomKey(room)]) return false;
       var isTopic = room.is_topic || room.isTopic;
       if (state.tab === "direct" && isTopic) return false;
       if (state.tab === "rooms" && !isTopic) return false;
@@ -809,8 +1220,10 @@
   function updateAverageHeight() {
     var keys = Object.keys(state.heightMap);
     if (!keys.length) return;
+
     var sum = 0;
     var count = 0;
+
     keys.slice(-120).forEach(function (k) {
       var h = Number(state.heightMap[k]);
       if (h > 30 && h < 180) {
@@ -818,25 +1231,30 @@
         count++;
       }
     });
+
     if (count) state.virtual.avg = Math.round(sum / count);
   }
 
   function observeRenderedHeights() {
     if (!W.ResizeObserver || !els.items) return;
-    if (ro) ro.disconnect();
+    disconnectResizeObserver();
 
     ro = new ResizeObserver(function (entries) {
       var changed = false;
+
       entries.forEach(function (entry) {
         var el = entry.target;
         var key = el.getAttribute("data-key");
         var h = Math.ceil(entry.contentRect.height || el.offsetHeight || 0);
+
         if (!key || !h) return;
+
         if (Math.abs(Number(state.heightMap[key] || 0) - h) > 1) {
           state.heightMap[key] = h;
           changed = true;
         }
       });
+
       if (changed) {
         updateAverageHeight();
         saveLocal();
@@ -851,6 +1269,7 @@
 
   function updateTabs() {
     if (!els.tabs) return;
+
     els.tabs.querySelectorAll(".wkconv-tab").forEach(function (btn) {
       var active = btn.getAttribute("data-tab") === state.tab;
       btn.classList.toggle("is-active", active);
@@ -860,10 +1279,13 @@
 
   function render() {
     if (!els.items) return;
+
     if (state.tab === "notifications") {
+      disconnectResizeObserver();
       renderNotifications();
       return;
     }
+
     updateTabs();
 
     var rooms = getFiltered();
@@ -871,6 +1293,7 @@
     computeVirtual(rooms);
 
     if (state.error && !rooms.length) {
+      disconnectResizeObserver();
       els.topSpacer.style.height = "0px";
       els.bottomSpacer.style.height = "0px";
       els.items.innerHTML = '<div class="wkconv-error"><div><strong>' + esc(t("errorTitle", "加载失败")) + '</strong></div></div>';
@@ -878,10 +1301,13 @@
     }
 
     if (!rooms.length) {
+      disconnectResizeObserver();
       els.topSpacer.style.height = "0px";
       els.bottomSpacer.style.height = "0px";
+
       var title = state.tab === "rooms" ? t("emptyRoomsTitle", "暂无聊天室") : t("emptyTitle", "暂无消息");
       var desc = state.tab === "rooms" ? t("emptyRoomsDesc", "后续板块帖子聊天室会显示在这里。") : t("emptyDesc", "打开个人主页，点击聊天即可开始。");
+
       els.items.innerHTML = '<div class="wkconv-empty"><div><strong>' + esc(title) + '</strong><div>' + esc(desc) + '</div></div></div>';
       return;
     }
@@ -898,18 +1324,22 @@
       var name = roomName(room);
       var flag = roomFlag(room);
       var online = isTopic ? false : roomOnline(room);
-      var titleHtml = esc(name);
 
-      return '<div class="wkconv-item' + (isTopic ? " is-topic" : "") + (pinned ? " is-pinned" : "") + (unread ? " has-unread" : "") + (online ? " is-online" : "") + '" data-key="' + esc(key) + '">' +
-        '<div class="wkconv-avatar">' +
-          '<div class="wkconv-avatar-inner">' + roomAvatar(room) + '</div>' +
-          '<span class="wkconv-online"></span><span class="wkconv-flag">' + esc(flag) + '</span>' +
-        '</div>' +
-        '<div class="wkconv-main">' +
-          '<div class="wkconv-top"><div class="wkconv-name">' + titleHtml + '</div><div class="wkconv-time">' + esc(fmtTime(room.ts)) + '</div></div>' +
-          '<div class="wkconv-bottom"><span class="wkconv-pin">' + esc(t("pinned", "置顶")) + '</span><div class="wkconv-preview">' + esc(previewText(room)) + '</div><div class="wkconv-badge">' + esc(unread > 99 ? "99+" : unread) + '</div></div>' +
-        '</div>' +
-      '</div>';
+      return '<div class="wkconv-item' +
+        (isTopic ? " is-topic" : "") +
+        (pinned ? " is-pinned" : "") +
+        (unread ? " has-unread" : "") +
+        (online ? " is-online" : "") +
+        '" data-key="' + esc(key) + '" role="button" tabindex="0">' +
+          '<div class="wkconv-avatar">' +
+            '<div class="wkconv-avatar-inner">' + roomAvatar(room) + '</div>' +
+            '<span class="wkconv-online"></span><span class="wkconv-flag">' + esc(flag) + '</span>' +
+          '</div>' +
+          '<div class="wkconv-main">' +
+            '<div class="wkconv-top"><div class="wkconv-name">' + esc(name) + '</div><div class="wkconv-time">' + esc(fmtTime(room.ts)) + '</div></div>' +
+            '<div class="wkconv-bottom"><span class="wkconv-pin">' + esc(t("pinned", "置顶")) + '</span><div class="wkconv-preview">' + esc(previewText(room)) + '</div><div class="wkconv-badge">' + esc(unread > 99 ? "99+" : unread) + '</div></div>' +
+          '</div>' +
+        '</div>';
     }).join("");
 
     observeRenderedHeights();
@@ -917,6 +1347,7 @@
 
   function scheduleRender() {
     if (state.raf) return;
+
     state.raf = requestAnimationFrame(function () {
       state.raf = 0;
       render();
@@ -927,12 +1358,16 @@
     return state.rooms.filter(function (r) { return roomKey(r) === key; })[0] || null;
   }
 
-  async function openRoom(room) {
+  function openRoom(room) {
     if (!room) return;
-    await markRead(room);
+
+    markReadLocal(room);
+    markReadRemote(room).catch(function () {});
+
     if (room.is_topic || room.isTopic) {
       try { sessionStorage.setItem("wkconv_preferred_tab", "rooms"); } catch (_) {}
     }
+
     location.href = openUrl(room);
   }
 
@@ -943,6 +1378,7 @@
 
   function openMenu(room) {
     if (!room) return;
+
     state.menuRoom = room;
     var key = roomKey(room);
     var pinned = !!state.pinnedRooms[key];
@@ -951,50 +1387,43 @@
 
     els.menuTitle.textContent = roomName(room);
     els.menuList.innerHTML =
-      '<button data-menu="pin">' + esc(pinned ? t("unpin", "取消置顶") : t("pin", "置顶会话")) + '</button>' +
-      '<button data-menu="remark">' + esc(remark ? t("editRemark", "修改备注") : t("remark", "添加备注")) + '</button>' +
-      (remark ? '<button data-menu="clearRemark">' + esc(t("clearRemark", "清除备注")) + '</button>' : '') +
-      '<button class="danger" data-menu="hide">' + esc(hidden ? t("restore", "恢复会话") : t("hide", "删除会话")) + '</button>' +
-      '<button data-menu="cancel">' + esc(t("cancel", "取消")) + '</button>';
+      '<button data-menu="pin" type="button">' + esc(pinned ? t("unpin", "取消置顶") : t("pin", "置顶会话")) + '</button>' +
+      '<button data-menu="remark" type="button">' + esc(remark ? t("editRemark", "修改备注") : t("remark", "添加备注")) + '</button>' +
+      (remark ? '<button data-menu="clearRemark" type="button">' + esc(t("clearRemark", "清除备注")) + '</button>' : '') +
+      '<button class="danger" data-menu="hide" type="button">' + esc(hidden ? t("restore", "恢复会话") : t("hide", "删除会话")) + '</button>' +
+      '<button data-menu="cancel" type="button">' + esc(t("cancel", "取消")) + '</button>';
+
     els.menuMask.setAttribute("data-open", "1");
     setBlur(true);
   }
 
   function closeMenu() {
-    els.menuMask.removeAttribute("data-open");
+    if (els.menuMask) els.menuMask.removeAttribute("data-open");
     state.menuRoom = null;
     setBlur(false);
   }
 
   function openDrawer() {
-    els.drawerMask.setAttribute("data-open", "1");
+    if (els.drawerMask) els.drawerMask.setAttribute("data-open", "1");
     setBlur(true);
   }
 
   function closeDrawer() {
-    els.drawerMask.removeAttribute("data-open");
+    if (els.drawerMask) {
+      els.drawerMask.removeAttribute("data-open");
+      els.drawerMask.removeAttribute("data-dragging");
+      els.drawerMask.style.removeProperty("--wk-drawer-dx");
+    }
+    state.drawerDragging = false;
     setBlur(false);
   }
 
-  function setStatus(text) {
+  function setStatus() {
     // Hidden by design. Keep this no-op to avoid connection/sync hints in the header.
   }
 
-  function absoluteAppUrl(url) {
-    url = String(url || "");
-    if (!url) return "#";
-    if (/^(?:https?:)?\/\//i.test(url)) return url;
-    if (url.charAt(0) !== "/") url = "/" + url;
-    return rel() + url;
-  }
-
   function notificationHref() {
-    return absoluteAppUrl(cfg.notificationUrl || "/notifications");
-  }
-
-  function numberFromAny(value) {
-    var n = Number(value);
-    return isFinite(n) && n > 0 ? n : 0;
+    return absoluteAppUrl(cfg.notificationUrl || "/notifications", !!cfg.allowExternalNotificationUrls);
   }
 
   function extractNotificationCount(data) {
@@ -1002,9 +1431,6 @@
     if (typeof data === "number") return numberFromAny(data);
     if (typeof data !== "object") return 0;
 
-    // Only trust keys that explicitly mean "unread". Generic keys such as
-    // "count" leak unrelated values (e.g. ajaxify.data.count = topic count),
-    // which used to keep the notification dot permanently lit.
     var keys = [
       "unread", "unreadCount", "unread_count",
       "notifications_unread", "unreadNotifications"
@@ -1029,9 +1455,6 @@
   }
 
   function readNotificationCountFromGlobals() {
-    // The NodeBB top-bar notification badge is the only reliable client-side
-    // source of the *unread notification* count; arbitrary globals like
-    // ajaxify.data/config carry unrelated counts and caused a stuck red dot.
     try {
       var badge = D.querySelector(
         '[component="notifications/icon"] [data-content],' +
@@ -1040,6 +1463,7 @@
         '[component="notifications"] .badge,' +
         '.notifications .badge'
       );
+
       if (badge) {
         return numberFromAny(
           badge.getAttribute("data-content") ||
@@ -1050,12 +1474,6 @@
     } catch (_) {}
 
     return 0;
-  }
-
-  function stripHtml(html) {
-    var div = D.createElement("div");
-    div.innerHTML = String(html || "");
-    return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
   }
 
   function firstText(obj, keys) {
@@ -1072,14 +1490,17 @@
     if (Array.isArray(data.notifications)) return data.notifications;
     if (Array.isArray(data.list)) return data.list;
     if (Array.isArray(data.items)) return data.items;
+
     if (data.data) {
       var nested = extractNotificationList(data.data);
       if (nested.length) return nested;
     }
+
     if (data.payload) {
       var nested2 = extractNotificationList(data.payload);
       if (nested2.length) return nested2;
     }
+
     return [];
   }
 
@@ -1096,18 +1517,41 @@
     return String(get(n, ["nid", "id", "notificationId", "notification_id", "uuid"], ""));
   }
 
-  function notificationTarget(n) {
+  function rawNotificationUrl(n) {
     var url = get(n, ["url", "path", "href", "link", "targetUrl", "target_url"], "");
-    if (!url && n && n.path) url = n.path;
+
     if (!url && n && n.tid) url = "/topic/" + encodeURIComponent(String(n.tid));
     if (!url && n && n.pid) url = "/post/" + encodeURIComponent(String(n.pid));
-    return absoluteAppUrl(url || cfg.notificationUrl || "/notifications");
+
+    return String(url || "");
+  }
+
+  function stableNotificationId(n, idx) {
+    var explicit = notificationId(n);
+    if (explicit) return explicit;
+
+    var raw = [
+      get(n, ["datetime", "timestamp", "time", "createdAt", "created_at"], ""),
+      rawNotificationUrl(n),
+      firstText(n, ["title", "bodyShort", "body", "bodyLong", "message", "text"]),
+      get(n, ["type", "notificationType", "notification_type"], "")
+    ].join("|");
+
+    return raw.replace(/\|/g, "").trim() ? "fp:" + hashString(raw) : "idx:" + String(idx);
+  }
+
+  function notificationTarget(n) {
+    var url = rawNotificationUrl(n);
+    return absoluteAppUrl(url || cfg.notificationUrl || "/notifications", !!cfg.allowExternalNotificationUrls);
   }
 
   function notificationAvatar(n) {
     var u = (n && (n.user || n.from || n.sender || n.fromUser || n.userData)) || {};
     var pic = get(u, ["picture", "uploadedpicture", "avatar", "image"], "") || get(n, ["image", "picture", "avatar"], "");
-    if (pic) return '<img src="' + esc(absoluteAppUrl(pic)) + '" alt="">';
+    pic = safeAssetUrl(pic);
+
+    if (pic) return '<img src="' + esc(pic) + '" alt="">';
+
     var name = get(u, ["displayname", "username", "userslug", "name"], "") || firstText(n, ["title", "bodyShort", "body", "bodyLong"]);
     var txt = String(name || "通").charAt(0).toUpperCase();
     return '<span>' + esc(txt || "通") + '</span>';
@@ -1120,7 +1564,7 @@
       firstText(n, ["title", "bodyShort", "body", "bodyLong", "message", "text"])
     ].join(" ").toLowerCase();
 
-    if (/digest|email|mail|badge|award|reputation|声望|徽章|digest|newsletter|cron|job|debug|任务|后台/.test(hay)) return "noise";
+    if (/digest|email|mail|badge|award|reputation|声望|徽章|newsletter|cron|job|debug|任务|后台/.test(hay)) return "noise";
     if (/mention|@|提到|at-user/.test(hay)) return "mention";
     if (/reply|repl|回复|comment|post|pid|quote|引用/.test(hay)) return "reply";
     if (/like|upvote|vote|点赞|收藏|bookmark|favourite|favorite/.test(hay)) return "like";
@@ -1134,43 +1578,111 @@
     var kind = notificationKind(n);
     if (kind === "noise") return false;
     if (kind !== "other") return true;
+
     var txt = firstText(n, ["title", "bodyShort", "body", "bodyLong", "message", "text"]);
-    var target = notificationTarget(n);
-    // Keep readable notifications with a useful target, but filter empty/internal noise.
-    return !!txt && !!target && target !== "#" && !/\/admin\/plugins|\/api\//.test(target);
+    var rawTarget = rawNotificationUrl(n);
+    var target = absoluteAppUrl(rawTarget, !!cfg.allowExternalNotificationUrls);
+
+    return !!txt && !!rawTarget && target !== "#" && !/\/admin\/plugins|\/api\//.test(target);
   }
 
   function normalizeNotification(n, idx) {
     var kind = notificationKind(n);
     var title = firstText(n, ["title", "bodyShort", "body", "bodyLong", "message", "text"]);
     var body = firstText(n, ["bodyLong", "body", "message", "text", "description"]);
-    if (!title) title = kind === "mention" ? t("noticeMention", "有人提到了你") :
-      kind === "reply" ? t("noticeReply", "有人回复了你") :
-      kind === "like" ? t("noticeLike", "有人与你互动") :
-      kind === "follow" ? t("noticeFollow", "有人关注了你") :
-      kind === "system" ? t("noticeSystem", "系统通知") :
-      t("notice", "通知");
+
+    if (!title) {
+      title = kind === "mention" ? t("noticeMention", "有人提到了你") :
+        kind === "reply" ? t("noticeReply", "有人回复了你") :
+        kind === "like" ? t("noticeLike", "有人与你互动") :
+        kind === "follow" ? t("noticeFollow", "有人关注了你") :
+        kind === "system" ? t("noticeSystem", "系统通知") :
+        t("notice", "通知");
+    }
+
     if (body === title) body = "";
+
     var ts = Number(get(n, ["datetime", "timestamp", "time", "createdAt", "created_at"], 0));
     if (ts && ts < 10000000000) ts *= 1000;
+
+    var id = stableNotificationId(n, idx);
+
     return {
       raw: n,
-      id: notificationId(n) || String(idx),
+      id: id,
       kind: kind,
       title: title,
       body: body,
       url: notificationTarget(n),
-      unread: notificationUnread(n),
+      unread: notificationUnread(n) && !isNotificationSeenId(id),
       ts: ts || 0,
       avatar: notificationAvatar(n)
     };
+  }
+
+  function countUnreadNotifications() {
+    return state.notifications.filter(function (n) { return n && n.unread; }).length;
+  }
+
+  function notifyServerNotificationsRead(ids, markAll) {
+    ids = (ids || []).filter(Boolean);
+
+    try {
+      var sock = W.socket || (W.app && W.app.socket);
+      if (sock && typeof sock.emit === "function") {
+        if (markAll) {
+          sock.emit("notifications.markAllRead");
+          sock.emit("notifications.markAllRead", {});
+          sock.emit("event:notifications.read");
+        }
+
+        ids.forEach(function (id) {
+          sock.emit("notifications.markRead", id);
+          sock.emit("event:notifications.read", id);
+        });
+      }
+    } catch (_) {}
+  }
+
+  function markVisibleNotificationsRead(reason) {
+    if (!state.notifications || !state.notifications.length) {
+      if (state.tab === "notifications") setNotificationDot(0);
+      return;
+    }
+
+    var ids = [];
+
+    state.notifications.forEach(function (n) {
+      if (!n || !n.unread) return;
+      n.unread = false;
+      if (n.id) {
+        markNotificationSeenId(n.id);
+        ids.push(n.id);
+      }
+    });
+
+    if (ids.length) {
+      saveNotificationSeen();
+      notifyServerNotificationsRead(ids, true);
+    } else if (state.tab === "notifications") {
+      notifyServerNotificationsRead([], true);
+    }
+
+    if (state.tab === "notifications") {
+      state.notificationSuppressUntil = now() + 15000;
+      setNotificationDot(0);
+    } else {
+      setNotificationDot(countUnreadNotifications());
+    }
   }
 
   async function loadNotifications(reason) {
     if (state.notificationsLoading) return;
     state.notificationsLoading = true;
     state.notificationsError = "";
+
     if (state.tab === "notifications") render();
+
     try {
       var api = absoluteAppUrl(cfg.notificationApi || "/api/notifications");
       var res = await fetch(api, {
@@ -1178,14 +1690,18 @@
         headers: { Accept: "application/json" }
       });
       var data = null;
+
       try { data = await res.json(); } catch (_) { data = {}; }
       if (!res.ok) throw new Error((data && (data.message || data.error)) || ("HTTP " + res.status));
+
       var list = extractNotificationList(data).filter(isCommonNotification).map(normalizeNotification);
       list.sort(function (a, b) { return Number(b.ts || 0) - Number(a.ts || 0); });
+
       state.notifications = list.slice(0, Number(cfg.maxNotifications || 80));
       state.notificationsLoaded = true;
-      var unread = state.notifications.filter(function (n) { return n.unread; }).length;
-      setNotificationDot(extractNotificationCount(data) || unread);
+
+      if (state.tab === "notifications") markVisibleNotificationsRead(reason || "load");
+      else setNotificationDot(countUnreadNotifications());
     } catch (err) {
       state.notificationsError = err && err.message ? err.message : String(err || "error");
       state.notificationsLoaded = true;
@@ -1195,9 +1711,19 @@
     }
   }
 
+  function noticeKindText(kind) {
+    if (kind === "mention") return t("noticeMention", "有人提到了你");
+    if (kind === "reply") return t("noticeReply", "有人回复了你");
+    if (kind === "like") return t("noticeLike", "有人与你互动");
+    if (kind === "follow") return t("noticeFollow", "有人关注了你");
+    if (kind === "system") return t("noticeSystem", "系统通知");
+    return t("notice", "通知");
+  }
+
   function renderNotifications() {
     updateTabs();
     if (!els.items) return;
+
     els.topSpacer.style.height = "0px";
     els.bottomSpacer.style.height = "0px";
 
@@ -1217,7 +1743,7 @@
     }
 
     els.items.innerHTML = state.notifications.map(function (n, idx) {
-      return '<div class="wkconv-notice-item' + (n.unread ? ' is-unread' : '') + '" data-notice-index="' + idx + '">' +
+      return '<div class="wkconv-notice-item' + (n.unread ? ' is-unread' : '') + '" data-notice-index="' + idx + '" role="button" tabindex="0">' +
         '<div class="wkconv-notice-avatar">' + n.avatar + '</div>' +
         '<div class="wkconv-notice-main">' +
           '<div class="wkconv-notice-top"><div class="wkconv-notice-title">' + esc(n.title) + '</div><div class="wkconv-time">' + esc(fmtTime(n.ts)) + '</div></div>' +
@@ -1228,28 +1754,20 @@
     }).join("");
   }
 
-  function noticeKindText(kind) {
-    if (kind === "mention") return t("noticeMention", "有人提到了你");
-    if (kind === "reply") return t("noticeReply", "有人回复了你");
-    if (kind === "like") return t("noticeLike", "有人与你互动");
-    if (kind === "follow") return t("noticeFollow", "有人关注了你");
-    if (kind === "system") return t("noticeSystem", "系统通知");
-    return t("notice", "通知");
-  }
-
   function openNotificationByIndex(idx) {
     var n = state.notifications[Number(idx)];
     if (!n) return;
+
+    if (n.id) {
+      markNotificationSeenId(n.id);
+      saveNotificationSeen();
+    }
+
     n.unread = false;
-    var unread = state.notifications.filter(function (x) { return x.unread; }).length;
-    setNotificationDot(unread);
-    try {
-      var sock = W.socket || (W.app && app.socket);
-      if (sock && typeof sock.emit === "function" && n.id) {
-        sock.emit("notifications.markRead", n.id);
-        sock.emit("event:notifications.read", n.id);
-      }
-    } catch (_) {}
+    state.notificationSuppressUntil = now() + 15000;
+    setNotificationDot(countUnreadNotifications());
+    notifyServerNotificationsRead(n.id ? [n.id] : [], false);
+
     location.href = n.url || notificationHref();
   }
 
@@ -1264,6 +1782,7 @@
     }
 
     if (!els.notifyLink) return;
+
     els.notifyLink.classList.toggle("has-unread", state.notificationUnread);
     els.notifyLink.setAttribute("data-count", count ? String(count) : "");
     els.notifyLink.setAttribute(
@@ -1273,10 +1792,12 @@
   }
 
   async function updateNotificationBadge(reason) {
+    var suppress = now() < Number(state.notificationSuppressUntil || 0);
     var localCount = readNotificationCountFromGlobals();
-    if (localCount > 0) setNotificationDot(localCount);
 
+    if (localCount > 0 && !suppress) setNotificationDot(localCount);
     if (state.notificationCheckInFlight) return;
+
     state.notificationCheckInFlight = true;
 
     try {
@@ -1286,19 +1807,33 @@
         headers: { Accept: "application/json" }
       });
       var data = null;
+
       try { data = await res.json(); } catch (_) { data = {}; }
+
       if (res.ok) {
-        setNotificationDot(extractNotificationCount(data));
-        if (state.tab === "notifications" && !state.notificationsLoading) {
-          var list = extractNotificationList(data).filter(isCommonNotification).map(normalizeNotification);
+        var rawList = extractNotificationList(data);
+
+        if (rawList.length) {
+          var list = rawList.filter(isCommonNotification).map(normalizeNotification);
           list.sort(function (a, b) { return Number(b.ts || 0) - Number(a.ts || 0); });
+
           state.notifications = list.slice(0, Number(cfg.maxNotifications || 80));
           state.notificationsLoaded = true;
-          renderNotifications();
+
+          if (state.tab === "notifications" && !state.notificationsLoading) {
+            markVisibleNotificationsRead(reason || "badge");
+            renderNotifications();
+          } else {
+            setNotificationDot(countUnreadNotifications());
+          }
+        } else {
+          setNotificationDot(suppress ? 0 : extractNotificationCount(data));
         }
-      } else if (!localCount) setNotificationDot(0);
+      } else if (!localCount || suppress) {
+        setNotificationDot(0);
+      }
     } catch (_) {
-      if (!localCount) setNotificationDot(0);
+      if (!localCount || suppress) setNotificationDot(0);
     } finally {
       state.notificationCheckInFlight = false;
     }
@@ -1308,27 +1843,25 @@
     updateNotificationBadge("boot");
 
     try {
-      var sock = W.socket || (W.app && app.socket);
-      if (sock && typeof sock.on === "function") {
-        [
-          "event:new_notification",
-          "event:notification_pushed",
-          "event:notifications.update",
-          "event:notifications.read",
-          "event:notifications.mark_read"
-        ].forEach(function (name) {
-          sock.on(name, function () {
-            updateNotificationBadge(name);
-          });
+      var sock = W.socket || (W.app && W.app.socket);
+      [
+        "event:new_notification",
+        "event:notification_pushed",
+        "event:notifications.update",
+        "event:notifications.read",
+        "event:notifications.mark_read"
+      ].forEach(function (name) {
+        listenSocket(sock, name, function () {
+          updateNotificationBadge(name);
         });
-      }
+      });
     } catch (_) {}
 
-    W.addEventListener("focus", function () {
+    listen(W, "focus", function () {
       updateNotificationBadge("focus");
     });
 
-    D.addEventListener("visibilitychange", function () {
+    listen(D, "visibilitychange", function () {
       if (!D.hidden) updateNotificationBadge("visible");
     });
 
@@ -1336,6 +1869,13 @@
       state.notificationTimer = W.setInterval(function () {
         if (!D.hidden) updateNotificationBadge("timer");
       }, 60000);
+
+      cleanups.push(function () {
+        if (state.notificationTimer) {
+          W.clearInterval(state.notificationTimer);
+          state.notificationTimer = 0;
+        }
+      });
     }
   }
 
@@ -1351,24 +1891,69 @@
     return order[idx];
   }
 
+  function initialTabFromUrl() {
+    try {
+      var q = new URLSearchParams(location.search || "");
+      var raw = String(q.get("tab") || q.get("type") || q.get("view") || "").toLowerCase();
+      var hash = String(location.hash || "").toLowerCase();
+      var saved = "";
+      try { saved = String(sessionStorage.getItem("wkconv_preferred_tab") || "").toLowerCase(); } catch (_) {}
+
+      if (raw === "notifications" || raw === "notice" || raw === "notices" || hash === "#notifications" || hash === "#notice" || saved === "notifications") return "notifications";
+      if (raw === "rooms" || raw === "chatrooms" || raw === "topics" || raw === "topic" || hash === "#rooms" || hash === "#chatrooms" || saved === "rooms") return "rooms";
+      if (raw === "direct" || raw === "messages" || raw === "dm" || hash === "#direct" || saved === "direct") return "direct";
+    } catch (_) {}
+
+    return "direct";
+  }
+
+  function updateTabUrl(tab) {
+    try {
+      sessionStorage.setItem("wkconv_preferred_tab", tab);
+
+      var url = new URL(location.href);
+      url.searchParams.set("tab", tab);
+
+      history.replaceState(history.state, document.title, url.pathname + url.search + url.hash);
+    } catch (_) {}
+  }
+
   function setTab(tab) {
     if (tab !== "direct" && tab !== "rooms" && tab !== "notifications") return;
-    if (state.tab === tab) return;
+
+    if (state.tab === tab) {
+      if (tab === "notifications") {
+        if (!state.notificationsLoaded) loadNotifications("tab");
+        else {
+          markVisibleNotificationsRead("tab-repeat");
+          render();
+        }
+      }
+      return;
+    }
+
     state.tab = tab;
     updateTabUrl(tab);
+
     if (els.listWrap) els.listWrap.scrollTop = 0;
-    if (tab === "notifications" && !state.notificationsLoaded) loadNotifications("tab");
+
+    if (tab === "notifications") {
+      if (!state.notificationsLoaded) loadNotifications("tab");
+      else markVisibleNotificationsRead("tab");
+    }
+
     render();
   }
 
   function currentUser() {
-    return (W.app && app.user) || (W.ajaxify && ajaxify.data && ajaxify.data.loggedInUser) || {};
+    return (W.app && W.app.user) || (W.ajaxify && W.ajaxify.data && W.ajaxify.data.loggedInUser) || {};
   }
 
   function resolveHref(href) {
     var u = currentUser();
     var relative = rel();
     var userslug = encodeURIComponent(String(u.userslug || u.slug || u.username || u.uid || ""));
+
     return String(href || "#")
       .replace(/\{relative_path\}/g, relative)
       .replace(/\{uid\}/g, encodeURIComponent(String(u.uid || "")))
@@ -1389,8 +1974,10 @@
   function drawerAvatarHtml() {
     var u = currentUser();
     var cached = state.users[String(state.uid || (u && u.uid) || "")] || {};
-    var pic = u.picture || u.uploadedpicture || cached.picture || "";
+    var pic = safeAssetUrl(u.picture || u.uploadedpicture || cached.picture || "");
+
     if (pic) return '<img src="' + esc(pic) + '" alt="">';
+
     var txt = String(u.displayname || u.username || u.userslug || cached.displayname || cached.username || state.uid || "我").charAt(0).toUpperCase();
     return esc(txt || "我");
   }
@@ -1416,15 +2003,16 @@
     }).join("");
   }
 
-
   function setDrawerDragX(x) {
     x = Math.max(0, Math.min(x, Math.min(W.innerWidth * 0.76, 286)));
     state.drawerCurrentX = x;
+
     if (els.drawerMask) {
       els.drawerMask.setAttribute("data-open", "1");
       els.drawerMask.setAttribute("data-dragging", "1");
       els.drawerMask.style.setProperty("--wk-drawer-dx", x + "px");
     }
+
     setBlur(true);
   }
 
@@ -1437,146 +2025,186 @@
 
   function moveDrawerDrag(x, y) {
     if (!state.drawerDragging) return;
+
     var dx = Math.max(0, (x || 0) - state.drawerStartX);
     var dy = Math.abs((y || 0) - state.edgeTouchY);
+
     if (dy > dx * 1.4) return;
+
     setDrawerDragX(dx);
   }
 
   function endDrawerDrag(x) {
     if (!state.drawerDragging) return;
+
     var dx = Math.max(0, (x || 0) - state.drawerStartX);
     state.drawerDragging = false;
+
     if (els.drawerMask) {
       els.drawerMask.removeAttribute("data-dragging");
       els.drawerMask.style.removeProperty("--wk-drawer-dx");
     }
+
     if (dx > 88) openDrawer();
     else closeDrawer();
   }
 
+  function handleItemClick(target) {
+    var notice = target.closest && target.closest(".wkconv-notice-item");
+    if (notice) {
+      openNotificationByIndex(notice.getAttribute("data-notice-index"));
+      return;
+    }
+
+    var item = target.closest && target.closest(".wkconv-item");
+    if (!item) return;
+
+    openRoom(findRoomByKey(item.getAttribute("data-key")));
+  }
+
   function bind() {
-    els.tabs.addEventListener("click", function (e) {
+    listen(els.tabs, "click", function (e) {
       var btn = e.target.closest("[data-tab]");
       if (btn) setTab(btn.getAttribute("data-tab"));
     });
 
-    els.drawerOpen.addEventListener("click", openDrawer);
-    els.drawerMask.addEventListener("click", function (e) {
+    listen(els.drawerOpen, "click", openDrawer);
+
+    listen(els.drawerMask, "click", function (e) {
       if (e.target === els.drawerMask) closeDrawer();
     });
 
     if (els.edgeSwipe) {
-      els.edgeSwipe.addEventListener("touchstart", function (e) {
+      listen(els.edgeSwipe, "touchstart", function (e) {
         var p = e.touches && e.touches[0];
         if (!p) return;
         beginDrawerDrag(p.clientX, p.clientY);
       }, { passive: true });
 
-      els.edgeSwipe.addEventListener("touchmove", function (e) {
+      listen(els.edgeSwipe, "touchmove", function (e) {
         var p = e.touches && e.touches[0];
         if (!p) return;
         moveDrawerDrag(p.clientX, p.clientY);
       }, { passive: true });
 
-      els.edgeSwipe.addEventListener("touchend", function (e) {
+      listen(els.edgeSwipe, "touchend", function (e) {
         var p = e.changedTouches && e.changedTouches[0];
         if (!p) return;
         endDrawerDrag(p.clientX);
       }, { passive: true });
     }
 
-    D.addEventListener("touchstart", function (e) {
+    listen(D, "touchstart", function (e) {
       var p = e.touches && e.touches[0];
       if (!p) return;
+
       state.edgeTouchX = p.clientX;
       state.edgeTouchY = p.clientY;
+
       if (p.clientX < 26) beginDrawerDrag(p.clientX, p.clientY);
     }, { passive: true });
 
-    D.addEventListener("touchmove", function (e) {
+    listen(D, "touchmove", function (e) {
       var p = e.touches && e.touches[0];
       if (!p) return;
       moveDrawerDrag(p.clientX, p.clientY);
     }, { passive: true });
 
-    D.addEventListener("touchend", function (e) {
+    listen(D, "touchend", function (e) {
       var p = e.changedTouches && e.changedTouches[0];
       if (!p) return;
-      if (state.drawerDragging) return endDrawerDrag(p.clientX);
+
+      if (state.drawerDragging) {
+        endDrawerDrag(p.clientX);
+        return;
+      }
+
       var dx = p.clientX - state.edgeTouchX;
       var dy = p.clientY - state.edgeTouchY;
+
       if (state.edgeTouchX < 60 && dx > 55 && Math.abs(dx) > Math.abs(dy) * 1.25) openDrawer();
     }, { passive: true });
 
-    els.listWrap.addEventListener("scroll", function () {
+    listen(els.listWrap, "scroll", function () {
       scheduleRender();
     }, { passive: true });
 
-    els.listWrap.addEventListener("touchstart", function (e) {
+    listen(els.listWrap, "touchstart", function (e) {
       var p = e.touches && e.touches[0];
       if (!p) return;
+
       state.touchX = p.clientX;
       state.touchY = p.clientY;
     }, { passive: true });
 
-    els.listWrap.addEventListener("touchend", function (e) {
+    listen(els.listWrap, "touchend", function (e) {
       var p = e.changedTouches && e.changedTouches[0];
       if (!p) return;
+
       var dx = p.clientX - state.touchX;
       var dy = p.clientY - state.touchY;
+
       if (Math.abs(dx) > 58 && Math.abs(dx) > Math.abs(dy) * 1.4) {
         setTab(adjacentTab(dx < 0 ? 1 : -1));
       }
     }, { passive: true });
 
-    els.items.addEventListener("click", function (e) {
-      var notice = e.target.closest(".wkconv-notice-item");
-      if (notice) {
-        openNotificationByIndex(notice.getAttribute("data-notice-index"));
-        return;
-      }
-      var item = e.target.closest(".wkconv-item");
-      if (!item) return;
-      openRoom(findRoomByKey(item.getAttribute("data-key")));
+    listen(els.items, "click", function (e) {
+      handleItemClick(e.target);
+    });
+
+    listen(els.items, "keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+
+      var target = e.target.closest(".wkconv-item,.wkconv-notice-item");
+      if (!target) return;
+
+      e.preventDefault();
+      handleItemClick(target);
     });
 
     var longTimer = 0;
-    els.items.addEventListener("touchstart", function (e) {
+
+    listen(els.items, "touchstart", function (e) {
       if (e.target.closest(".wkconv-notice-item")) return;
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
-      longTimer = setTimeout(function () {
+
+      longTimer = W.setTimeout(function () {
         openMenu(findRoomByKey(item.getAttribute("data-key")));
       }, 520);
     }, { passive: true });
 
     ["touchend", "touchmove", "touchcancel"].forEach(function (name) {
-      els.items.addEventListener(name, function () {
-        clearTimeout(longTimer);
+      listen(els.items, name, function () {
+        W.clearTimeout(longTimer);
       }, { passive: true });
     });
 
-    els.items.addEventListener("contextmenu", function (e) {
+    listen(els.items, "contextmenu", function (e) {
       if (e.target.closest(".wkconv-notice-item")) return;
+
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
+
       e.preventDefault();
       openMenu(findRoomByKey(item.getAttribute("data-key")));
     });
 
-    els.menuMask.addEventListener("click", function (e) {
+    listen(els.menuMask, "click", function (e) {
       if (e.target === els.menuMask) closeMenu();
     });
 
-    els.menuList.addEventListener("click", function (e) {
+    listen(els.menuList, "click", function (e) {
       var btn = e.target.closest("[data-menu]");
       if (!btn || !state.menuRoom) return;
+
       var act = btn.getAttribute("data-menu");
       var key = roomKey(state.menuRoom);
 
       if (act === "pin") {
-        state.pinnedRooms[key] = !state.pinnedRooms[key];
+        if (state.pinnedRooms[key]) delete state.pinnedRooms[key];
+        else state.pinnedRooms[key] = 1;
       } else if (act === "remark") {
         var val = prompt(t("inputRemark", "请输入备注，留空清除"), state.remarks[key] || "");
         if (val !== null) {
@@ -1587,7 +2215,8 @@
       } else if (act === "clearRemark") {
         delete state.remarks[key];
       } else if (act === "hide") {
-        state.hiddenRooms[key] = !state.hiddenRooms[key];
+        if (state.hiddenRooms[key]) delete state.hiddenRooms[key];
+        else state.hiddenRooms[key] = 1;
       } else if (act === "cancel") {
         closeMenu();
         return;
@@ -1598,12 +2227,12 @@
       render();
     });
 
-    D.addEventListener("visibilitychange", function () {
+    listen(D, "visibilitychange", function () {
       if (!D.hidden && now() - state.lastSyncAt > 3000) syncList("visible");
       if (!D.hidden && state.tab === "notifications") loadNotifications("visible");
     });
 
-    W.addEventListener("online", function () {
+    listen(W, "online", function () {
       syncList("online");
     });
   }
@@ -1659,32 +2288,95 @@
     renderDrawerLinks();
   }
 
+  function destroy() {
+    cleanups.splice(0).forEach(function (fn) {
+      try { fn(); } catch (_) {}
+    });
+
+    disconnectResizeObserver();
+
+    if (state.raf) {
+      try { cancelAnimationFrame(state.raf); } catch (_) {}
+      state.raf = 0;
+    }
+
+    if (state.notificationTimer) {
+      try { W.clearInterval(state.notificationTimer); } catch (_) {}
+      state.notificationTimer = 0;
+    }
+
+    try {
+      var sdk = sdkShared();
+
+      if (sdk && sdk.chatManager && state.messageListener) {
+        if (typeof sdk.chatManager.removeMessageListener === "function") {
+          sdk.chatManager.removeMessageListener(state.messageListener);
+        }
+      }
+
+      if (sdk && sdk.connectManager && state.connectListener) {
+        if (typeof sdk.connectManager.removeConnectStatusListener === "function") {
+          sdk.connectManager.removeConnectStatusListener(state.connectListener);
+        }
+      }
+
+      if (W.wk && W.wk.ConversationManager && W.wk.ConversationManager.shared && state.conversationListener) {
+        var cm = W.wk.ConversationManager.shared();
+        if (cm && typeof cm.removeConversationListener === "function") {
+          cm.removeConversationListener(state.conversationListener);
+        }
+      }
+    } catch (_) {}
+
+    state.messageListener = null;
+    state.conversationListener = null;
+    state.connectListener = null;
+    realtimeStarted = false;
+    booted = false;
+  }
+
   async function boot() {
+    if (booted) return;
+    booted = true;
+
     ensureViewport();
     cfg = c();
     root = D.getElementById("nodebb-wukong-conversations-root");
-    if (!root) return;
+
+    if (!root) {
+      booted = false;
+      return;
+    }
 
     D.body.classList.add("wkconv-page");
+    cleanups.push(function () {
+      try { D.body.classList.remove("wkconv-page"); } catch (_) {}
+    });
+
     await loadI18n();
     await ensureToken().catch(function () {});
+
     state.tab = initialTabFromUrl();
+
     loadLocal();
     updateAverageHeight();
     mountHtml();
     bind();
     bindNotificationEvents();
     render();
+
     if (state.tab === "notifications") loadNotifications("boot");
 
     syncList("boot");
     startRealtime();
 
     W.WukongConversations = {
-      version: "v16-call-signal-filter",
+      version: "v17.1-fixed-call-control-preview",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
+      markRead: markRead,
+      destroy: destroy,
       dump: function () { return state; }
     };
   }
