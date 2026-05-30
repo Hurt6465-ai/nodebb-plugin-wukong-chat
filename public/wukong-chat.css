@@ -63,7 +63,7 @@ body.cp-shell-on {
   --cp-toolbar-max-w: min(96vw, 640px);
 
   --cp-other: rgba(255, 255, 255, .94);
-  --cp-mine: #e0c3fc;
+  --cp-mine: #efe7ff;
   --cp-bg: #eef2f5;
   --cp-text: #111827;
   --cp-muted: #64748b;
@@ -2234,3 +2234,70 @@ body.cp-modal-open #cp-chat-root .cp-main {
 .cp-call-record .cp-call-label {
   font-size: var(--cp-bubble-font);
 }
+
+/* =========================================================
+   v48 polish: center peer quick-translate glyph and soften mine bubble
+   ========================================================= */
+
+#cp-chat-root {
+  --cp-mine: #efe7ff;
+}
+
+#cp-chat-root .cp-quick-trans,
+.cp-quick-trans {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  text-align: center !important;
+}
+
+#cp-chat-root .cp-quick-trans .cp-trans-wa,
+#cp-chat-root .cp-quick-trans .cp-trans-stack,
+#cp-chat-root .cp-quick-trans .cp-ai-glyph,
+.cp-quick-trans .cp-trans-wa,
+.cp-quick-trans .cp-trans-stack,
+.cp-quick-trans .cp-ai-glyph {
+  width: auto !important;
+  min-width: 14px !important;
+  height: 14px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0 !important;
+  margin: 0 !important;
+  transform: translateX(-0.5px) rotate(-12deg) scale(.9) !important;
+  transform-origin: center center !important;
+}
+
+#cp-chat-root .cp-quick-trans .cp-trans-wa b,
+#cp-chat-root .cp-quick-trans .cp-trans-stack b,
+.cp-quick-trans .cp-trans-wa b,
+.cp-quick-trans .cp-trans-stack b {
+  position: static !important;
+  display: inline-block !important;
+  flex: 0 0 auto !important;
+  line-height: 1 !important;
+  font-size: 9px !important;
+}
+
+#cp-chat-root .cp-quick-trans .cp-trans-wa b:first-child,
+#cp-chat-root .cp-quick-trans .cp-trans-stack b:first-child,
+.cp-quick-trans .cp-trans-wa b:first-child,
+.cp-quick-trans .cp-trans-stack b:first-child {
+  left: auto !important;
+  top: auto !important;
+  transform: translate(0.4px, -0.9px) !important;
+}
+
+#cp-chat-root .cp-quick-trans .cp-trans-wa b:last-child,
+#cp-chat-root .cp-quick-trans .cp-trans-stack b:last-child,
+.cp-quick-trans .cp-trans-wa b:last-child,
+.cp-quick-trans .cp-trans-stack b:last-child {
+  right: auto !important;
+  bottom: auto !important;
+  margin-left: -1.5px !important;
+  font-size: 8px !important;
+  transform: translate(-0.2px, 1.1px) !important;
+}
+
