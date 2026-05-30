@@ -418,6 +418,9 @@
     suppressNativeIds: {},
     pendingSentTexts: {},
     loadedPeerUid: "",
+    peerLoadPromise: null,
+    mountGeneration: 0,
+    clearedPeerKeys: {},
 
     isPreloading: false,
     loadingOldHistory: false,
@@ -524,10 +527,15 @@
 
   function getWkTimestampMs(m) {
     if (!m) return Date.now();
-    var raw = m.timestamp || m.timestamp_ms || m.time || m.ts || 0;
+    var raw = m.timestamp_ms || m.timestamp || m.time || m.ts || 0;
     var n = Number(raw) || 0;
     if (!n) return Date.now();
-    return n > 100000000000 ? n : n * 1000;
+
+    // 秒 / 毫秒 / 微秒 / 纳秒都做兼容，避免异常时间把消息排到未来。
+    if (n > 1000000000000000) return Math.floor(n / 1000000);
+    if (n > 10000000000000) return Math.floor(n / 1000);
+    if (n > 100000000000) return Math.floor(n);
+    return Math.floor(n * 1000);
   }
 
   function getWkMessageIdentity(raw, fallbackText, fromUid) {
@@ -613,6 +621,16 @@
       m.client_msg_no = m.wkMeta.client_msg_no || "";
       m.message_seq = m.wkMeta.message_seq || 0;
     }
+
+    // 本地 IndexedDB 不是可信输入，恢复时重新收紧 HTML 和媒体 URL。
+    if (m.html) m.html = sanitizeHtmlString(m.html);
+    if (m.avatarHtml) m.avatarHtml = sanitizeAvatarHtml(m.avatarHtml);
+    if (m.mediaUrl) m.mediaUrl = cpSafeUrl(m.mediaUrl, { allowDataImage: false });
+    if (m.audioUrl) m.audioUrl = cpSafeUrl(m.audioUrl, { allowDataImage: false });
+    if (Array.isArray(m.items)) {
+      m.items = m.items.map(function (it) { return { url: cpSafeUrl(it && it.url, { allowDataImage: false }) }; }).filter(function (it) { return !!it.url; });
+    }
+
     m.pendingLocal = false;
     m.failedLocal = false;
     if (!m._ver) m._ver = 1;
@@ -727,10 +745,27 @@
 
   function bindOutgoingAck(wkMsgObj, localMsg) {
     if (!localMsg) return;
+
+    if (wkMsgObj && typeof wkMsgObj.then === "function") {
+      localMsg.pendingLocal = true;
+      localMsg.failedLocal = false;
+      wkMsgObj.then(function (realMsg) {
+        bindOutgoingAck(realMsg, localMsg);
+      }).catch(function (err) {
+        warn("send-promise-ack", err);
+        localMsg.pendingLocal = false;
+        localMsg.failedLocal = true;
+        msgTouch(localMsg);
+        incrementalRender("keep");
+      });
+      return;
+    }
+
     if (!wkMsgObj) {
       localMsg.pendingLocal = false;
       localMsg.failedLocal = true;
       msgTouch(localMsg);
+      incrementalRender("keep");
       return;
     }
 
@@ -848,6 +883,39 @@
       .replace(/>/g, "&gt;");
   }
 
+  function cpIsSafeUrl(url, opts) {
+    opts = opts || {};
+    var s = String(url || "").trim().replace(/[\u0000-\u001f\u007f\s]+/g, "");
+    var decoded = "";
+    try { decoded = decodeURIComponent(s); } catch (_) { decoded = s; }
+    if (!s) return false;
+    if (/^(javascript|vbscript|file):/i.test(s) || /^(javascript|vbscript|file):/i.test(decoded)) return false;
+    if (/^data:/i.test(s)) return !!opts.allowDataImage && /^data:image\/(png|jpe?g|gif|webp);/i.test(s);
+    if (s.charAt(0) === "/" || s.charAt(0) === "#") return true;
+    return /^(https?:|mailto:|tel:|blob:)/i.test(s);
+  }
+
+  function cpSafeUrl(url, opts) {
+    var s = String(url || "").trim().replace(/[\u0000-\u001f\u007f]/g, "");
+    if (!cpIsSafeUrl(s, opts)) return "";
+    if (/^\/\//.test(s)) return location.protocol + s;
+    return s;
+  }
+
+  function cpSafeColor(value, fallback) {
+    var s = String(value || "").trim();
+    if (/^#[0-9a-f]{3,8}$/i.test(s)) return s;
+    if (/^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/i.test(s)) return s;
+    if (/^[a-z]{3,20}$/i.test(s)) return s;
+    return fallback || "#72a5f2";
+  }
+
+  function sanitizeHtmlString(html) {
+    var tmp = document.createElement("div");
+    tmp.innerHTML = String(html || "");
+    return getRenderableHtml(tmp);
+  }
+
   function normalizeTextKey(text) {
     return String(text == null ? "" : text)
       .replace(/\s+/g, " ")
@@ -932,7 +1000,9 @@
     try {
       var raw = localStorage.getItem(key);
       if (!raw) return fallback;
-      return Object.assign(fallback, JSON.parse(raw));
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return fallback;
+      return Object.assign(fallback, parsed);
     } catch (e) {
       warn("load-json", e);
       return fallback;
@@ -1032,6 +1102,22 @@
       } catch (e) {
         warn("idb-get-wrap", e);
         resolve(null);
+      }
+    });
+  }
+
+  async function idbDelete(storeName, key) {
+    var db = await dbPromise;
+    if (!db || !key) return false;
+
+    return new Promise(function (resolve) {
+      try {
+        var req = db.transaction(storeName, "readwrite").objectStore(storeName).delete(key);
+        req.onsuccess = function () { resolve(true); };
+        req.onerror = function (e) { warn("idb-delete", e); resolve(false); };
+      } catch (e) {
+        warn("idb-delete-wrap", e);
+        resolve(false);
       }
     });
   }
@@ -1164,6 +1250,7 @@
   }
 
   async function getOrFetchMediaBlob(url, type) {
+    url = cpSafeUrl(url, { allowDataImage: type === "image" });
     if (!url || url.indexOf("blob:") === 0 || url.indexOf("data:") === 0) return url;
     if (type === "video" || /\.(mp4|mov|webm|m4v)(?:\?|#|$)/i.test(url)) return url;
 
@@ -1670,6 +1757,17 @@
     return name.charAt(0).toUpperCase();
   }
 
+  function sanitizeAvatarHtml(html) {
+    if (!html) return "";
+    var tmp = document.createElement("div");
+    tmp.innerHTML = String(html || "");
+    var img = tmp.querySelector("img");
+    if (!img) return "";
+    var src = cpSafeUrl(img.getAttribute("src") || "", { allowDataImage: true });
+    if (!src) return "";
+    return '<img class="avatar" src="' + escAttr(src) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" />';
+  }
+
   function getAvatarHtml(uid, username, fallbackHtml) {
     var pic = "";
     var text = getAvatarInitial(username, uid);
@@ -1706,21 +1804,23 @@
       }
 
       if (u) {
-        pic = u.picture || "";
+        pic = cpSafeUrl(u.picture || "", { allowDataImage: true });
         if (u.icontext) text = String(u.icontext).charAt(0).toUpperCase();
-        if (u.iconbgColor) bg = u.iconbgColor;
+        if (u.iconbgColor) bg = cpSafeColor(u.iconbgColor, bg);
       }
     }
 
+    pic = cpSafeUrl(pic, { allowDataImage: true });
     if (pic) {
       return '<img class="avatar" src="' + escAttr(pic) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" />';
     }
 
-    if (fallbackHtml && fallbackHtml.indexOf("<img") > -1) return fallbackHtml;
+    var safeFallback = sanitizeAvatarHtml(fallbackHtml);
+    if (safeFallback) return safeFallback;
 
     return (
       '<div class="avatar" style="background:' +
-      escAttr(bg) +
+      escAttr(cpSafeColor(bg, "#72a5f2")) +
       ';color:#fff;display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;font-size:16px;">' +
       esc(text) +
       "</div>"
@@ -1772,7 +1872,7 @@
       pInfo.innerHTML = '<a href="' + profileHref + '" title="访问主页">' + esc(name) + "</a>";
       if (avatar) {
         avatar.innerHTML = '<a class="cp-peer-avatar-link" href="' + profileHref + '" title="访问主页">' +
-          (avatarHtml || getAvatarHtml(String(uid || ""), name, null)) +
+          (sanitizeAvatarHtml(avatarHtml) || getAvatarHtml(String(uid || ""), name, null)) +
           "</a>";
       }
     } else {
@@ -1869,20 +1969,26 @@
     var match;
 
     if ((match = text.match(/^!\[\]\((.+?)\)$/)) || (match = text.match(/^\[图片\]\((.+?)\)$/))) {
-      type = "image";
-      mediaUrl = match[1];
-      text = "[图片]";
-      displayHtml = "";
+      mediaUrl = cpSafeUrl(match[1], { allowDataImage: false });
+      if (mediaUrl) {
+        type = "image";
+        text = "[图片]";
+        displayHtml = "";
+      }
     } else if ((match = text.match(/^\[视频\]\((.+?)\)$/))) {
-      type = "video";
-      mediaUrl = match[1];
-      text = "[视频]";
-      displayHtml = "";
+      mediaUrl = cpSafeUrl(match[1], { allowDataImage: false });
+      if (mediaUrl) {
+        type = "video";
+        text = "[视频]";
+        displayHtml = "";
+      }
     } else if ((match = text.match(/^\[语音消息\]\((.+?)\)$/))) {
-      type = "voice";
-      audioUrl = match[1];
-      text = "[语音]";
-      displayHtml = "";
+      audioUrl = cpSafeUrl(match[1], { allowDataImage: false });
+      if (audioUrl) {
+        type = "voice";
+        text = "[语音]";
+        displayHtml = "";
+      }
     }
 
     var obj = {
@@ -2022,6 +2128,10 @@
   state.audioEndedHandler = onAudioEnded;
   bindAudioEndedHandler();
 
+  function isWkConnectedStatus(status) {
+    return status === 1 || status === "connected" || status === "CONNECTED" || status === "connect" || status === "CONNECT";
+  }
+
   function initWukong() {
     if (window.__wkEngineBooted) return;
     window.__wkEngineBooted = true;
@@ -2106,7 +2216,7 @@
           if (cpIsMineUid(fromUid)) return;
 
           var currentPeerUid = getPeerUid();
-          if (!currentPeerUid || fromUid !== currentPeerUid) return;
+          if (!currentPeerUid || !messageBelongsToCurrentPeer(m, fromUid, currentPeerUid)) return;
 
           var t = payloadObj.text || payloadObj.content || "";
           if (!t) return;
@@ -2160,8 +2270,8 @@
         });
 
         wk.WKSDK.shared().connectManager.addConnectStatusListener(function (status) {
-          var connected = status === 1 || status === "connected" || status === "CONNECTED";
-          if (connected) state.wkReady = true;
+          var connected = isWkConnectedStatus(status);
+          state.wkReady = connected;
           if (connected && state.mounted && state.initialLoadDone) {
             var pUid = getPeerUid();
             if (pUid && state.localMaxSeq > 0) fetchOfflineMessages(pUid);
@@ -2170,7 +2280,11 @@
 
         wk.WKSDK.shared().connectManager.connect();
         setTimeout(function () {
-          if (window.wk && window.wk.WKSDK) state.wkReady = true;
+          try {
+            var cm = window.wk && window.wk.WKSDK && window.wk.WKSDK.shared().connectManager;
+            var status = cm && (cm.status || cm.connectStatus || cm.state);
+            if (isWkConnectedStatus(status)) state.wkReady = true;
+          } catch (_) {}
         }, 1500);
       };
 
@@ -2207,7 +2321,11 @@
       if (startSeq && startSeq > 0) u1 += "&start_message_seq=" + encodeURIComponent(startSeq);
       urls.push(u1);
 
-      var u2 = "/bridge/get-history?login_uid=" + encodeURIComponent(state.myUid) + "&channel_id=" + encodeURIComponent(peerUid) + "&limit=" + encodeURIComponent(limit);
+      // 兼容独立 bridge 后端：topic/group 会话必须传真实 channelId/channelType，不能退回 peerUid。
+      var u2 = "/bridge/get-history?login_uid=" + encodeURIComponent(state.myUid) +
+        "&channel_id=" + encodeURIComponent(channelId) +
+        "&channel_type=" + encodeURIComponent(channelType) +
+        "&limit=" + encodeURIComponent(limit);
       if (startSeq && startSeq > 0) u2 += "&start_message_seq=" + encodeURIComponent(startSeq);
       urls.push(u2);
 
@@ -2238,12 +2356,14 @@
 
       if (msgs.length) {
         var before = state.wkMessages.length;
-        processWukongMessages(msgs, !!startSeq && !isOfflineSync);
-        if (!isOfflineSync && msgs.length < limit) {
+        var loadingOlder = !!startSeq && !isOfflineSync;
+        processWukongMessages(msgs, loadingOlder);
+        var addedCount = Math.max(0, state.wkMessages.length - before);
+        if (!isOfflineSync && (msgs.length < limit || (loadingOlder && addedCount === 0))) {
           state.noMoreOldHistory = true;
           state.hasNoMoreHistory = true;
         }
-        return Math.max(0, state.wkMessages.length - before);
+        return addedCount;
       }
 
       if (!isOfflineSync) {
@@ -2290,6 +2410,24 @@
     }
   }
 
+  function messageBelongsToCurrentPeer(rawMsg, fromUid, peerUid) {
+    peerUid = String(peerUid || getPeerUid() || "");
+    if (!peerUid) return false;
+    fromUid = String(fromUid || "");
+    if (fromUid && !cpIsMineUid(fromUid) && fromUid !== peerUid) return false;
+
+    var rawChannel = rawMsg && (rawMsg.channel_id || rawMsg.channelID || rawMsg.channelId);
+    if (!rawChannel && rawMsg && rawMsg.channel) rawChannel = rawMsg.channel.channelID || rawMsg.channel.channel_id || rawMsg.channel.id;
+    var to = rawMsg && (rawMsg.to_uid || rawMsg.toUID || rawMsg.toUid || rawMsg.receiver_uid || rawMsg.receiverUID);
+
+    if (cpIsMineUid(fromUid) && to && String(to) !== peerUid) return false;
+
+    var expectedChannel = String((window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.channelId) || cpPluginConfig().channelId || peerUid);
+    if (rawChannel && String(rawChannel) !== peerUid && String(rawChannel) !== expectedChannel) return false;
+
+    return true;
+  }
+
   function processWukongMessages(msgs, isLoadMore) {
     var added = false;
     var touchedExisting = false;
@@ -2316,6 +2454,7 @@
       var m = msgs[i];
       var payloadObj = extractWkPayload(m) || {};
       var fromUid = String(m.from_uid || m.fromUID || m.fromUid || "");
+      if (!messageBelongsToCurrentPeer(m, fromUid, getPeerUid())) continue;
       var isMine = cpIsMineUid(fromUid);
       var serverT = payloadObj.text || payloadObj.content || "";
 
@@ -2573,36 +2712,53 @@
     }
   }
 
-  async function ensurePeerLoaded() {
+  async function ensurePeerLoaded(loadGeneration) {
+    loadGeneration = loadGeneration || state.mountGeneration;
     ensureSelfUid();
     var pUid = getPeerUid();
 
     if (!pUid) {
       await hydratePeerFromRoute();
+      if (!state.mounted || loadGeneration !== state.mountGeneration) return;
       pUid = getPeerUid();
       updateHeaderPeerInfo(null);
     }
 
-    if (!pUid || state.loadedPeerUid === pUid) return;
+    if (!pUid) return;
+
+    if (state.loadedPeerUid === pUid && state.peerLoadPromise) return state.peerLoadPromise;
 
     state.loadedPeerUid = pUid;
     state.noMoreOldHistory = false;
     state.hasNoMoreHistory = false;
 
-    await loadChatFromDB(pUid);
-    await fetchWukongHistory(pUid, 0, { limit: 20 });
+    state.peerLoadPromise = (async function () {
+      await loadChatFromDB(pUid);
+      if (!state.mounted || loadGeneration !== state.mountGeneration || String(getPeerUid()) !== String(pUid)) return;
 
-    if (state.localMaxSeq > 0) await fetchOfflineMessages(pUid);
+      await fetchWukongHistory(pUid, 0, { limit: 20 });
+      if (!state.mounted || loadGeneration !== state.mountGeneration || String(getPeerUid()) !== String(pUid)) return;
 
-    cpHydratePeerMessagesFromCache();
-    state.initialLoadDone = true;
+      if (state.localMaxSeq > 0) await fetchOfflineMessages(pUid);
+      if (!state.mounted || loadGeneration !== state.mountGeneration || String(getPeerUid()) !== String(pUid)) return;
 
-    // 修复：初始加载完成后滚到底
-    requestAnimationFrame(forceScrollToBottom);
+      cpHydratePeerMessagesFromCache();
+      state.initialLoadDone = true;
+
+      // 初始加载完成后滚到底。
+      requestAnimationFrame(forceScrollToBottom);
+    })().finally(function () {
+      if (state.loadedPeerUid === pUid) state.peerLoadPromise = null;
+    });
+
+    return state.peerLoadPromise;
   }
 
   async function mount() {
+    var mountGeneration = ++state.mountGeneration;
+    state.mounted = true;
     await cpLoadI18n();
+    if (mountGeneration !== state.mountGeneration) return;
     state.cfg = normalizeConfig(
       loadJSON(KEY_CFG, {
         autoTranslateLastMsg: false,
@@ -2667,6 +2823,7 @@
     state.heightMap = {};
     state.heightObserved = {};
     state.virtualRenderPending = false;
+    state.peerLoadPromise = null;
     bindAudioEndedHandler();
 
     cleanUpOldMedia();
@@ -2677,8 +2834,9 @@
     // 先用路由用户名占位，避免标题长时间停留在“加载中...”
     updateHeaderPeerInfo(null);
     hydratePeerFromRoute().then(function () {
+      if (!state.mounted || mountGeneration !== state.mountGeneration) return;
       updateHeaderPeerInfo(null);
-      ensurePeerLoaded();
+      ensurePeerLoaded(mountGeneration);
     });
     bindUI();
     bindSelectBlockers();
@@ -2693,16 +2851,16 @@
     scheduleSync();
     initWukong();
 
-    state.mounted = true;
     document.body.classList.add("cp-shell-on");
 
-    await ensurePeerLoaded();
+    await ensurePeerLoaded(mountGeneration);
 
     updateFooterHeight();
   }
 
   function unmount() {
     if (!state.mounted) return;
+    state.mountGeneration++;
 
     if (persistTimer) {
       clearTimeout(persistTimer);
@@ -2788,6 +2946,7 @@
     state.suppressNativeIds = {};
     state.pendingSentTexts = {};
     state.loadedPeerUid = "";
+    state.peerLoadPromise = null;
     state.mounted = false;
     state.previewOpen = false;
     state.settingsOpen = false;
@@ -3762,7 +3921,8 @@
     state.cfg.ai.model = value("cp-ai-model", state.cfg.ai.model || "deepseek4flash").trim() || "deepseek4flash";
     state.cfg.ai.temperature = 0.3;
 
-    state.bg.opacity = parseFloat(value("cp-bg-opacity", state.bg.opacity !== undefined ? state.bg.opacity : 0.85));
+    state.bg.opacity = Math.max(0, Math.min(1, parseFloat(value("cp-bg-opacity", state.bg.opacity !== undefined ? state.bg.opacity : 0.85)) || 0.85));
+    state.cfg.voiceMaxDuration = Math.max(5, Math.min(180, Number(state.cfg.voiceMaxDuration || 60) || 60));
 
     saveJSON(KEY_CFG, state.cfg);
     saveJSON(KEY_BG, state.bg);
@@ -3944,17 +4104,26 @@
 
     if (msg.wkMsg) {
       try {
-        var res = await fetch("/bridge/revoke", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            channel_id: getPeerUid(),
-            message_seq: seq,
-            client_msg_no: clientMsgNo
-          })
+        var apiBase = cpPluginConfig().apiBase || "/api/wukong";
+        var revokeBody = JSON.stringify({
+          channel_id: getPeerUid(),
+          message_seq: seq,
+          client_msg_no: clientMsgNo,
+          message_id: msgId
         });
+        var revokeUrls = [apiBase + "/revoke", "/bridge/revoke"];
+        var revoked = false;
+        for (var ri = 0; ri < revokeUrls.length; ri++) {
+          var res = await fetch(revokeUrls[ri], {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: revokeBody
+          });
+          if (res.ok) { revoked = true; break; }
+        }
 
-        if (!res.ok) throw new Error("Bridge route failed");
+        if (!revoked) throw new Error("revoke route failed");
       } catch (e) {
         warn("revoke-bridge", e);
 
@@ -4024,9 +4193,10 @@
     state.mergedDirty = true;
     state.msgIndexDirty = true;
     state.localMaxSeq = 0;
-    state.noMoreOldHistory = false;
-    state.hasNoMoreHistory = false;
+    state.noMoreOldHistory = true;
+    state.hasNoMoreHistory = true;
 
+    await idbDelete("chats", getPeerPersistKey(peerUid));
     await persistChatToDB(peerUid);
 
     if (window.wk && window.wk.WKSDK.shared().conversationManager && window.wk.WKSDK.shared().conversationManager.clearConversationMessages) {
@@ -4114,7 +4284,7 @@
       updateHeaderPeerInfo(null);
     }
 
-    ensurePeerLoaded();
+    ensurePeerLoaded(state.mountGeneration);
   }
 
   function parseNativeMessage(row) {
@@ -4687,7 +4857,7 @@
             : "";
 
         var safeUserSlug = m.userslug || state.peerUserslugCache || encodeURIComponent(String(m.username || "guest").toLowerCase().replace(/ /g, "-"));
-        var avatarHtml = m.avatarHtml || getAvatarHtml(m.uid || state.peerUidCache || "", m.username || state.peerUsernameCache || "", null);
+        var avatarHtml = sanitizeAvatarHtml(m.avatarHtml) || getAvatarHtml(m.uid || state.peerUidCache || "", m.username || state.peerUsernameCache || "", null);
 
         var avatarWrapHtml = m.mine
           ? ""
@@ -5047,6 +5217,8 @@
     var clean = String(url || "").trim();
 
     if (!clean) return "";
+    if (!cpIsSafeUrl(clean, { allowDataImage: false })) return "";
+    if (/^(mailto:|tel:|blob:|#)/i.test(clean)) return "";
     if (/\/(chat\/completions|responses)$/i.test(clean)) return clean;
 
     return clean.replace(/\/+$/, "") + "/chat/completions";
@@ -5216,6 +5388,24 @@
 
     return await withRetry(
       async function () {
+        var apiBase = cpPluginConfig().apiBase || "/api/wukong";
+        var proxyUrls = [
+          apiBase + "/translate/google?sl=" + encodeURIComponent(sl || "auto") + "&tl=" + encodeURIComponent(tl || "en") + "&q=" + encodeURIComponent(text),
+          "/bridge/translate/google?sl=" + encodeURIComponent(sl || "auto") + "&tl=" + encodeURIComponent(tl || "en") + "&q=" + encodeURIComponent(text)
+        ];
+
+        // 优先走同源后端代理，避免浏览器 CORS 或地区网络导致 Google 翻译失败。
+        for (var pi = 0; pi < proxyUrls.length; pi++) {
+          try {
+            var pres = await fetchWithTimeout(proxyUrls[pi], { credentials: "same-origin", cache: "force-cache" }, 4500);
+            if (!pres.ok) continue;
+            var pjson = await pres.json();
+            if (pjson && pjson.translation) return String(pjson.translation).trim();
+          } catch (proxyErr) {
+            warn("google-translate-proxy", proxyErr);
+          }
+        }
+
         var url =
           "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" +
           encodeURIComponent(sl || "auto") +
@@ -5893,7 +6083,10 @@
     var apiBase = cpPluginConfig().apiBase || "/api/wukong";
     var endpoints = [
       { url: apiBase + "/upload", field: "files[]" },
-      { url: apiBase + "/upload", field: "file" }
+      { url: apiBase + "/upload", field: "file" },
+      // 兼容独立 index.js bridge 后端；如果站点没有 NodeBB plugin route，上传仍可用。
+      { url: "/bridge/upload", field: "files[]" },
+      { url: "/bridge/upload", field: "file" }
     ];
 
     return endpoints.reduce(function (promise, ep) {
@@ -6174,6 +6367,11 @@
   function handleBackgroundUpload(e) {
     var file = e.target.files[0];
     if (!file) return;
+    if (!/^image\//i.test(file.type || "") || /svg/i.test(file.type || "") || file.size > 8 * 1024 * 1024) {
+      toast("背景图格式或大小不支持");
+      e.target.value = "";
+      return;
+    }
 
     var reader = new FileReader();
 
@@ -6279,8 +6477,9 @@
       return;
     }
 
+    var stream = null;
     try {
-      var stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
           echoCancellation: true,
@@ -6326,11 +6525,11 @@
             var blob = new Blob(state.rec.chunks, { type: actualMime });
             var file = new File([blob], "voice_" + Date.now() + "." + ext, { type: actualMime });
 
-            pWrap.hidden = false;
-            pBar.style.width = "0%";
+            if (pWrap) pWrap.hidden = false;
+            if (pBar) pBar.style.width = "0%";
 
             var url = await uploadToNodeBB(file, function (pct) {
-              pBar.style.width = pct * 100 + "%";
+              if (pBar) pBar.style.width = Math.max(1, Math.min(100, pct * 100)) + "%";
             });
 
             if (!url) throw new Error("voice upload url empty");
@@ -6339,8 +6538,8 @@
             warn("record-upload", e);
             toast("语音发送失败");
           } finally {
-            pWrap.hidden = true;
-            pBar.style.width = "0%";
+            if (pWrap) pWrap.hidden = true;
+            if (pBar) pBar.style.width = "0%";
           }
         }
 
@@ -6365,6 +6564,10 @@
         if (state.rec.sec >= (state.cfg.voiceMaxDuration || 60)) stopRecording(true);
       }, 1000);
     } catch (e) {
+      if (stream) {
+        try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+      }
+      toggleUIForRecording(false);
       warn("start-recording", e);
       toast("录音不可用或被拒绝");
     }
@@ -6468,29 +6671,11 @@
   }
 
   function isSafeHref(url) {
-    var s = String(url || "").trim().replace(/[\u0000-\u001f\u007f\s]+/g, "");
-    var decoded = "";
-
-    try { decoded = decodeURIComponent(s); } catch (_) { decoded = s; }
-
-    if (!s) return false;
-    if (/^(javascript|data|vbscript):/i.test(s) || /^(javascript|data|vbscript):/i.test(decoded)) return false;
-    if (s.charAt(0) === "/" || s.charAt(0) === "#") return true;
-
-    return /^(https?:|mailto:|tel:)/i.test(s);
+    return cpIsSafeUrl(url, { allowDataImage: false }) && !/^data:/i.test(String(url || ""));
   }
 
   function isSafeImgSrc(url) {
-    var s = String(url || "").trim().replace(/[\u0000-\u001f\u007f\s]+/g, "");
-    var decoded = "";
-
-    try { decoded = decodeURIComponent(s); } catch (_) { decoded = s; }
-
-    if (!s) return false;
-    if (/^(javascript|vbscript):/i.test(s) || /^(javascript|vbscript):/i.test(decoded)) return false;
-    if (s.charAt(0) === "/") return true;
-
-    return /^(https?:|data:image\/)/i.test(s);
+    return cpIsSafeUrl(url, { allowDataImage: true });
   }
 
   function sanitizeNodeInto(node, parent) {
