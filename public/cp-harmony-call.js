@@ -104,6 +104,7 @@
     timeoutTimer: null,
     connectTimer: null,
     iceGraceTimer: null,
+    controlsTimer: null,
     sec: 0,
 
     isMicOn: true,
@@ -807,19 +808,22 @@
   function setVideoElement(el, stream) {
     if (!el) return;
     if (el.srcObject !== stream) el.srcObject = stream || null;
-    if (isShowingLocal(stream)) {
-      el.muted = true;
-      el.style.transform = State.facingMode === "environment" ? "none" : "scaleX(-1)";
-    } else {
-      el.muted = false;
-      el.style.transform = "none";
-    }
+    // Remote audio is routed through the dedicated <audio> element, so the
+    // <video> tags stay muted regardless of which stream they show. This keeps
+    // audio playing for voice-only calls and when swapping main/PiP.
+    el.muted = true;
+    el.style.transform = isShowingLocal(stream) && State.facingMode !== "environment" ? "scaleX(-1)" : "none";
   }
 
   function syncVideoSurfaces() {
     var mainVideo = byId("cp-call-remote-video");
     var pipVideo = byId("cp-call-local-video");
     var wrap = byId("cp-call-local-wrap");
+
+    var remoteAudio = byId("cp-call-remote-audio");
+    if (remoteAudio && remoteAudio.srcObject !== State.remoteStream) {
+      remoteAudio.srcObject = State.remoteStream || null;
+    }
 
     if (State.mode !== "video") {
       if (mainVideo) { mainVideo.style.display = "none"; mainVideo.srcObject = null; }
@@ -915,6 +919,7 @@
     clearTimeout(State.connectTimer);
     startTimer();
     setMainConnectedMode();
+    scheduleControlsHide();
     playConnectedTone();
   }
   function setStatus(text) {
@@ -978,7 +983,7 @@
     micOff: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
     video: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>',
     videoOff: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
-    flip: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 8h7a2 2 0 0 1 2 2v6"/><path d="M13 16H6a2 2 0 0 1-2-2V8"/><polyline points="8 5 11 8 8 11"/><polyline points="16 13 13 16 16 19"/></svg>'
+    flip: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><path d="M15 13a3 3 0 1 1-.9-2.15"/><polyline points="15.2 9.6 15 12 12.6 11.8"/></svg>'
   };
 
   // ----------------------------------------------------------------
@@ -1049,6 +1054,7 @@
     clearTimeout(State.timeoutTimer);
     clearTimeout(State.connectTimer);
     clearTimeout(State.iceGraceTimer);
+    clearTimeout(State.controlsTimer);
 
     if (State.mediaCall) { try { State.mediaCall.close(); } catch (e) {} }
     stopTracks(State.localStream);
@@ -1059,6 +1065,8 @@
     var audio = byId("cp-call-remote-audio");
     var bg = byId("cp-call-bg");
     var wrap = byId("cp-call-local-wrap");
+    var mainEl = byId("cp-call-main");
+    if (mainEl) mainEl.classList.remove("controls-hidden");
     if (local) local.srcObject = null;
     if (remote) remote.srcObject = null;
     if (audio) audio.srcObject = null;
@@ -1403,6 +1411,43 @@
   }
 
   // ----------------------------------------------------------------
+  // 视频通话控件自动隐藏（点屏幕显示，3 秒后隐藏，类似微信）
+  // ----------------------------------------------------------------
+  function scheduleControlsHide() {
+    clearTimeout(State.controlsTimer);
+    if (State.mode !== "video" || !State.connected) return;
+    State.controlsTimer = setTimeout(hideCallControls, 3000);
+  }
+  function showCallControls() {
+    var main = byId("cp-call-main");
+    if (main) main.classList.remove("controls-hidden");
+    scheduleControlsHide();
+  }
+  function hideCallControls() {
+    clearTimeout(State.controlsTimer);
+    if (State.mode !== "video" || !State.connected) return;
+    var main = byId("cp-call-main");
+    if (main) main.classList.add("controls-hidden");
+  }
+  function toggleCallControls() {
+    var main = byId("cp-call-main");
+    if (!main) return;
+    if (main.classList.contains("controls-hidden")) showCallControls();
+    else hideCallControls();
+  }
+  function onMainTap(e) {
+    if (State.mode !== "video" || !State.connected) return;
+    // Taps on the controls / PiP have their own handlers; just keep the bar
+    // visible (and reset the auto-hide timer) instead of toggling.
+    if (e.target && e.target.closest &&
+        (e.target.closest("#cp-call-controls") || e.target.closest("#cp-call-local-wrap"))) {
+      showCallControls();
+      return;
+    }
+    toggleCallControls();
+  }
+
+  // ----------------------------------------------------------------
   // 样式
   // ----------------------------------------------------------------
   function injectStyle() {
@@ -1441,6 +1486,9 @@
       #cp-call-main.is-video #cp-call-top{padding-top:calc(30px + env(safe-area-inset-top));background:linear-gradient(180deg,rgba(0,0,0,.45),rgba(0,0,0,0));padding-bottom:20px;}
       #cp-call-main.is-video #cp-call-avatar{display:none!important;}
       #cp-call-main.is-video #cp-call-name{font-size:20px;}
+      #cp-call-main.is-video #cp-call-top,#cp-call-main.is-video #cp-call-controls{transition:opacity .28s ease,transform .28s ease;}
+      #cp-call-main.is-video.controls-hidden #cp-call-top{opacity:0;transform:translateY(-12px);pointer-events:none;}
+      #cp-call-main.is-video.controls-hidden #cp-call-controls{opacity:0;transform:translateY(18px);pointer-events:none;}
 
       #cp-call-local-wrap{position:absolute;right:14px;top:calc(96px + env(safe-area-inset-top));width:108px;height:152px;border-radius:18px;overflow:hidden;background:#000;display:none;z-index:8;box-shadow:0 16px 36px rgba(0,0,0,.4);border:1.5px solid rgba(255,255,255,.18);cursor:pointer;transition:box-shadow .18s ease,transform .18s ease;}
       #cp-call-local-wrap:active{transform:scale(.97);}
@@ -1524,6 +1572,9 @@
       });
     });
     byId("cp-call-reject").addEventListener("click", rejectCall);
+
+    var mainEl = byId("cp-call-main");
+    if (mainEl) mainEl.addEventListener("click", onMainTap);
 
     enablePipInteractions();
   }
