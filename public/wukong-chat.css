@@ -2203,3 +2203,34 @@ body.cp-modal-open #cp-chat-root .cp-main {
     font-size: 16px !important;
   }
 }
+
+/* Call record bubbles (voice/video, cancelled, missed, rejected, duration) */
+#cp-chat-root .cp-call-record,
+.cp-call-record {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+#cp-chat-root .cp-call-record .cp-call-ico,
+.cp-call-record .cp-call-ico {
+  display: inline-flex;
+  align-items: center;
+  color: #16a34a;
+  flex: 0 0 auto;
+}
+#cp-chat-root .cp-call-record.cp-call-missed .cp-call-ico,
+#cp-chat-root .cp-call-record.cp-call-no_answer .cp-call-ico,
+#cp-chat-root .cp-call-record.cp-call-rejected .cp-call-ico,
+#cp-chat-root .cp-call-record.cp-call-declined .cp-call-ico,
+#cp-chat-root .cp-call-record.cp-call-canceled .cp-call-ico,
+#cp-chat-root .cp-call-record.cp-call-busy .cp-call-ico,
+.cp-call-record.cp-call-missed .cp-call-ico,
+.cp-call-record.cp-call-no_answer .cp-call-ico,
+.cp-call-record.cp-call-rejected .cp-call-ico {
+  color: #ef4444;
+}
+#cp-chat-root .cp-call-record .cp-call-label,
+.cp-call-record .cp-call-label {
+  font-size: var(--cp-bubble-font);
+}

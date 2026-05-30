@@ -593,6 +593,9 @@
       serverText: String(m.serverText || ""),
       pendingLocal: !!m.pendingLocal,
       failedLocal: !!m.failedLocal,
+      callId: String(m.callId || ""),
+      callKind: String(m.callKind || ""),
+      callMode: String(m.callMode || ""),
       wkMeta: serializeWkMeta(m.wkMsg) || m.wkMeta || null,
       _ver: Number(m._ver || 1) || 1
     };
@@ -1929,6 +1932,81 @@
 
     return obj;
   }
+
+  var CALL_ICON = {
+    voice:
+      '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">' +
+        '<path fill="currentColor" d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.4 0 .8-.3 1l-2.1 2.2z"/>' +
+      "</svg>",
+    video:
+      '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">' +
+        '<path fill="currentColor" d="M17 10.5V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5l4 4v-11l-4 4z"/>' +
+      "</svg>"
+  };
+
+  function callRecordIconHtml(m) {
+    return String(m.callMode || "") === "video" ? CALL_ICON.video : CALL_ICON.voice;
+  }
+
+  function callRecordLabel(m) {
+    var kind = String(m.callKind || "");
+    var isVideo = String(m.callMode || "") === "video";
+    var base = isVideo ? cpT("call_video", "视频通话") : cpT("call_voice", "语音通话");
+    var dur = m.durationStr || "";
+    switch (kind) {
+      case "completed": return base + (dur ? " " + dur : "");
+      case "canceled": return cpT("call_canceled", "已取消");
+      case "no_answer": return cpT("call_no_answer", "对方无应答");
+      case "rejected": return cpT("call_peer_rejected", "对方已拒绝");
+      case "busy": return cpT("call_peer_busy", "对方忙线中");
+      case "missed": return cpT("call_missed", "未接听");
+      case "declined": return cpT("call_declined", "已拒绝");
+      default: return base;
+    }
+  }
+
+  // Called by cp-harmony-call.js when a call ends, to leave a chat-history
+  // record bubble (voice/video, cancelled, missed, rejected, duration...).
+  function addCallRecord(info) {
+    try {
+      info = info || {};
+      var peerUid = String(info.peerUid || "").replace(/[^\d]/g, "");
+      if (!peerUid) return;
+      var current = String(getPeerUid() || "").replace(/[^\d]/g, "");
+      if (!current || current !== peerUid) return; // only log into the open chat
+
+      var callId = String(info.callId || "");
+      if (callId) {
+        for (var i = 0; i < state.wkMessages.length; i++) {
+          if (state.wkMessages[i] && String(state.wkMessages[i].callId) === callId) return;
+        }
+      }
+
+      var mine = !!info.mine;
+      var uidForMsg = mine
+        ? String(state.myUid || (window.app && app.user && app.user.uid) || "")
+        : peerUid;
+
+      var obj = createMessageObj("", mine, uidForMsg, null, null);
+      obj.type = "call";
+      obj.callId = callId;
+      obj.callKind = String(info.kind || "");
+      obj.callMode = String(info.mode || "audio");
+      obj.durationStr = info.durationSec ? formatDuration(info.durationSec) : "";
+      obj.html = "";
+      obj.text = callRecordLabel(obj);
+
+      state.wkMessages.push(obj);
+      state.mergedDirty = true;
+      state.msgIndexDirty = true;
+      state.renderVersion++;
+      incrementalRender("bottom");
+      schedulePersistChat(peerUid);
+    } catch (e) {
+      warn("add-call-record", e);
+    }
+  }
+  CP_PLUGIN.addCallRecord = addCallRecord;
 
   function onAudioEnded() {
     if (state.currentAudioEl) {
@@ -4258,6 +4336,7 @@
     if (m.type === "video") return 280;
     if (m.type === "gallery") return 320;
     if (m.type === "voice") return 76;
+    if (m.type === "call") return 52;
     if (m.recalled) return 44;
 
     var text = String(m.text || m.serverText || "");
@@ -4505,6 +4584,13 @@
 
         if (m.recalled) {
           body = '<div class="cp-text">此消息已被撤回</div>';
+        } else if (m.type === "call") {
+          body =
+            '<div class="cp-call-record cp-call-' + escAttr(m.callKind || "") + '">' +
+              '<span class="cp-call-ico">' + callRecordIconHtml(m) + "</span>" +
+              '<span class="cp-call-label">' + esc(callRecordLabel(m)) + "</span>" +
+              inlineTimeHtml +
+            "</div>";
         } else if (m.type === "voice") {
           body =
             '<button class="cp-voice cp-lazy-audio" data-act="play-voice" data-audio-src="' +

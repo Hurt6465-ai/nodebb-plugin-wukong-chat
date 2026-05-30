@@ -135,5 +135,13 @@
   "wingmanSettings": "🧠 僚机设置",
   "chatFeatures": "✨ 聊天功能",
   "translateSendTitle": "开启后：输入框内容会翻译成对方语言再发送",
-  "bgUpdated": "背景图已更新"
+  "bgUpdated": "背景图已更新",
+  "call_voice": "语音通话",
+  "call_video": "视频通话",
+  "call_canceled": "已取消",
+  "call_no_answer": "对方无应答",
+  "call_peer_rejected": "对方已拒绝",
+  "call_peer_busy": "对方忙线中",
+  "call_missed": "未接听",
+  "call_declined": "已拒绝"
 }

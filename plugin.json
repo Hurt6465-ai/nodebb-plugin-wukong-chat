@@ -23,6 +23,7 @@
     "static": "public"
   },
   "scripts": [
-    "public/cp-harmony-call.js"
+    "public/cp-harmony-call.js",
+    "public/wukong-nav-redirect.js"
   ]
 }
