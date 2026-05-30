@@ -157,8 +157,13 @@
     if (!base || (window.CPChatHarmony && window.CPChatHarmony.i18nLoaded)) return;
 
     var locale = cpPickLocale();
-    var urls = [base + "/" + locale + ".json"];
-    if (locale !== "zh-CN") urls.push(base + "/zh-CN.json");
+    var names = [locale];
+    // Tolerate alternate locale file names (e.g. Burmese ships as my.json/my-MM.json)
+    // so the chat UI localizes correctly instead of silently falling back to Chinese.
+    if (locale === "my") names.push("my-MM");
+    else if (locale === "en-US") names.push("en");
+    if (names.indexOf("zh-CN") === -1) names.push("zh-CN");
+    var urls = names.map(function (name) { return base + "/" + name + ".json"; });
 
     for (var i = 0; i < urls.length; i++) {
       try {
