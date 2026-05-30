@@ -2,10 +2,10 @@
   "use strict";
 
   // ============================================================
-  // CP Harmony Peer Call v7.1 — 现代化语音 / 视频通话
+  // CP Harmony Peer Call v7.2 — 现代化语音 / 视频通话
   // - 顶部按钮：黑/灰电话图标，无背景框
-  // - 视频画面：点击小窗切换主画面/小窗，原大屏会进入小窗，再点可切回
-  // - 完整通话音效（呼出 / 来电 / 接通 / 挂断 / 拒绝）
+  // - 视频画面：点击小窗稳定切换到大屏，修复切换后偶发黑屏
+  // - 通话音效：呼出 public/bohao.mp3、来电 public/laidian.mp3，来电震动
   // - 前后摄像头切换（replaceTrack，无需重协商）
   // - 可拖动本地/远端小窗
   // - 断线自动重连 + ICE 状态监控
@@ -48,7 +48,13 @@
     globalListen: true,
     autoConnectWukong: true,
     peerOptions: {},
-    iceServers: null
+    iceServers: null,
+
+    // 音效文件放在 public 目录时，通常可用 /public/xxx.mp3；
+    // 若项目把 public 目录映射到站点根目录，也会自动回退到 /xxx.mp3。
+    outgoingRingUrl: "public/bohao.mp3",
+    incomingRingUrl: "public/laidian.mp3",
+    ringVolume: 0.86
   };
 
   var CFG = Object.assign({}, DEFAULTS, window.CPHarmonyCallConfig || {});
@@ -349,7 +355,31 @@
     if (AudioFX.ctx.state === "suspended") AudioFX.ctx.resume().catch(noop);
     return AudioFX.ctx;
   }
-  function unlockAudioNow() { AudioFX.unlocked = true; window[RING_UNLOCKED_KEY] = true; ensureAudioContext(); }
+
+  function mediaAssetUrls(path) {
+    var raw = String(path || "").trim();
+    if (!raw) return [];
+    var list = [];
+    function add(u) {
+      if (!u) return;
+      if (!/^https?:\/\//i.test(u) && !/^data:/i.test(u) && !/^blob:/i.test(u)) {
+        u = withRelativePath(u.charAt(0) === "/" ? u : "/" + u);
+      }
+      if (list.indexOf(u) < 0) list.push(u);
+    }
+    add(raw);
+    // 兼容两种 public 静态资源部署方式：/public/a.mp3 与 /a.mp3
+    if (/^public\//i.test(raw)) add(raw.replace(/^public\//i, ""));
+    if (raw.charAt(0) !== "/") add("/" + raw);
+    return list;
+  }
+
+  function unlockAudioNow() {
+    AudioFX.unlocked = true;
+    window[RING_UNLOCKED_KEY] = true;
+    ensureAudioContext();
+  }
+
   function unlockAudioOnGesture() {
     if (window[RING_UNLOCKED_KEY]) { AudioFX.unlocked = true; return; }
     if (AudioFX.bound) return;
@@ -364,6 +394,7 @@
     document.addEventListener("touchstart", unlock, true);
     document.addEventListener("keydown", unlock, true);
   }
+
   function playTone(freq, delay, duration, volume, type) {
     var ctx = ensureAudioContext();
     if (!ctx) return noop;
@@ -384,56 +415,122 @@
     osc.stop(endAt + 0.03);
     return function () { try { osc.stop(); } catch (e) {} };
   }
+
+  function startVibrate(pattern, repeatMs) {
+    if (!navigator.vibrate) return;
+    try { navigator.vibrate(pattern); } catch (e) { return; }
+    var timer = setInterval(function () {
+      try { navigator.vibrate(pattern); } catch (e) {}
+    }, repeatMs || 1800);
+    AudioFX.stops.push(function () {
+      clearInterval(timer);
+      try { navigator.vibrate(0); } catch (e) {}
+    });
+  }
+
+  function playLoopingAudioFile(urls, volume, fallback) {
+    urls = urls || [];
+    if (!urls.length || !AudioFX.unlocked) {
+      if (typeof fallback === "function") fallback();
+      return noop;
+    }
+
+    var audio = new Audio();
+    var idx = 0;
+    var stopped = false;
+    audio.loop = true;
+    audio.preload = "auto";
+    audio.volume = Math.max(0, Math.min(1, Number(volume || CFG.ringVolume || 0.86)));
+    audio.setAttribute("playsinline", "");
+    audio.setAttribute("webkit-playsinline", "");
+
+    function tryPlay() {
+      if (stopped) return;
+      audio.src = urls[idx];
+      try { audio.load(); } catch (e) {}
+      var p = null;
+      try { p = audio.play(); } catch (e) { p = Promise.reject(e); }
+      if (p && typeof p.catch === "function") {
+        p.catch(function (err) {
+          warn("ring-audio-play", err);
+          if (stopped) return;
+          idx += 1;
+          if (idx < urls.length) tryPlay();
+          else if (typeof fallback === "function") fallback();
+        });
+      }
+    }
+
+    audio.onerror = function () {
+      if (stopped) return;
+      idx += 1;
+      if (idx < urls.length) tryPlay();
+      else if (typeof fallback === "function") fallback();
+    };
+
+    tryPlay();
+
+    var stop = function () {
+      stopped = true;
+      try { audio.pause(); } catch (e) {}
+      try { audio.currentTime = 0; } catch (e) {}
+      try { audio.removeAttribute("src"); audio.load(); } catch (e) {}
+    };
+    AudioFX.stops.push(stop);
+    return stop;
+  }
+
   function stopRing() {
     while (AudioFX.stops.length) { try { AudioFX.stops.pop()(); } catch (e) {} }
     AudioFX.mode = "";
     if (navigator.vibrate) { try { navigator.vibrate(0); } catch (e) {} }
   }
+
   function playOutgoingRing() {
     stopRing();
     AudioFX.mode = "outgoing";
-    if (!AudioFX.unlocked || !ensureAudioContext()) return;
-    var stopped = false;
-    var timers = [];
-    function cycle() {
-      if (stopped) return;
-      playTone(440, 0.0, 0.4, 0.045, "sine");
-    }
-    cycle();
-    timers.push(setInterval(cycle, 3000));
-    AudioFX.stops.push(function () { stopped = true; timers.forEach(clearInterval); });
+    playLoopingAudioFile(mediaAssetUrls(CFG.outgoingRingUrl), CFG.ringVolume, function () {
+      if (!AudioFX.unlocked || !ensureAudioContext()) return;
+      var stopped = false;
+      var timers = [];
+      function cycle() {
+        if (stopped) return;
+        playTone(440, 0.0, 0.4, 0.045, "sine");
+      }
+      cycle();
+      timers.push(setInterval(cycle, 3000));
+      AudioFX.stops.push(function () { stopped = true; timers.forEach(clearInterval); });
+    });
   }
+
   function playIncomingRing() {
     stopRing();
     AudioFX.mode = "incoming";
-    if (!AudioFX.unlocked || !ensureAudioContext()) {
-      if (navigator.vibrate) { try { navigator.vibrate([260, 120, 260, 800]); } catch (e) {} }
-      return;
-    }
-    var stopped = false;
-    var timers = [];
-    function cycle() {
-      if (stopped) return;
-      playTone(659, 0.00, 0.22, 0.075, "triangle");
-      playTone(784, 0.26, 0.22, 0.072, "triangle");
-      playTone(988, 0.52, 0.30, 0.070, "triangle");
-      playTone(784, 0.92, 0.22, 0.066, "triangle");
-      if (navigator.vibrate) { try { navigator.vibrate([200, 90, 200, 700]); } catch (e) {} }
-    }
-    cycle();
-    timers.push(setInterval(cycle, 2200));
-    AudioFX.stops.push(function () {
-      stopped = true;
-      timers.forEach(clearInterval);
-      if (navigator.vibrate) { try { navigator.vibrate(0); } catch (e) {} }
+    startVibrate([320, 120, 320, 900], 1700);
+    playLoopingAudioFile(mediaAssetUrls(CFG.incomingRingUrl), CFG.ringVolume, function () {
+      if (!AudioFX.unlocked || !ensureAudioContext()) return;
+      var stopped = false;
+      var timers = [];
+      function cycle() {
+        if (stopped) return;
+        playTone(659, 0.00, 0.22, 0.075, "triangle");
+        playTone(784, 0.26, 0.22, 0.072, "triangle");
+        playTone(988, 0.52, 0.30, 0.070, "triangle");
+        playTone(784, 0.92, 0.22, 0.066, "triangle");
+      }
+      cycle();
+      timers.push(setInterval(cycle, 2200));
+      AudioFX.stops.push(function () { stopped = true; timers.forEach(clearInterval); });
     });
   }
+
   function playConnectedTone() {
     stopRing();
     if (!AudioFX.unlocked) return;
     playTone(784, 0.00, 0.12, 0.06, "sine");
     playTone(1175, 0.12, 0.16, 0.05, "sine");
   }
+
   function playHangupTone() {
     if (!AudioFX.unlocked) return;
     playTone(523, 0.00, 0.14, 0.05, "sine");
@@ -805,30 +902,62 @@
     return !!(stream && State.localStream && stream === State.localStream);
   }
 
+  function safePlayMedia(el, scope) {
+    if (!el) return;
+    function run() {
+      if (!el || !el.srcObject) return;
+      try {
+        var p = el.play && el.play();
+        if (p && typeof p.catch === "function") p.catch(function (err) { warn(scope || "media-play", err); });
+      } catch (err) {
+        warn(scope || "media-play", err);
+      }
+    }
+    if (el.readyState >= 2) run();
+    else {
+      el.addEventListener("loadedmetadata", run, { once: true });
+      el.addEventListener("canplay", run, { once: true });
+      setTimeout(run, 120);
+    }
+  }
+
   function setVideoElement(el, stream) {
     if (!el) return;
-    if (el.srcObject !== stream) el.srcObject = stream || null;
-    // Remote audio is routed through the dedicated <audio> element, so the
-    // <video> tags stay muted regardless of which stream they show. This keeps
-    // audio playing for voice-only calls and when swapping main/PiP.
+    var changed = el.srcObject !== stream;
+    if (changed) el.srcObject = stream || null;
+    // 远端声音走独立 audio，两个 video 始终静音，避免大小窗互换时产生回声。
     el.muted = true;
+    el.autoplay = true;
+    el.playsInline = true;
+    el.setAttribute("playsinline", "");
+    el.setAttribute("webkit-playsinline", "");
     el.style.transform = isShowingLocal(stream) && State.facingMode !== "environment" ? "scaleX(-1)" : "none";
+    if (stream) safePlayMedia(el, "video-play");
+  }
+
+  function setRemoteAudioElement(el) {
+    if (!el) return;
+    if (el.srcObject !== State.remoteStream) el.srcObject = State.remoteStream || null;
+    el.autoplay = true;
+    el.muted = false;
+    el.volume = 1;
+    if (State.remoteStream) safePlayMedia(el, "remote-audio-play");
   }
 
   function syncVideoSurfaces() {
     var mainVideo = byId("cp-call-remote-video");
     var pipVideo = byId("cp-call-local-video");
     var wrap = byId("cp-call-local-wrap");
-
+    var main = byId("cp-call-main");
     var remoteAudio = byId("cp-call-remote-audio");
-    if (remoteAudio && remoteAudio.srcObject !== State.remoteStream) {
-      remoteAudio.srcObject = State.remoteStream || null;
-    }
+
+    setRemoteAudioElement(remoteAudio);
 
     if (State.mode !== "video") {
       if (mainVideo) { mainVideo.style.display = "none"; mainVideo.srcObject = null; }
       if (pipVideo) pipVideo.srcObject = null;
       if (wrap) wrap.style.display = "none";
+      if (main) main.removeAttribute("data-main-source");
       return;
     }
 
@@ -839,10 +968,11 @@
     setVideoElement(pipVideo, pipStream);
 
     if (mainVideo) mainVideo.style.display = mainStream ? "block" : "none";
+    if (main) main.setAttribute("data-main-source", State.mainVideoSource);
     if (wrap) {
       wrap.style.display = pipStream ? "block" : "none";
       wrap.setAttribute("data-showing", State.mainVideoSource === "local" ? "remote" : "local");
-      wrap.setAttribute("title", State.mainVideoSource === "local" ? "点击切回对方画面" : "点击切换到我的画面");
+      wrap.setAttribute("title", State.mainVideoSource === "local" ? "点击放大对方画面" : "点击放大我的画面");
     }
   }
 
@@ -1344,17 +1474,18 @@
 
     var dragging = false;
     var moved = false;
+    var pointerId = null;
     var startX = 0;
     var startY = 0;
     var baseLeft = 0;
     var baseTop = 0;
 
-    function onDown(e) {
-      var p = e.touches ? e.touches[0] : e;
+    function startDrag(clientX, clientY, id) {
       dragging = true;
       moved = false;
-      startX = p.clientX;
-      startY = p.clientY;
+      pointerId = id == null ? null : id;
+      startX = clientX;
+      startY = clientY;
       var rect = wrap.getBoundingClientRect();
       baseLeft = rect.left;
       baseTop = rect.top;
@@ -1362,42 +1493,96 @@
       wrap.style.left = baseLeft + "px";
       wrap.style.top = baseTop + "px";
       wrap.style.transition = "none";
-      document.addEventListener("mousemove", onMove, { passive: false });
-      document.addEventListener("touchmove", onMove, { passive: false });
-      document.addEventListener("mouseup", onUp);
-      document.addEventListener("touchend", onUp);
-      document.addEventListener("touchcancel", onUp);
+      wrap.classList.add("dragging");
     }
 
-    function onMove(e) {
+    function moveDrag(clientX, clientY) {
       if (!dragging) return;
-      var p = e.touches ? e.touches[0] : e;
-      if (!p) return;
-      var dx = p.clientX - startX;
-      var dy = p.clientY - startY;
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
-      if (e.cancelable) e.preventDefault();
-      var w = wrap.offsetWidth;
-      var h = wrap.offsetHeight;
+      var dx = clientX - startX;
+      var dy = clientY - startY;
+      if (Math.abs(dx) > 6 || Math.abs(dy) > 6) moved = true;
+      var w = wrap.offsetWidth || 108;
+      var h = wrap.offsetHeight || 152;
       var nl = Math.min(Math.max(6, baseLeft + dx), window.innerWidth - w - 6);
       var nt = Math.min(Math.max(60, baseTop + dy), window.innerHeight - h - 100);
       wrap.style.left = nl + "px";
       wrap.style.top = nt + "px";
     }
 
-    function onUp() {
+    function endDrag() {
+      if (!dragging) return;
       dragging = false;
+      pointerId = null;
       wrap.style.transition = "";
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("touchmove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.removeEventListener("touchend", onUp);
-      document.removeEventListener("touchcancel", onUp);
+      wrap.classList.remove("dragging");
       if (!moved) toggleMainVideoSource();
     }
 
-    wrap.addEventListener("mousedown", onDown);
-    wrap.addEventListener("touchstart", onDown, { passive: true });
+    if (window.PointerEvent) {
+      wrap.addEventListener("pointerdown", function (e) {
+        if (e.button != null && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+        startDrag(e.clientX, e.clientY, e.pointerId);
+      });
+      wrap.addEventListener("pointermove", function (e) {
+        if (!dragging || (pointerId != null && e.pointerId !== pointerId)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        moveDrag(e.clientX, e.clientY);
+      });
+      wrap.addEventListener("pointerup", function (e) {
+        if (pointerId != null && e.pointerId !== pointerId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
+        endDrag();
+      });
+      wrap.addEventListener("pointercancel", function (e) {
+        if (pointerId != null && e.pointerId !== pointerId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        endDrag();
+      });
+    } else {
+      function onDown(e) {
+        var p = e.touches ? e.touches[0] : e;
+        if (!p) return;
+        e.stopPropagation();
+        startDrag(p.clientX, p.clientY, null);
+        document.addEventListener("mousemove", onMove, { passive: false });
+        document.addEventListener("touchmove", onMove, { passive: false });
+        document.addEventListener("mouseup", onUp);
+        document.addEventListener("touchend", onUp);
+        document.addEventListener("touchcancel", onUp);
+      }
+      function onMove(e) {
+        if (!dragging) return;
+        var p = e.touches ? e.touches[0] : e;
+        if (!p) return;
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        moveDrag(p.clientX, p.clientY);
+      }
+      function onUp(e) {
+        if (e && e.stopPropagation) e.stopPropagation();
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("touchmove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.removeEventListener("touchend", onUp);
+        document.removeEventListener("touchcancel", onUp);
+        endDrag();
+      }
+      wrap.addEventListener("mousedown", onDown);
+      wrap.addEventListener("touchstart", onDown, { passive: true });
+    }
+
+    wrap.addEventListener("click", function (e) {
+      // pointer/touch 已在 up 里处理点击；这里仅阻止冒泡到主画面，避免误隐藏控件。
+      e.preventDefault();
+      e.stopPropagation();
+    });
   }
 
   function toggleMainVideoSource() {
@@ -1406,8 +1591,16 @@
       showToast("等待对方画面");
       return;
     }
-    State.mainVideoSource = State.mainVideoSource === "remote" ? "local" : "remote";
+    var next = State.mainVideoSource === "remote" ? "local" : "remote";
+    var nextMain = next === "local" ? State.localStream : State.remoteStream;
+    var nextPip = next === "local" ? State.remoteStream : State.localStream;
+    if (!nextMain || !nextPip) {
+      showToast("画面还没准备好");
+      return;
+    }
+    State.mainVideoSource = next;
     syncVideoSurfaces();
+    showCallControls();
   }
 
   // ----------------------------------------------------------------
@@ -1451,33 +1644,34 @@
   // 样式
   // ----------------------------------------------------------------
   function injectStyle() {
-    if (byId("cp-harmony-call-style")) return;
     var css = `
       #cp-call-root *{box-sizing:border-box;}
       .cp-harmony-call-slot{position:relative;flex-shrink:0;display:flex;align-items:center;justify-content:center;margin-left:auto;margin-right:2px;z-index:30;}
-      #cp-chat-root .cp-harmony-call-entry,.cp-harmony-call-entry{width:38px!important;height:38px!important;min-width:38px!important;padding:0!important;border:0!important;border-radius:999px!important;background:transparent!important;color:#374151!important;display:grid!important;place-items:center!important;cursor:pointer!important;box-shadow:none!important;-webkit-tap-highlight-color:transparent;transition:background .14s ease,transform .14s ease,color .14s ease;}
-      #cp-chat-root .cp-harmony-call-entry:hover,.cp-harmony-call-entry:hover{background:rgba(15,23,42,.06)!important;color:#111827!important;}
-      #cp-chat-root .cp-harmony-call-entry:active,.cp-harmony-call-entry:active{transform:scale(.9);background:rgba(15,23,42,.10)!important;}
+      #cp-chat-root .cp-harmony-call-entry,.cp-harmony-call-entry{width:34px!important;height:34px!important;min-width:34px!important;padding:0!important;border:0!important;border-radius:999px!important;background:transparent!important;color:#374151!important;display:grid!important;place-items:center!important;cursor:pointer!important;box-shadow:none!important;-webkit-tap-highlight-color:transparent;transition:transform .14s ease,color .14s ease;}
+      #cp-chat-root .cp-harmony-call-entry:hover,.cp-harmony-call-entry:hover{background:transparent!important;color:#111827!important;}
+      #cp-chat-root .cp-harmony-call-entry:active,.cp-harmony-call-entry:active{transform:scale(.9);background:transparent!important;}
       .cp-harmony-call-entry svg{width:20px;height:20px;display:block;}
-      .cp-harmony-call-pop{position:absolute;right:0;top:46px;width:188px;padding:7px;border-radius:18px;background:rgba(255,255,255,.99);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);border:1px solid rgba(0,0,0,.05);box-shadow:0 18px 44px rgba(15,23,42,.22);z-index:2147483450;animation:cp-pop-in .18s cubic-bezier(.2,.8,.2,1);}
+      .cp-harmony-call-pop{position:absolute;right:0;top:44px;width:174px;padding:6px;border-radius:16px;background:rgba(255,255,255,.99);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);border:1px solid rgba(0,0,0,.05);box-shadow:0 18px 44px rgba(15,23,42,.22);z-index:2147483450;animation:cp-pop-in .18s cubic-bezier(.2,.8,.2,1);}
       .cp-harmony-call-pop[hidden]{display:none!important;}
       @keyframes cp-pop-in{from{opacity:0;transform:translateY(-8px) scale(.95);}to{opacity:1;transform:translateY(0) scale(1);}}
-      .cp-harmony-call-pop::before{content:"";position:absolute;right:22px;top:-6px;width:12px;height:12px;background:#fff;border-left:1px solid rgba(0,0,0,.05);border-top:1px solid rgba(0,0,0,.05);transform:rotate(45deg);}
-      .cp-harmony-call-pop button{width:100%;height:50px;border:none;background:transparent;border-radius:14px;padding:8px 10px;display:flex;align-items:center;gap:12px;cursor:pointer;text-align:left;color:#0f172a;transition:background .12s ease;}
-      .cp-harmony-call-pop button:hover{background:#f1f5f9;}
+      .cp-harmony-call-pop::before{content:"";position:absolute;right:18px;top:-6px;width:12px;height:12px;background:#fff;border-left:1px solid rgba(0,0,0,.05);border-top:1px solid rgba(0,0,0,.05);transform:rotate(45deg);}
+      .cp-harmony-call-pop button{width:100%;height:48px;border:none;background:transparent;border-radius:12px;padding:8px 10px;display:flex;align-items:center;gap:10px;cursor:pointer;text-align:left;color:#0f172a;transition:background .12s ease;}
+      .cp-harmony-call-pop button:hover{background:#f8fafc;}
       .cp-harmony-call-pop button:active{transform:scale(.98);}
-      .cp-harmony-call-pop-icon{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;color:#fff;flex-shrink:0;}
-      .cp-harmony-call-pop-icon svg{width:18px;height:18px;}
-      .cp-harmony-call-pop-icon.audio{background:linear-gradient(135deg,#64748b,#334155);}
-      .cp-harmony-call-pop-icon.video{background:linear-gradient(135deg,#8b5cf6,#6d28d9);}
+      .cp-harmony-call-pop-icon{width:24px;height:24px;border-radius:0;display:grid;place-items:center;flex-shrink:0;background:transparent!important;box-shadow:none!important;}
+      .cp-harmony-call-pop-icon svg{width:20px;height:20px;}
+      .cp-harmony-call-pop-icon.audio{color:#334155;}
+      .cp-harmony-call-pop-icon.video{color:#6d28d9;}
       .cp-harmony-call-pop-main b{display:block;font-size:14px;font-weight:700;color:#0f172a;}
 
       #cp-call-root{position:fixed;inset:0;z-index:2147483500;display:none;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Segoe UI",sans-serif;-webkit-tap-highlight-color:transparent;}
       #cp-call-bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(40px) brightness(.42);transform:scale(1.12);background-color:#0f1620;}
       #cp-call-mask{position:absolute;inset:0;background:linear-gradient(180deg,rgba(15,23,42,.15),rgba(8,12,20,.82));}
-      #cp-call-main{position:absolute;inset:0;display:none;overflow:hidden;background:#070b11;}
+      #cp-call-main{position:absolute;inset:0;display:none;overflow:hidden;background:#070b11;touch-action:manipulation;}
       #cp-call-remote-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#070b11;display:none;}
       #cp-call-main.is-audio #cp-call-remote-video{display:none!important;}
+      #cp-call-main.is-video::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:radial-gradient(circle at 50% 40%,rgba(255,255,255,.04),rgba(0,0,0,0) 42%);}
+      #cp-call-main.is-video #cp-call-remote-video{z-index:0;}
 
       #cp-call-top{position:absolute;top:0;left:0;right:0;z-index:3;padding:calc(54px + env(safe-area-inset-top)) 20px 0;display:flex;flex-direction:column;align-items:center;text-align:center;pointer-events:none;}
       #cp-call-avatar{width:108px;height:108px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,.16);box-shadow:0 16px 40px rgba(0,0,0,.4);background:#334155;}
@@ -1490,10 +1684,11 @@
       #cp-call-main.is-video.controls-hidden #cp-call-top{opacity:0;transform:translateY(-12px);pointer-events:none;}
       #cp-call-main.is-video.controls-hidden #cp-call-controls{opacity:0;transform:translateY(18px);pointer-events:none;}
 
-      #cp-call-local-wrap{position:absolute;right:14px;top:calc(96px + env(safe-area-inset-top));width:108px;height:152px;border-radius:18px;overflow:hidden;background:#000;display:none;z-index:8;box-shadow:0 16px 36px rgba(0,0,0,.4);border:1.5px solid rgba(255,255,255,.18);cursor:pointer;transition:box-shadow .18s ease,transform .18s ease;}
+      #cp-call-local-wrap{position:absolute;right:14px;top:calc(96px + env(safe-area-inset-top));width:112px;height:156px;border-radius:18px;overflow:hidden;background:#000;display:none;z-index:8;box-shadow:0 16px 36px rgba(0,0,0,.4);border:1.5px solid rgba(255,255,255,.18);cursor:pointer;transition:box-shadow .18s ease,transform .18s ease;touch-action:none;user-select:none;}
       #cp-call-local-wrap:active{transform:scale(.97);}
+      #cp-call-local-wrap.dragging{transform:scale(1.02);box-shadow:0 20px 44px rgba(0,0,0,.5);}
       #cp-call-local-wrap::after{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);pointer-events:none;}
-      #cp-call-local-video{width:100%;height:100%;object-fit:cover;display:block;}
+      #cp-call-local-video{width:100%;height:100%;object-fit:cover;display:block;background:#000;}
 
       #cp-call-controls{position:absolute;left:0;right:0;bottom:0;z-index:9;padding:24px 18px calc(28px + env(safe-area-inset-bottom));display:flex;align-items:flex-end;justify-content:center;gap:18px;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.5));}
       .cp-call-btn{display:inline-flex;flex-direction:column;align-items:center;gap:8px;background:none;border:none;cursor:pointer;color:#fff;-webkit-tap-highlight-color:transparent;}
@@ -1519,10 +1714,13 @@
       .cp-call-in-circle.red svg{transform:rotate(135deg);}
       .cp-call-hidden-signal{display:none!important;}
     `;
-    var st = document.createElement("style");
-    st.id = "cp-harmony-call-style";
+    var st = byId("cp-harmony-call-style");
+    if (!st) {
+      st = document.createElement("style");
+      st.id = "cp-harmony-call-style";
+      document.head.appendChild(st);
+    }
     st.textContent = css;
-    document.head.appendChild(st);
   }
 
   function mountUI() {
@@ -1534,14 +1732,14 @@
       '<div id="cp-call-bg"></div>' +
       '<div id="cp-call-mask"></div>' +
       '<div id="cp-call-main">' +
-        '<video id="cp-call-remote-video" autoplay playsinline></video>' +
-        '<audio id="cp-call-remote-audio" autoplay></audio>' +
+        '<video id="cp-call-remote-video" autoplay muted playsinline webkit-playsinline></video>' +
+        '<audio id="cp-call-remote-audio" autoplay playsinline></audio>' +
         '<div id="cp-call-top">' +
           '<img id="cp-call-avatar" src="" alt="">' +
           '<div id="cp-call-name">好友</div>' +
           '<div id="cp-call-status">连接中…</div>' +
         '</div>' +
-        '<div id="cp-call-local-wrap"><video id="cp-call-local-video" autoplay muted playsinline></video></div>' +
+        '<div id="cp-call-local-wrap"><video id="cp-call-local-video" autoplay muted playsinline webkit-playsinline></video></div>' +
         '<div id="cp-call-controls">' +
           '<button type="button" class="cp-call-btn" id="cp-call-btn-mic"><span class="cp-call-ic">' + ICON.mic + '</span><span class="cp-call-lbl">静音</span></button>' +
           '<button type="button" class="cp-call-btn danger" id="cp-call-btn-end"><span class="cp-call-ic">' + ICON.hangup + '</span><span class="cp-call-lbl">挂断</span></button>' +
@@ -1709,6 +1907,8 @@
     }
     var root = byId("cp-call-root");
     if (root && root.parentNode) root.parentNode.removeChild(root);
+    var style = byId("cp-harmony-call-style");
+    if (style && style.parentNode) style.parentNode.removeChild(style);
     State.started = false;
     try { window.__cpHarmonyPeerCallInitedV7 = false; } catch (_) {}
     try { window.__cpHarmonyCallWkListenerBoundV7 = false; } catch (_) {}
@@ -1763,7 +1963,7 @@
   }
 
   window.CPHarmonyCall = {
-    version: "v7.1-modern-wukong-call",
+    version: "v7.2-modern-wukong-call",
     boot: boot,
     refresh: function () { injectHeaderButton(); hideSignalMessagesInDom(document); return !!byId("cp-harmony-call-entry"); },
     start: function (mode) { unlockAudioNow(); return startOutgoingCall(mode || "audio"); },
