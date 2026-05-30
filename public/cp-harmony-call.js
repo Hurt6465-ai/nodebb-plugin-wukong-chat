@@ -2,10 +2,10 @@
   "use strict";
 
   // ============================================================
-  // CP Harmony Peer Call v7.2 — 现代化语音 / 视频通话
+  // CP Harmony Peer Call v7.4 — 现代化语音 / 视频通话
   // - 顶部按钮：黑/灰电话图标，无背景框
-  // - 视频画面：点击小窗稳定切换到大屏，修复切换后偶发黑屏
-  // - 通话音效：呼出 public/bohao.mp3、来电 public/laidian.mp3，来电震动
+  // - 视频画面：点击小窗稳定切换到大屏，高清优先并保留远端画面卡顿自恢复
+  // - 通话音效：呼出 public/bohao.mp3、来电 public/laidian.mp3，多路径自动探测，来电震动
   // - 前后摄像头切换（replaceTrack，无需重协商）
   // - 可拖动本地/远端小窗
   // - 断线自动重连 + ICE 状态监控
@@ -54,7 +54,29 @@
     // 若项目把 public 目录映射到站点根目录，也会自动回退到 /xxx.mp3。
     outgoingRingUrl: "public/bohao.mp3",
     incomingRingUrl: "public/laidian.mp3",
-    ringVolume: 0.86
+    ringVolume: 0.86,
+    // 你的音效文件如果不是站点根目录/public，可在 window.CPHarmonyCallConfig.audioBaseUrls 里追加目录。
+    // 例如：window.CPHarmonyCallConfig = { audioBaseUrls: ["/plugins/nodebb-plugin-wukong-chat/static/public/"] }
+    audioBaseUrls: [],
+
+    // 高清优先：不再通过降低到 480p 解决卡顿。
+    // 先请求 720p 高清，失败才自动回退；如需 1080p，可在外部配置 enableFullHd: true。
+    enableFullHd: false,
+    videoWidthIdeal: 1280,
+    videoHeightIdeal: 720,
+    videoWidthMin: 960,
+    videoHeightMin: 540,
+    videoWidthMax: 1920,
+    videoHeightMax: 1080,
+    videoFrameRateIdeal: 24,
+    videoFrameRateMax: 30,
+    videoMaxBitrate: 2600000,
+    videoMaxFramerate: 30,
+    videoContentHint: "detail",
+    videoDegradationPreference: "maintain-resolution",
+    videoAllowFallback: true,
+    videoFreezeCheckMs: 1800,
+    videoFreezeRecoverAfterMs: 4200
   };
 
   var CFG = Object.assign({}, DEFAULTS, window.CPHarmonyCallConfig || {});
@@ -111,6 +133,8 @@
     connectTimer: null,
     iceGraceTimer: null,
     controlsTimer: null,
+    videoWatchTimer: null,
+    videoWatchState: {},
     sec: 0,
 
     isMicOn: true,
@@ -129,7 +153,8 @@
     stops: [],
     unlocked: !!window[RING_UNLOCKED_KEY],
     bound: false,
-    mode: ""
+    mode: "",
+    primed: false
   };
 
   // ----------------------------------------------------------------
@@ -356,21 +381,86 @@
     return AudioFX.ctx;
   }
 
+  function scriptBaseUrls() {
+    var list = [];
+    function add(src) {
+      try {
+        if (!src) return;
+        var u = new URL(src, location.href);
+        var href = u.href.replace(/[^/]*$/, "");
+        if (list.indexOf(href) < 0) list.push(href);
+      } catch (e) {}
+    }
+    try { if (document.currentScript && document.currentScript.src) add(document.currentScript.src); } catch (e) {}
+    try {
+      var scripts = document.getElementsByTagName("script");
+      for (var i = 0; i < scripts.length; i++) {
+        var src = scripts[i].src || "";
+        if (/cp-harmony-call|harmony|wukong|nodebb-plugin-wukong-chat/i.test(src)) add(src);
+      }
+    } catch (e) {}
+    return list;
+  }
+
   function mediaAssetUrls(path) {
     var raw = String(path || "").trim();
     if (!raw) return [];
     var list = [];
+    var file = raw.split("?")[0].split("#")[0].split("/").pop() || raw;
+
     function add(u) {
       if (!u) return;
-      if (!/^https?:\/\//i.test(u) && !/^data:/i.test(u) && !/^blob:/i.test(u)) {
-        u = withRelativePath(u.charAt(0) === "/" ? u : "/" + u);
-      }
-      if (list.indexOf(u) < 0) list.push(u);
+      try {
+        var resolved = u;
+        if (!/^https?:\/\//i.test(resolved) && !/^data:/i.test(resolved) && !/^blob:/i.test(resolved)) {
+          resolved = withRelativePath(resolved.charAt(0) === "/" ? resolved : "/" + resolved);
+        }
+        if (list.indexOf(resolved) < 0) list.push(resolved);
+      } catch (e) {}
     }
+
+    function addAbs(u) {
+      if (!u) return;
+      try {
+        var resolved = new URL(u, location.href).href;
+        if (list.indexOf(resolved) < 0) list.push(resolved);
+      } catch (e) { add(u); }
+    }
+
     add(raw);
-    // 兼容两种 public 静态资源部署方式：/public/a.mp3 与 /a.mp3
-    if (/^public\//i.test(raw)) add(raw.replace(/^public\//i, ""));
     if (raw.charAt(0) !== "/") add("/" + raw);
+    if (/^public\//i.test(raw)) {
+      add(raw.replace(/^public\//i, ""));
+      add("/" + raw.replace(/^public\//i, ""));
+    }
+
+    // NodeBB / 插件静态目录常见位置，多试几个不会影响正常播放，404 会自动跳下一个。
+    [
+      "/public/" + file,
+      "/assets/" + file,
+      "/uploads/" + file,
+      "/plugins/nodebb-plugin-wukong-chat/static/" + file,
+      "/plugins/nodebb-plugin-wukong-chat/static/public/" + file,
+      "/plugins/nodebb-plugin-wukong-chat/public/" + file,
+      "/assets/plugins/nodebb-plugin-wukong-chat/" + file,
+      "/assets/plugins/nodebb-plugin-wukong-chat/public/" + file
+    ].forEach(add);
+
+    if (Array.isArray(CFG.audioBaseUrls)) {
+      CFG.audioBaseUrls.forEach(function (base) {
+        base = String(base || "");
+        if (!base) return;
+        if (base.charAt(base.length - 1) !== "/") base += "/";
+        add(base + file);
+      });
+    }
+
+    scriptBaseUrls().forEach(function (base) {
+      addAbs(new URL(file, base).href);
+      addAbs(new URL("public/" + file, base).href);
+      addAbs(new URL(raw, base).href);
+    });
+
     return list;
   }
 
@@ -378,6 +468,7 @@
     AudioFX.unlocked = true;
     window[RING_UNLOCKED_KEY] = true;
     ensureAudioContext();
+    primeAudioFiles();
   }
 
   function unlockAudioOnGesture() {
@@ -428,6 +519,26 @@
     });
   }
 
+  function primeAudioFiles() {
+    if (AudioFX.primed) return;
+    AudioFX.primed = true;
+    try {
+      [CFG.outgoingRingUrl, CFG.incomingRingUrl].forEach(function (path) {
+        var urls = mediaAssetUrls(path);
+        // 只预加载前几个最可能命中的地址，避免大量 404。
+        urls.slice(0, 5).forEach(function (u) {
+          try {
+            var a = new Audio();
+            a.preload = "auto";
+            a.muted = true;
+            a.src = u;
+            a.load();
+          } catch (e) {}
+        });
+      });
+    } catch (e) {}
+  }
+
   function playLoopingAudioFile(urls, volume, fallback) {
     urls = urls || [];
     if (!urls.length || !AudioFX.unlocked) {
@@ -435,46 +546,78 @@
       return noop;
     }
 
-    var audio = new Audio();
+    var audio = document.createElement("audio");
     var idx = 0;
     var stopped = false;
+    var started = false;
+    var fallbackUsed = false;
     audio.loop = true;
     audio.preload = "auto";
+    audio.autoplay = true;
+    audio.muted = false;
     audio.volume = Math.max(0, Math.min(1, Number(volume || CFG.ringVolume || 0.86)));
     audio.setAttribute("playsinline", "");
     audio.setAttribute("webkit-playsinline", "");
+    audio.style.cssText = "position:fixed;width:1px;height:1px;left:-9999px;top:-9999px;opacity:0;pointer-events:none;";
+    try { document.body.appendChild(audio); } catch (e) {}
 
-    function tryPlay() {
-      if (stopped) return;
-      audio.src = urls[idx];
-      try { audio.load(); } catch (e) {}
-      var p = null;
-      try { p = audio.play(); } catch (e) { p = Promise.reject(e); }
-      if (p && typeof p.catch === "function") {
-        p.catch(function (err) {
-          warn("ring-audio-play", err);
-          if (stopped) return;
-          idx += 1;
-          if (idx < urls.length) tryPlay();
-          else if (typeof fallback === "function") fallback();
-        });
-      }
+    function useFallback() {
+      if (fallbackUsed) return;
+      fallbackUsed = true;
+      if (typeof fallback === "function") fallback();
     }
 
-    audio.onerror = function () {
-      if (stopped) return;
+    function cleanupAudioOnly() {
+      try { audio.pause(); } catch (e) {}
+      try { audio.currentTime = 0; } catch (e) {}
+      try { audio.removeAttribute("src"); audio.load(); } catch (e) {}
+      try { if (audio.parentNode) audio.parentNode.removeChild(audio); } catch (e) {}
+    }
+
+    function tryNext(reason) {
+      warn("ring-audio-next", { url: urls[idx], reason: reason });
       idx += 1;
       if (idx < urls.length) tryPlay();
-      else if (typeof fallback === "function") fallback();
-    };
+      else useFallback();
+    }
+
+    function tryPlay() {
+      if (stopped || started) return;
+      audio.src = urls[idx];
+      try { audio.load(); } catch (e) {}
+
+      var playOnce = function () {
+        if (stopped || started) return;
+        var p = null;
+        try { p = audio.play(); } catch (e) { p = Promise.reject(e); }
+        if (p && typeof p.then === "function") {
+          p.then(function () {
+            started = true;
+            warn("ring-audio-ok", audio.src);
+          }).catch(function (err) {
+            if (stopped || started) return;
+            // NotAllowedError 说明浏览器拦了自动播放，只能用已解锁的 AudioContext 兜底。
+            if (err && err.name === "NotAllowedError") useFallback();
+            else tryNext(err && (err.name || err.message) || err);
+          });
+        } else {
+          started = true;
+        }
+      };
+
+      audio.onerror = function () {
+        if (!stopped && !started) tryNext("error");
+      };
+      audio.oncanplay = playOnce;
+      audio.oncanplaythrough = playOnce;
+      setTimeout(playOnce, 180);
+    }
 
     tryPlay();
 
     var stop = function () {
       stopped = true;
-      try { audio.pause(); } catch (e) {}
-      try { audio.currentTime = 0; } catch (e) {}
-      try { audio.removeAttribute("src"); audio.load(); } catch (e) {}
+      cleanupAudioOnly();
     };
     AudioFX.stops.push(stop);
     return stop;
@@ -779,6 +922,7 @@
           getMedia(State.mode).then(function (stream) {
             call.answer(stream);
             bindMediaCall(call);
+            boostOutboundQuality(call.peerConnection, "after-call");
             setStatus("连接中…");
             startConnectGuard();
           }).catch(function (err) {
@@ -821,13 +965,84 @@
   function audioConstraints() {
     return { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   }
-  function videoConstraints(facing) {
-    return {
+  function isMobileLike() {
+    return /Android|iPhone|iPad|iPod|Mobile|HarmonyOS|MiuiBrowser|HuaweiBrowser/i.test(navigator.userAgent || "");
+  }
+
+  function videoConstraints(facing, tier) {
+    tier = tier || "hd";
+    var idealFps = Number(CFG.videoFrameRateIdeal || 24);
+    var maxFps = Number(CFG.videoFrameRateMax || 30);
+    var w = Number(CFG.videoWidthIdeal || 1280);
+    var h = Number(CFG.videoHeightIdeal || 720);
+    var minW = Number(CFG.videoWidthMin || 960);
+    var minH = Number(CFG.videoHeightMin || 540);
+    var maxW = Number(CFG.videoWidthMax || 1920);
+    var maxH = Number(CFG.videoHeightMax || 1080);
+
+    if (tier === "fhd") {
+      w = 1920; h = 1080; minW = Math.max(minW, 1280); minH = Math.max(minH, 720);
+      maxW = Math.max(maxW, 1920); maxH = Math.max(maxH, 1080);
+    } else if (tier === "qhd") {
+      w = 960; h = 540; minW = 640; minH = 360; maxW = Math.max(maxW, 1280); maxH = Math.max(maxH, 720);
+    } else if (tier === "safe") {
+      w = 640; h = 480; minW = 0; minH = 0; maxW = Math.max(maxW, 640); maxH = Math.max(maxH, 480);
+      idealFps = Math.min(idealFps, 20); maxFps = Math.min(maxFps, 24);
+    }
+
+    var c = {
       facingMode: facing ? { ideal: facing } : "user",
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      frameRate: { ideal: 24, max: 30 }
+      width: minW > 0 ? { min: minW, ideal: w, max: maxW } : { ideal: w, max: maxW },
+      height: minH > 0 ? { min: minH, ideal: h, max: maxH } : { ideal: h, max: maxH },
+      aspectRatio: { ideal: 16 / 9 },
+      frameRate: { ideal: idealFps, max: maxFps }
     };
+    try { c.resizeMode = { ideal: "none" }; } catch (e) {}
+    return c;
+  }
+
+  function videoConstraintCandidates(facing) {
+    var list = [];
+    if (CFG.enableFullHd === true) list.push(videoConstraints(facing, "fhd"));
+    list.push(videoConstraints(facing, "hd"));
+    if (CFG.videoAllowFallback !== false) {
+      list.push(videoConstraints(facing, "qhd"));
+      list.push(videoConstraints(facing, "safe"));
+    }
+    return list;
+  }
+
+  async function getUserMediaWithVideoFallback(facing, audio) {
+    var candidates = videoConstraintCandidates(facing);
+    var lastErr = null;
+    for (var i = 0; i < candidates.length; i++) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: audio, video: candidates[i] });
+      } catch (err) {
+        lastErr = err;
+        warn("video-constraint-fallback", { index: i, error: err && (err.name || err.message) || err });
+      }
+    }
+    throw lastErr || new Error("摄像头不可用");
+  }
+
+  function localVideoSettings() {
+    try {
+      var t = State.localStream && State.localStream.getVideoTracks && State.localStream.getVideoTracks()[0];
+      return t && t.getSettings ? t.getSettings() : {};
+    } catch (e) { return {}; }
+  }
+
+  function prepareLocalMediaStream(stream) {
+    if (!stream || !stream.getTracks) return stream;
+    stream.getAudioTracks().forEach(function (t) {
+      try { t.contentHint = "speech"; } catch (e) {}
+    });
+    stream.getVideoTracks().forEach(function (t) {
+      try { t.contentHint = String(CFG.videoContentHint || "detail"); } catch (e) {}
+      t.enabled = State.isCamOn !== false;
+    });
+    return stream;
   }
 
   async function getMedia(mode) {
@@ -837,10 +1052,8 @@
     }
     var wantsVideo = mode === "video";
     try {
-      State.localStream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints(),
-        video: wantsVideo ? videoConstraints(State.facingMode) : false
-      });
+      if (wantsVideo) State.localStream = await getUserMediaWithVideoFallback(State.facingMode, audioConstraints());
+      else State.localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(), video: false });
     } catch (err) {
       if (err && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError")) {
         throw new Error("请允许麦克风/摄像头权限后再通话");
@@ -855,6 +1068,14 @@
     }
     State.isMicOn = !!State.localStream.getAudioTracks()[0];
     State.isCamOn = !!State.localStream.getVideoTracks()[0];
+    prepareLocalMediaStream(State.localStream);
+    if (wantsVideo) {
+      var vs = localVideoSettings();
+      warn("local-video-settings", vs);
+      if (vs && vs.width && vs.height && (Number(vs.width) < 960 || Number(vs.height) < 540)) {
+        showToast("摄像头实际输出 " + vs.width + "x" + vs.height + "，清晰度可能受设备/浏览器限制");
+      }
+    }
     bindLocalStream();
     syncButtons();
     return State.localStream;
@@ -871,13 +1092,15 @@
     State.switchingCamera = true;
     var newFacing = State.facingMode === "user" ? "environment" : "user";
     try {
-      var ns = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoConstraints(newFacing) });
+      var ns = await getUserMediaWithVideoFallback(newFacing, false);
       var newTrack = ns.getVideoTracks()[0];
       if (!newTrack) throw new Error("no video track");
+      try { newTrack.contentHint = String(CFG.videoContentHint || "detail"); } catch (e) {}
 
       var pc = State.mediaCall.peerConnection;
       var sender = pc.getSenders().filter(function (s) { return s.track && s.track.kind === "video"; })[0];
       if (sender) await sender.replaceTrack(newTrack);
+      boostOutboundQuality(pc, "bind");
 
       var oldTrack = State.localStream.getVideoTracks()[0];
       if (oldTrack) {
@@ -918,7 +1141,86 @@
       el.addEventListener("loadedmetadata", run, { once: true });
       el.addEventListener("canplay", run, { once: true });
       setTimeout(run, 120);
+      setTimeout(run, 600);
     }
+  }
+
+  function hardRefreshVideoElement(el, stream, why) {
+    if (!el || !stream || el._cpRefreshing) return;
+    el._cpRefreshing = true;
+    warn("video-refresh", why || "stuck");
+    var transform = el.style.transform;
+    try { el.pause(); } catch (e) {}
+    try { el.srcObject = null; el.load(); } catch (e) { try { el.srcObject = null; } catch (_) {} }
+    setTimeout(function () {
+      try {
+        el.autoplay = true;
+        el.muted = true;
+        el.playsInline = true;
+        el.setAttribute("playsinline", "");
+        el.setAttribute("webkit-playsinline", "");
+        el.style.transform = transform;
+        el.srcObject = stream;
+        safePlayMedia(el, "video-refresh-play");
+      } catch (e) { warn("video-refresh-set", e); }
+      setTimeout(function () { el._cpRefreshing = false; }, 900);
+    }, 80);
+  }
+
+  function videoFrameCount(el) {
+    if (!el) return 0;
+    try {
+      if (el.getVideoPlaybackQuality) {
+        var q = el.getVideoPlaybackQuality();
+        if (q && typeof q.totalVideoFrames === "number") return q.totalVideoFrames;
+      }
+    } catch (e) {}
+    try {
+      if (typeof el.webkitDecodedFrameCount === "number") return el.webkitDecodedFrameCount;
+    } catch (e) {}
+    return Math.floor((Number(el.currentTime) || 0) * 10);
+  }
+
+  function checkRemoteVideoElement(el, key) {
+    if (!el || el.srcObject !== State.remoteStream || !State.remoteStream) return;
+    var track = State.remoteStream.getVideoTracks()[0];
+    if (!track || track.readyState !== "live") return;
+    safePlayMedia(el, "video-watch-play");
+
+    var frame = videoFrameCount(el);
+    var t = Number(el.currentTime) || 0;
+    var st = State.videoWatchState[key] || { frame: -1, t: -1, sameSince: now(), lastRefresh: 0 };
+    var moved = frame !== st.frame || Math.abs(t - st.t) > 0.05;
+    if (moved) {
+      st.frame = frame;
+      st.t = t;
+      st.sameSince = now();
+    } else if (el.readyState >= 2 && !el.paused && now() - st.sameSince > Number(CFG.videoFreezeRecoverAfterMs || 4200)) {
+      // 只针对“视频元素播放卡住”做重绑；真正网络没帧时只能等 WebRTC 自己恢复。
+      if (!st.lastRefresh || now() - st.lastRefresh > 6000) {
+        st.lastRefresh = now();
+        st.sameSince = now();
+        hardRefreshVideoElement(el, State.remoteStream, key + " frame-not-moving");
+      }
+    }
+    State.videoWatchState[key] = st;
+  }
+
+  function startVideoWatchdog() {
+    clearInterval(State.videoWatchTimer);
+    State.videoWatchState = {};
+    if (State.mode !== "video") return;
+    State.videoWatchTimer = setInterval(function () {
+      if (!State.callId || State.mode !== "video") { stopVideoWatchdog(); return; }
+      checkRemoteVideoElement(byId("cp-call-remote-video"), "main");
+      checkRemoteVideoElement(byId("cp-call-local-video"), "pip");
+    }, Number(CFG.videoFreezeCheckMs || 1800));
+  }
+
+  function stopVideoWatchdog() {
+    clearInterval(State.videoWatchTimer);
+    State.videoWatchTimer = null;
+    State.videoWatchState = {};
   }
 
   function setVideoElement(el, stream) {
@@ -929,6 +1231,7 @@
     el.muted = true;
     el.autoplay = true;
     el.playsInline = true;
+    el.disablePictureInPicture = true;
     el.setAttribute("playsinline", "");
     el.setAttribute("webkit-playsinline", "");
     el.style.transform = isShowingLocal(stream) && State.facingMode !== "environment" ? "scaleX(-1)" : "none";
@@ -982,7 +1285,45 @@
 
   function bindRemoteStream(stream) {
     State.remoteStream = stream || null;
+    State.videoWatchState = {};
+    if (State.remoteStream && State.remoteStream.getTracks) {
+      State.remoteStream.getTracks().forEach(function (t) {
+        try {
+          t.onunmute = function () { syncVideoSurfaces(); startVideoWatchdog(); };
+          t.onmute = function () { warn("remote-track-mute", t.kind); };
+          t.onended = function () { warn("remote-track-ended", t.kind); };
+        } catch (e) {}
+      });
+    }
     syncVideoSurfaces();
+    startVideoWatchdog();
+  }
+
+  function tuneOutboundMedia(pc, reason) {
+    if (!pc || !pc.getSenders) return;
+    try {
+      pc.getSenders().forEach(function (sender) {
+        if (!sender || !sender.track || sender.track.kind !== "video" || !sender.getParameters || !sender.setParameters) return;
+        try { sender.track.contentHint = String(CFG.videoContentHint || "detail"); } catch (e) {}
+        var params = sender.getParameters() || {};
+        if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+        params.encodings[0].active = true;
+        params.encodings[0].maxBitrate = Number(CFG.videoMaxBitrate || 2600000);
+        params.encodings[0].maxFramerate = Number(CFG.videoMaxFramerate || 30);
+        try { params.encodings[0].scaleResolutionDownBy = 1; } catch (e) {}
+        try { params.degradationPreference = String(CFG.videoDegradationPreference || "maintain-resolution"); } catch (e) {}
+        sender.setParameters(params).then(function () {
+          warn("set-video-params-ok", { reason: reason || "", bitrate: params.encodings[0].maxBitrate, framerate: params.encodings[0].maxFramerate });
+        }).catch(function (err) { warn("set-video-params", err); });
+      });
+    } catch (e) { warn("tune-media", e); }
+  }
+
+  function boostOutboundQuality(pc, reason) {
+    if (!pc) return;
+    [0, 300, 900, 1800, 3200].forEach(function (delay) {
+      setTimeout(function () { tuneOutboundMedia(pc, reason || "boost"); }, delay);
+    });
   }
 
   function bindMediaCall(call) {
@@ -997,11 +1338,20 @@
     try {
       var pc = call.peerConnection;
       if (pc) {
+        boostOutboundQuality(pc, "bind");
+        pc.addEventListener && pc.addEventListener("track", function (ev) {
+          var s = ev && ev.streams && ev.streams[0];
+          if (s && s !== State.remoteStream) {
+            bindRemoteStream(s);
+            markConnected();
+          }
+        });
         pc.oniceconnectionstatechange = function () {
           var st = pc.iceConnectionState;
           if (st === "connected" || st === "completed") {
             clearTimeout(State.iceGraceTimer);
             markConnected();
+            startVideoWatchdog();
           } else if (st === "disconnected") {
             clearTimeout(State.iceGraceTimer);
             State.iceGraceTimer = setTimeout(function () {
@@ -1185,6 +1535,7 @@
     clearTimeout(State.connectTimer);
     clearTimeout(State.iceGraceTimer);
     clearTimeout(State.controlsTimer);
+    stopVideoWatchdog();
 
     if (State.mediaCall) { try { State.mediaCall.close(); } catch (e) {} }
     stopTracks(State.localStream);
@@ -1350,6 +1701,7 @@
       metadata: { callId: State.callId, from: uid(), mode: State.mode }
     });
     bindMediaCall(call);
+    boostOutboundQuality(call.peerConnection, "after-call");
     startConnectGuard();
 
     clearTimeout(State.timeoutTimer);
@@ -1963,7 +2315,7 @@
   }
 
   window.CPHarmonyCall = {
-    version: "v7.2-modern-wukong-call",
+    version: "v7.4-hd-wukong-call",
     boot: boot,
     refresh: function () { injectHeaderButton(); hideSignalMessagesInDom(document); return !!byId("cp-harmony-call-entry"); },
     start: function (mode) { unlockAudioNow(); return startOutgoingCall(mode || "audio"); },
@@ -1973,6 +2325,13 @@
     getPeerId: function () { return State.peerId; },
     isActive: function () { return !!State.callId; },
     hideSignals: function () { hideSignalMessagesInDom(document); },
+    audioUrls: function () { return { outgoing: mediaAssetUrls(CFG.outgoingRingUrl), incoming: mediaAssetUrls(CFG.incomingRingUrl) }; },
+    videoQuality: function () {
+      return { local: localVideoSettings(), bitrate: Number(CFG.videoMaxBitrate || 2600000), framerate: Number(CFG.videoMaxFramerate || 30), degradation: CFG.videoDegradationPreference || "maintain-resolution" };
+    },
+    boostQuality: function () { if (State.mediaCall) boostOutboundQuality(State.mediaCall.peerConnection, "manual"); return this.videoQuality(); },
+    testAudio: function (kind) { unlockAudioNow(); if (kind === "incoming") playIncomingRing(); else playOutgoingRing(); return mediaAssetUrls(kind === "incoming" ? CFG.incomingRingUrl : CFG.outgoingRingUrl); },
+    stopAudio: stopRing,
     destroy: destroy,
     config: CFG
   };
