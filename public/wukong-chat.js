@@ -189,7 +189,7 @@
   if (cpPluginConfig().enabled === false) return;
 
   if (window.__cpNodebbHarmonyInited) return;
-  window.__cpNodebbHarmonyVersion = "1.0.6-wukong-call-record-persist";
+  window.__cpNodebbHarmonyVersion = "1.0.5-wukong-single-source";
   window.__cpNodebbHarmonyInited = true;
 
   var LS_PREFIX = "cp_chat_harmony_" + location.pathname.replace(/[^\w]/g, "_");
@@ -213,90 +213,15 @@
 
 
   var CALL_SIGNAL_PREFIX = "__cp_harmony_call__:";
-  var CALL_RECORD_PREFIX = "__cp_harmony_call_record__:";
 
-  function isCallRecordText(text) {
-    var s = String(text == null ? "" : text).trim();
-    return s.indexOf(CALL_RECORD_PREFIX) === 0;
-  }
-
-  function isCallControlSignalText(text) {
+  function isCallSignalText(text) {
     var s = String(text == null ? "" : text).trim();
     return s.indexOf(CALL_SIGNAL_PREFIX) === 0 || s.indexOf("__wkcall__:") === 0 || s.indexOf("__wkcall__：") === 0;
   }
 
-  function isCallSignalText(text) {
-    return isCallControlSignalText(text) || isCallRecordText(text);
-  }
-
   function isCallSignalMessage(m) {
     if (!m) return false;
-    if (m.type === "call") return false;
     return isCallSignalText(m.serverText || m.text || m.html || "");
-  }
-
-  function safeParseJsonObject(raw) {
-    try {
-      var obj = JSON.parse(String(raw || ""));
-      return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function normalizeCallRecordKind(kind) {
-    kind = String(kind || "").trim();
-    var allowed = {
-      completed: 1,
-      canceled: 1,
-      no_answer: 1,
-      rejected: 1,
-      busy: 1,
-      missed: 1,
-      declined: 1
-    };
-    return allowed[kind] ? kind : "completed";
-  }
-
-  function normalizeCallRecordMode(mode) {
-    mode = String(mode || "audio").trim().toLowerCase();
-    if (mode === "voice") mode = "audio";
-    return mode === "video" ? "video" : "audio";
-  }
-
-  function normalizeCallRecordInfo(info) {
-    info = info || {};
-    var out = {
-      type: "call_record",
-      version: 1,
-      callId: String(info.callId || info.call_id || "").trim(),
-      kind: normalizeCallRecordKind(info.kind || info.callKind || info.status),
-      mode: normalizeCallRecordMode(info.mode || info.callMode),
-      durationSec: Math.max(0, Math.floor(Number(info.durationSec || info.duration || info.duration_seconds || 0) || 0)),
-      mine: !!info.mine,
-      ts: Number(info.ts || info.timestamp || Date.now()) || Date.now()
-    };
-    if (!out.callId) {
-      out.callId = "call_" + shortHash([out.kind, out.mode, out.durationSec, out.ts].join("|"));
-    }
-    return out;
-  }
-
-  function buildCallRecordText(info) {
-    var payload = normalizeCallRecordInfo(info);
-    return CALL_RECORD_PREFIX + JSON.stringify(payload);
-  }
-
-  function parseCallRecordText(text) {
-    var s = String(text == null ? "" : text).trim();
-    if (s.indexOf(CALL_RECORD_PREFIX) !== 0) return null;
-    var body = s.slice(CALL_RECORD_PREFIX.length).trim();
-    var obj = safeParseJsonObject(body);
-    if (!obj) {
-      try { obj = safeParseJsonObject(decodeURIComponent(body)); } catch (_) { obj = null; }
-    }
-    if (!obj) return null;
-    return normalizeCallRecordInfo(obj);
   }
 
   var LANG_LIST = [
@@ -348,21 +273,16 @@
   };
 
   var DEFAULT_TRANSLATE_PROMPT =
-   '将以下消息翻译成 {{myLang}}。\n\n' +
-   '核心目标：准确率最高，最接近原文意思。\n\n' +
-   '要求：\n' +
-   '- 采用高保真自然直译：优先保留原文意思、结构、语气、情绪、称呼、轻重程度、表达顺序、表情符号和换行。\n' +
-   '- 译文要符合 {{myLang}} 的日常表达习惯，但不得为了自然、好听或顺口而改变原文意思。\n' +
-   '- 不要新增、删减、总结、解释、改写或美化原文。\n' +
-   '- 原文简单就简单翻，原文随意就随意翻，原文含糊就尽量保留含糊感。\n' +
-   '- 若原文带有暧昧、调侃、冷淡、敷衍、撒娇、抱怨、反问、讽刺、怀疑、不满或委屈等语气，译文必须保留对应聊天感觉，不要加重或减轻。\n' +
-   '- 不要添加原文没有的称呼、敬语、亲昵称呼、暧昧语气或情绪。\n' +
-   '- 保留链接、用户名、代码块、Markdown、列表、数字、英文、专有名词和表情。\n' +
-   '- 如果原文有多条消息或多行内容，按原结构逐条对应翻译，不要合并。\n' +
-   '- 只输出严格 JSON：{"translation":"译文"}\n' +
-   '- 不要添加任何解释、备注、原文或额外文字。\n\n' +
-   '待翻译消息：\n' +
-   '"{{peerMessage}}"';
+    '将以下消息翻译成 {{myLang}}。\n\n' +
+    '要求：\n' +
+    '- 采用自然直译风格：保留原文结构、语气、表情符号和换行，译文读起来像 {{myLang}} 原生消息，不生硬。\n' +
+    '- 若原文带有暧昧、调侃、冷淡、敷衍、撒娇、抱怨等语气，译文必须保留这种聊天感觉。\n' +
+    '- 保留链接、用户名、代码块、Markdown、列表和表情。\n' +
+    '- 只输出 JSON：{"translation":"译文"}\n' +
+    '- 不要添加任何解释或额外文字。\n\n' +
+    '待翻译消息：\n' +
+    '"{{peerMessage}}"';
+
   var DEFAULT_WINGMAN_PROMPT =
     '你是我的情感顾问和聊天僚机。根据历史聊天上下文，以及以下信息，帮我分析对方消息并生成短回复建议。\n\n' +
     '【我的信息】\n' +
@@ -540,28 +460,6 @@
     bootRetryTimer: null,
     nativeObserverRetryTimer: null
   };
-
-  function cpFlushPersistOnExit() {
-    try {
-      if (!state || !state.mounted) return;
-      if (persistTimer) {
-        clearTimeout(persistTimer);
-        persistTimer = null;
-      }
-      var pUid = getPeerUid();
-      if (pUid) persistChatToDB(pUid);
-    } catch (e) {
-      warn("flush-persist-exit", e);
-    }
-  }
-
-  try {
-    window.addEventListener("pagehide", cpFlushPersistOnExit);
-    window.addEventListener("beforeunload", cpFlushPersistOnExit);
-    document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState === "hidden") cpFlushPersistOnExit();
-    });
-  } catch (_) {}
 
   function bindAudioEndedHandler() {
     if (!state || !state.audio || !state.audioEndedHandler || state.audioEndedBound) return;
@@ -1540,8 +1438,7 @@
       var id = String(ms.id || "");
       var key = "";
 
-      if (ms.type === "call" && ms.callId) key = "call:" + String(ms.callId);
-      else if (seq && seq !== Number.MAX_SAFE_INTEGER) key = "seq:" + seq;
+      if (seq && seq !== Number.MAX_SAFE_INTEGER) key = "seq:" + seq;
       else if (clientNo) key = "client:" + clientNo;
       else if (stableId) key = "stable:" + stableId;
       else if (id && !/^wk_\d+_\d+/.test(id)) key = "id:" + id;
@@ -2174,111 +2071,48 @@
     }
   }
 
-  function findExistingCallRecordMessage(callId, msgId, clientNo, seq) {
-    callId = String(callId || "");
-    for (var i = state.wkMessages.length - 1; i >= 0; i--) {
-      var m = state.wkMessages[i];
-      if (!m) continue;
-      if (callId && m.callId && String(m.callId) === callId) return m;
-      if (msgIdentityMatches(m, msgId, clientNo, seq)) return m;
-    }
-    return null;
-  }
-
-  function upsertCallRecordMessage(info, mine, uidForMsg, wkMsg, serverText) {
-    info = normalizeCallRecordInfo(info);
-    var ident = getWkMessageIdentity(wkMsg || {}, serverText || info.callId, uidForMsg);
-    var msgId = ident.id || ("call_" + shortHash(info.callId));
-    var existing = findExistingCallRecordMessage(info.callId, msgId, ident.clientNo, ident.seq);
-    var target = existing || createMessageObj("", !!mine, uidForMsg, wkMsg || null, null);
-    var changed = !existing;
-
-    if (target.id !== msgId) { target.id = msgId; changed = true; }
-    if (ident.seq && Number(target.seq || 0) !== Number(ident.seq)) { target.seq = ident.seq; changed = true; }
-    if (ident.clientNo && target.clientMsgNo !== ident.clientNo) { target.clientMsgNo = ident.clientNo; changed = true; }
-    if (ident.ts && Math.abs(Number(target.ts || 0) - Number(ident.ts)) > 1000) { target.ts = ident.ts; changed = true; }
-    else if (!ident.ts && info.ts && Math.abs(Number(target.ts || 0) - Number(info.ts)) > 1000) { target.ts = info.ts; changed = true; }
-    if (wkMsg && target.wkMsg !== wkMsg) { target.wkMsg = wkMsg; target.wkMeta = serializeWkMeta(wkMsg); changed = true; }
-
-    var nextDurationStr = info.durationSec > 0 ? formatDuration(info.durationSec) : "";
-    var nextServerText = serverText || buildCallRecordText(info);
-
-    if (target.type !== "call") changed = true;
-    if (target.mine !== !!mine) changed = true;
-    if (target.uid !== String(uidForMsg || "")) changed = true;
-    if (target.callId !== info.callId) changed = true;
-    if (target.callKind !== info.kind) changed = true;
-    if (target.callMode !== info.mode) changed = true;
-    if (target.durationStr !== nextDurationStr) changed = true;
-    if (target.serverText !== nextServerText) changed = true;
-
-    target.type = "call";
-    target.mine = !!mine;
-    target.uid = String(uidForMsg || "");
-    target.callId = info.callId;
-    target.callKind = info.kind;
-    target.callMode = info.mode;
-    target.durationStr = nextDurationStr;
-    target.html = "";
-    target.serverText = nextServerText;
-    var nextText = callRecordLabel(target);
-    if (target.text !== nextText) changed = true;
-    target.text = nextText;
-    target.pendingLocal = false;
-    target.failedLocal = false;
-
-    if (!existing) {
-      state.wkMessages.push(target);
-    } else if (changed) {
-      msgTouch(target);
-    }
-
-    return { msg: target, added: !existing, touched: changed };
-  }
-
-  function sendCallRecordSignal(info) {
-    return sendCallSignalText(buildCallRecordText(info));
-  }
-
   // Called by cp-harmony-call.js when a call ends, to leave a chat-history
   // record bubble (voice/video, cancelled, missed, rejected, duration...).
   function addCallRecord(info) {
     try {
-      info = normalizeCallRecordInfo(info || {});
-      var peerUid = String((arguments[0] && arguments[0].peerUid) || "").replace(/[^\d]/g, "");
+      info = info || {};
+      var peerUid = String(info.peerUid || "").replace(/[^\d]/g, "");
       if (!peerUid) return;
       var current = String(getPeerUid() || "").replace(/[^\d]/g, "");
       if (!current || current !== peerUid) return; // only log into the open chat
+
+      var callId = String(info.callId || "");
+      if (callId) {
+        for (var i = 0; i < state.wkMessages.length; i++) {
+          if (state.wkMessages[i] && String(state.wkMessages[i].callId) === callId) return;
+        }
+      }
 
       var mine = !!info.mine;
       var uidForMsg = mine
         ? String(state.myUid || (window.app && app.user && app.user.uid) || "")
         : peerUid;
 
-      var signalText = buildCallRecordText(info);
-      var result = upsertCallRecordMessage(info, mine, uidForMsg, null, signalText);
+      var obj = createMessageObj("", mine, uidForMsg, null, null);
+      obj.type = "call";
+      obj.callId = callId;
+      obj.callKind = String(info.kind || "");
+      obj.callMode = String(info.mode || "audio");
+      obj.durationStr = info.durationSec ? formatDuration(info.durationSec) : "";
+      obj.html = "";
+      obj.text = callRecordLabel(obj);
 
-      if (result.added || result.touched) {
-        state.mergedDirty = true;
-        state.msgIndexDirty = true;
-        state.renderVersion++;
-        incrementalRender("bottom");
-      }
-
-      // 本地立即落库，避免刷新太快时 900ms 延迟定时器来不及执行。
-      persistChatToDB(peerUid);
-
-      // 同步一条隐藏的通话记录信令到悟空 IM，刷新、换设备、重新拉历史时都能恢复。
-      if (!(arguments[0] && arguments[0].persistToServer === false)) {
-        sendCallRecordSignal(info);
-      }
+      state.wkMessages.push(obj);
+      state.mergedDirty = true;
+      state.msgIndexDirty = true;
+      state.renderVersion++;
+      incrementalRender("bottom");
+      schedulePersistChat(peerUid);
     } catch (e) {
       warn("add-call-record", e);
     }
   }
   CP_PLUGIN.addCallRecord = addCallRecord;
-  CP_PLUGIN.buildCallRecordText = buildCallRecordText;
-  CP_PLUGIN.parseCallRecordText = parseCallRecordText;
 
   function onAudioEnded() {
     if (state.currentAudioEl) {
@@ -2298,9 +2132,60 @@
     return status === 1 || status === "connected" || status === "CONNECTED" || status === "connect" || status === "CONNECT";
   }
 
+  function getWkShared() {
+    try {
+      return window.wk && window.wk.WKSDK && window.wk.WKSDK.shared ? window.wk.WKSDK.shared() : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function isWukongConnectedNow() {
+    var shared = getWkShared();
+    var cm = shared && shared.connectManager;
+    if (!cm) return false;
+
+    try {
+      if (cm.connected === true || cm.isConnected === true) return true;
+      if (isWkConnectedStatus(cm.status || cm.connectStatus || cm.state)) return true;
+      var sock = cm.ws || cm.socket || cm.websocket || cm.webSocket || cm.conn || cm.connection;
+      if (sock && sock.readyState === 1) return true;
+    } catch (_) {}
+
+    return false;
+  }
+
+  function refreshWukongReadyFromExistingSdk(reason) {
+    var shared = getWkShared();
+    if (!shared || !shared.connectManager) return false;
+
+    if (isWukongConnectedNow()) {
+      state.wkReady = true;
+      return true;
+    }
+
+    state.wkReady = false;
+    try {
+      if (typeof shared.connectManager.connect === "function") {
+        shared.connectManager.connect();
+        cpLog("wk-reconnect", reason || "unknown");
+      }
+    } catch (e) {
+      warn("wk-reconnect", e);
+    }
+    return false;
+  }
+
   function initWukong() {
-    if (window.__wkEngineBooted) return;
-    window.__wkEngineBooted = true;
+    // NodeBB/ajaxify 页面切换或局部刷新时，脚本和 WKSDK 可能仍在同一个 window 内。
+    // 旧代码在 __wkEngineBooted=true 时直接 return，会导致 mount 后 state.wkReady 被重置为 false，
+    // 用户点击发送就看到“悟空连接中，暂时无法发送”。这里复用现有 SDK 并主动刷新连接状态。
+    if (window.__wkEngineBooted) {
+      refreshWukongReadyFromExistingSdk("already-booted");
+      return;
+    }
+    if (window.__wkEngineBooting) return;
+    window.__wkEngineBooting = true;
 
     var apiBase = cpPluginConfig().apiBase || "/api/wukong";
 
@@ -2323,13 +2208,19 @@
     }
 
     loadToken().then(function (res) {
-      if (!res) return;
+      if (!res) {
+        window.__wkEngineBooting = false;
+        window.__wkEngineBooted = false;
+        return;
+      }
 
       var token = res.token || (res.data && res.data.token) || "";
       var uid = res.uid || res.userId || (res.user && res.user.uid) || (res.data && (res.data.uid || res.data.userId)) || "";
       var addr = res.addr || res.wsAddr || res.wkws || (res.data && (res.data.addr || res.data.wsAddr || res.data.wkws)) || "";
 
       if (!token) {
+        window.__wkEngineBooting = false;
+        window.__wkEngineBooted = false;
         warn("wk-token-empty", res);
         return;
       }
@@ -2349,6 +2240,8 @@
       document.head.appendChild(s);
 
       s.onload = function () {
+        window.__wkEngineBooting = false;
+        window.__wkEngineBooted = true;
         var wk = window.wk;
         if (!wk || !wk.WKSDK) return;
 
@@ -2378,7 +2271,7 @@
             return;
           }
 
-          var fromUid = String(m.fromUID || m.from_uid || "");
+          var fromUid = String(m.fromUID || m.from_uid || m.fromUid || m.sender_uid || m.senderUid || "");
           if (cpIsMineUid(fromUid)) return;
 
           var currentPeerUid = getPeerUid();
@@ -2386,35 +2279,6 @@
 
           var t = payloadObj.text || payloadObj.content || "";
           if (!t) return;
-
-          if (isCallRecordText(t)) {
-            var liveCallInfo = parseCallRecordText(t);
-            if (!liveCallInfo) return;
-            var liveCallResult = upsertCallRecordMessage(liveCallInfo, false, fromUid, m, t);
-            if (liveCallResult.msg && liveCallResult.msg.seq && liveCallResult.msg.seq > state.localMaxSeq) state.localMaxSeq = liveCallResult.msg.seq;
-            if (liveCallResult.added || liveCallResult.touched) {
-              pruneWkMessages();
-              pruneAllMessagesInMemory();
-              state.renderVersion++;
-              state.mergedDirty = true;
-              state.msgIndexDirty = true;
-              schedulePersistChat(currentPeerUid);
-              var callWasAtBottom = isMainAtBottom();
-              if (callWasAtBottom) {
-                state.unreadCount = 0;
-                updateUnreadBadge();
-                incrementalRender("bottom");
-                requestAnimationFrame(forceScrollToBottom);
-              } else {
-                state.unreadCount++;
-                updateUnreadBadge();
-                incrementalRender("keep");
-                if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
-              }
-            }
-            return;
-          }
-
           if (isCallSignalText(t)) return;
 
           var ident = getWkMessageIdentity(m, t, fromUid);
@@ -2484,9 +2348,13 @@
       };
 
       s.onerror = function (e) {
+        window.__wkEngineBooting = false;
+        window.__wkEngineBooted = false;
         warn("wk-sdk-load", e);
       };
     }).catch(function (e) {
+      window.__wkEngineBooting = false;
+      window.__wkEngineBooted = false;
       warn("wk-token", e);
     });
   }
@@ -2605,22 +2473,58 @@
     }
   }
 
-  function messageBelongsToCurrentPeer(rawMsg, fromUid, peerUid) {
-    peerUid = String(peerUid || getPeerUid() || "");
-    if (!peerUid) return false;
-    fromUid = String(fromUid || "");
-    if (fromUid && !cpIsMineUid(fromUid) && fromUid !== peerUid) return false;
-
+  function getRawWkChannelId(rawMsg) {
     var rawChannel = rawMsg && (rawMsg.channel_id || rawMsg.channelID || rawMsg.channelId);
-    if (!rawChannel && rawMsg && rawMsg.channel) rawChannel = rawMsg.channel.channelID || rawMsg.channel.channel_id || rawMsg.channel.id;
-    var to = rawMsg && (rawMsg.to_uid || rawMsg.toUID || rawMsg.toUid || rawMsg.receiver_uid || rawMsg.receiverUID);
+    if (!rawChannel && rawMsg && rawMsg.channel) {
+      rawChannel = rawMsg.channel.channelID || rawMsg.channel.channel_id || rawMsg.channel.channelId || rawMsg.channel.id;
+    }
+    return String(rawChannel || "").trim();
+  }
 
-    if (cpIsMineUid(fromUid) && to && String(to) !== peerUid) return false;
+  function getRawWkReceiverUid(rawMsg) {
+    return String(rawMsg && (rawMsg.to_uid || rawMsg.toUID || rawMsg.toUid || rawMsg.receiver_uid || rawMsg.receiverUID || rawMsg.receiverUid) || "").trim();
+  }
 
-    var expectedChannel = String((window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.channelId) || cpPluginConfig().channelId || peerUid);
-    if (rawChannel && String(rawChannel) !== peerUid && String(rawChannel) !== expectedChannel) return false;
+  function messageBelongsToCurrentPeer(rawMsg, fromUid, peerUid) {
+    peerUid = String(peerUid || getPeerUid() || "").trim();
+    if (!peerUid) return false;
 
-    return true;
+    var selfUid = String(getSelfUid() || state.myUid || "").trim();
+    fromUid = String(fromUid || "").trim();
+    var toUid = getRawWkReceiverUid(rawMsg);
+    var rawChannel = getRawWkChannelId(rawMsg);
+    var expectedChannel = String((window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.channelId) || cpPluginConfig().channelId || peerUid).trim();
+    var channelType = Number((window.__NBB_WUKONG_PAGE__ && window.__NBB_WUKONG_PAGE__.channelType) || cpPluginConfig().channelType || 1) || 1;
+    var isTopic = channelType === 2 || /^nbb_topic_\d+$/i.test(expectedChannel) || /^nbb_topic_\d+$/i.test(rawChannel);
+
+    // 群/topic 会话只按 channel_id 隔离，不能用 fromUid=peerUid 的一对一规则过滤。
+    if (isTopic) {
+      if (rawChannel && expectedChannel && rawChannel !== expectedChannel) return false;
+      return true;
+    }
+
+    // 一对一会话里，悟空 IM 历史消息的 channel_id 可能是“接收方 uid”。
+    // 我发给对方：from=self, channel=peer；对方发给我：from=peer, channel=self。
+    // 旧代码只允许 rawChannel=peer，导致刷新后把对方消息全部过滤掉。
+    if (fromUid) {
+      if (cpSameUid(fromUid, selfUid)) {
+        if (toUid && !cpSameUid(toUid, peerUid)) return false;
+        if (rawChannel && !cpSameUid(rawChannel, peerUid) && rawChannel !== expectedChannel) return false;
+        return true;
+      }
+
+      if (cpSameUid(fromUid, peerUid)) {
+        if (toUid && selfUid && !cpSameUid(toUid, selfUid)) return false;
+        if (rawChannel && selfUid && !cpSameUid(rawChannel, selfUid) && !cpSameUid(rawChannel, peerUid) && rawChannel !== expectedChannel) return false;
+        return true;
+      }
+
+      return false;
+    }
+
+    // 没有 fromUid 的老数据，只允许当前会话常见 channel，避免串会话。
+    if (rawChannel) return cpSameUid(rawChannel, peerUid) || rawChannel === expectedChannel || (selfUid && cpSameUid(rawChannel, selfUid));
+    return false;
   }
 
   function processWukongMessages(msgs, isLoadMore) {
@@ -2648,26 +2552,12 @@
     for (var i = 0; i < msgs.length; i++) {
       var m = msgs[i];
       var payloadObj = extractWkPayload(m) || {};
-      var fromUid = String(m.from_uid || m.fromUID || m.fromUid || "");
+      var fromUid = String(m.from_uid || m.fromUID || m.fromUid || m.sender_uid || m.senderUid || "");
       if (!messageBelongsToCurrentPeer(m, fromUid, getPeerUid())) continue;
       var isMine = cpIsMineUid(fromUid);
       var serverT = payloadObj.text || payloadObj.content || "";
 
-      // 历史/离线消息里的通话记录信令要还原成通话气泡；普通通话控制信令仍隐藏。
-      if (isCallRecordText(serverT)) {
-        var histCallInfo = parseCallRecordText(serverT);
-        if (!histCallInfo) continue;
-        var histCallResult = upsertCallRecordMessage(histCallInfo, isMine, fromUid, m, serverT);
-        var histCallMsg = histCallResult.msg;
-        if (histCallMsg && histCallMsg.seq && histCallMsg.seq < Number.MAX_SAFE_INTEGER && histCallMsg.seq > state.localMaxSeq) {
-          state.localMaxSeq = histCallMsg.seq;
-        }
-        if (histCallResult.added) added = true;
-        if (histCallResult.touched) touchedExisting = true;
-        continue;
-      }
-
-      // 历史/离线消息里的通话控制信令不显示
+      // 历史/离线消息里的通话信令不显示
       if (isCallSignalText(serverT)) continue;
 
       var t = serverT;
@@ -2778,7 +2668,7 @@
     }
   }
 
-  function sendText(text, originalText) {
+  function sendText(text, originalText, retryingAfterConnect) {
     // 防止误把通话信令当普通消息发送并插入本地气泡
     if (isCallSignalText(text) || isCallSignalText(originalText)) {
       sendCallSignalText(text || originalText);
@@ -2788,10 +2678,32 @@
     var peerUid = getPeerUid();
     var displayText = originalText || text;
 
-    if (!peerUid || !state.wkReady || !window.wk || !window.wk.WKSDK) {
-      toast("悟空连接中，暂时无法发送");
-      warn("wk-send-not-ready", { peerUid: peerUid, wkReady: state.wkReady, hasWk: !!window.wk });
+    if (!peerUid || !window.wk || !window.wk.WKSDK) {
+      initWukong();
+      if (!retryingAfterConnect) {
+        toast("悟空连接中，正在重试发送");
+        setTimeout(function () { sendText(text, originalText, true); }, 800);
+      } else {
+        toast("悟空连接中，暂时无法发送");
+        warn("wk-send-not-ready", { peerUid: peerUid, wkReady: state.wkReady, hasWk: !!window.wk });
+      }
       return;
+    }
+
+    if (!state.wkReady) {
+      if (isWukongConnectedNow()) {
+        state.wkReady = true;
+      } else if (!retryingAfterConnect) {
+        refreshWukongReadyFromExistingSdk("send-retry");
+        toast("悟空连接中，正在重试发送");
+        setTimeout(function () { sendText(text, originalText, true); }, 800);
+        return;
+      } else {
+        // 某些 WKSDK 版本不暴露连接状态，但 send() 自身会排队或抛错。
+        // 二次重试时不再被状态假阴性阻断，交给 SDK 发送结果决定。
+        warn("wk-send-ready-unknown", { peerUid: peerUid, wkReady: state.wkReady });
+        state.wkReady = true;
+      }
     }
 
     var wkMsgObj = null;
