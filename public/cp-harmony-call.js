@@ -2,7 +2,7 @@
   "use strict";
 
   // ============================================================
-  // CP Harmony Peer Call v7.4 — 现代化语音 / 视频通话
+  // CP Harmony Peer Call v8.0 — AppRTC UX enhanced 语音 / 视频通话
   // - 顶部按钮：黑/灰电话图标，无背景框
   // - 视频画面：点击小窗稳定切换到大屏，高清优先并保留远端画面卡顿自恢复
   // - 通话音效：呼出 public/bohao.mp3、来电 public/laidian.mp3，多路径自动探测，来电震动
@@ -10,6 +10,7 @@
   // - 可拖动本地/远端小窗
   // - 断线自动重连 + ICE 状态监控
   // - 全局监听：不在聊天窗口也能接听来电
+  // - 新增：通话中网络质量提示、屏幕常亮、音频输出设备、连接状态更稳
   // ============================================================
 
   try {
@@ -76,7 +77,22 @@
     videoDegradationPreference: "maintain-resolution",
     videoAllowFallback: true,
     videoFreezeCheckMs: 1800,
-    videoFreezeRecoverAfterMs: 4200
+    videoFreezeRecoverAfterMs: 4200,
+
+    // AppRTC 思路：连接进入 active 后持续看 WebRTC stats，给用户一个简单可懂的网络状态。
+    enableNetworkBadge: true,
+    statsIntervalMs: 2200,
+    qualityOkRttMs: 360,
+    qualityPoorRttMs: 850,
+    qualityOkPacketLoss: 0.035,
+    qualityPoorPacketLoss: 0.09,
+
+    // 移动端体验：通话期间尽量保持屏幕常亮；不支持的浏览器会自动忽略。
+    keepScreenAwake: true,
+
+    // Web 端可选音频输出设备。Chrome/Edge 支持 HTMLMediaElement.setSinkId。
+    audioOutputDeviceId: "",
+    autoHideControlsMs: 3500
   };
 
   var CFG = Object.assign({}, DEFAULTS, window.CPHarmonyCallConfig || {});
@@ -135,6 +151,11 @@
     controlsTimer: null,
     videoWatchTimer: null,
     videoWatchState: {},
+    statsTimer: null,
+    statsState: null,
+    wakeLock: null,
+    visibilityHandler: null,
+    activeToken: "",
     sec: 0,
 
     isMicOn: true,
@@ -252,6 +273,25 @@
       .replace(/"/g, "&quot;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
+  }
+
+  function clamp(n, min, max) {
+    n = Number(n || 0);
+    return Math.min(max, Math.max(min, n));
+  }
+
+  function isActiveCallToken(token) {
+    return !!token && token === State.activeToken && !!State.callId && !State.ending && !State.destroyed;
+  }
+
+  function friendlyMediaError(err, wantsVideo) {
+    var name = err && (err.name || err.message || "") || "";
+    if (/NotAllowed|PermissionDenied/i.test(name)) return wantsVideo ? "请允许麦克风和摄像头权限" : "请允许麦克风权限";
+    if (/NotFound|DevicesNotFound/i.test(name)) return wantsVideo ? "没有找到可用麦克风或摄像头" : "没有找到可用麦克风";
+    if (/NotReadable|TrackStart/i.test(name)) return "设备被其它应用占用，请关闭后重试";
+    if (/Overconstrained|Constraint/i.test(name)) return "当前设备不支持所选清晰度，已尝试自动降级";
+    if (/Security/i.test(name)) return "当前页面环境不允许访问音视频设备";
+    return err && err.message ? err.message : "音视频设备打开失败";
   }
 
   function showToast(text) {
@@ -1238,12 +1278,25 @@
     if (stream) safePlayMedia(el, "video-play");
   }
 
+  function applyAudioOutputSink(el) {
+    if (!el || !CFG.audioOutputDeviceId || typeof el.setSinkId !== "function") return;
+    if (el._cpSinkId === CFG.audioOutputDeviceId) return;
+    el.setSinkId(CFG.audioOutputDeviceId).then(function () {
+      el._cpSinkId = CFG.audioOutputDeviceId;
+      warn("audio-sink-ok", CFG.audioOutputDeviceId);
+    }).catch(function (err) {
+      warn("audio-sink", err);
+      showToast("无法切换扬声器，将使用系统默认输出");
+    });
+  }
+
   function setRemoteAudioElement(el) {
     if (!el) return;
     if (el.srcObject !== State.remoteStream) el.srcObject = State.remoteStream || null;
     el.autoplay = true;
     el.muted = false;
     el.volume = 1;
+    applyAudioOutputSink(el);
     if (State.remoteStream) safePlayMedia(el, "remote-audio-play");
   }
 
@@ -1346,6 +1399,28 @@
             markConnected();
           }
         });
+        if (pc.addEventListener) {
+          pc.addEventListener("connectionstatechange", function () {
+            var st = pc.connectionState;
+            warn("pc-connection-state", st);
+            if (st === "connected") {
+              markConnected();
+              startQualityMonitor();
+            } else if (st === "connecting") {
+              setStatus(State.connected ? "网络恢复中…" : "连接中…");
+            } else if (st === "disconnected") {
+              setQualityBadge("网络不稳定", "warn");
+            } else if (st === "failed") {
+              setQualityBadge("连接失败", "bad");
+              try { if (pc.restartIce) pc.restartIce(); } catch (e) {}
+            } else if (st === "closed") {
+              if (State.callId) endCall(true);
+            }
+          });
+          pc.addEventListener("icegatheringstatechange", function () {
+            warn("ice-gathering-state", pc.iceGatheringState);
+          });
+        }
         pc.oniceconnectionstatechange = function () {
           var st = pc.iceConnectionState;
           if (st === "connected" || st === "completed") {
@@ -1370,6 +1445,140 @@
         };
       }
     } catch (e) { warn("ice-monitor", e); }
+  }
+
+  // ----------------------------------------------------------------
+  // 网络质量 / 屏幕常亮
+  // ----------------------------------------------------------------
+  function setQualityBadge(text, tone) {
+    var el = byId("cp-call-quality");
+    if (!el) return;
+    if (!CFG.enableNetworkBadge || !State.connected) {
+      el.style.display = "none";
+      return;
+    }
+    el.textContent = text || "网络检测中";
+    el.className = "cp-call-quality " + (tone || "ok");
+    el.style.display = "inline-flex";
+  }
+
+  function bitrateFromStats(current, prev, bytesKey, tsKey) {
+    if (!current || !prev) return 0;
+    var bytes = Number(current[bytesKey] || 0) - Number(prev[bytesKey] || 0);
+    var ms = Number(current[tsKey] || current.timestamp || 0) - Number(prev[tsKey] || prev.timestamp || 0);
+    if (!bytes || !ms || ms <= 0) return 0;
+    return Math.max(0, Math.round(bytes * 8 / ms)); // kbps
+  }
+
+  function compactKbps(v) {
+    v = Number(v || 0);
+    if (!v) return "";
+    if (v >= 1000) return (v / 1000).toFixed(v >= 2000 ? 0 : 1) + "Mbps";
+    return Math.round(v) + "kbps";
+  }
+
+  async function collectConnectionQuality(pc) {
+    if (!pc || !pc.getStats) return null;
+    var stats = await pc.getStats(null);
+    var prev = State.statsState || {};
+    var next = {};
+    var out = {
+      rttMs: 0,
+      lossRatio: 0,
+      audioKbps: 0,
+      videoKbps: 0,
+      packetsLost: 0,
+      packetsReceived: 0
+    };
+
+    stats.forEach(function (s) {
+      if (!s || !s.id) return;
+      next[s.id] = s;
+      if (s.type === "candidate-pair" && (s.selected || s.nominated || s.state === "succeeded")) {
+        var rtt = Number(s.currentRoundTripTime || s.totalRoundTripTime || 0);
+        if (rtt > 0) out.rttMs = Math.round(rtt * 1000);
+      }
+      if (s.type === "inbound-rtp" && !s.isRemote) {
+        var ps = prev[s.id] || {};
+        var lost = Math.max(0, Number(s.packetsLost || 0) - Number(ps.packetsLost || 0));
+        var recv = Math.max(0, Number(s.packetsReceived || 0) - Number(ps.packetsReceived || 0));
+        out.packetsLost += lost;
+        out.packetsReceived += recv;
+      }
+      if (s.type === "outbound-rtp" && !s.isRemote) {
+        var kbps = bitrateFromStats(s, prev[s.id], "bytesSent", "timestamp");
+        if (s.kind === "audio" || s.mediaType === "audio") out.audioKbps += kbps;
+        if (s.kind === "video" || s.mediaType === "video") out.videoKbps += kbps;
+      }
+    });
+
+    var total = out.packetsLost + out.packetsReceived;
+    out.lossRatio = total > 0 ? out.packetsLost / total : 0;
+    State.statsState = next;
+    return out;
+  }
+
+  function startQualityMonitor() {
+    stopQualityMonitor();
+    if (!CFG.enableNetworkBadge || !State.mediaCall || !State.mediaCall.peerConnection) return;
+    setQualityBadge("网络检测中", "ok");
+    var pc = State.mediaCall.peerConnection;
+    var run = function () {
+      if (!State.callId || !State.connected || !pc) return;
+      collectConnectionQuality(pc).then(function (q) {
+        if (!q || !State.connected) return;
+        var tone = "ok";
+        var text = "网络良好";
+        if ((q.rttMs && q.rttMs >= Number(CFG.qualityPoorRttMs || 850)) || q.lossRatio >= Number(CFG.qualityPoorPacketLoss || 0.09)) {
+          tone = "bad";
+          text = "网络较差";
+        } else if ((q.rttMs && q.rttMs >= Number(CFG.qualityOkRttMs || 360)) || q.lossRatio >= Number(CFG.qualityOkPacketLoss || 0.035)) {
+          tone = "warn";
+          text = "网络一般";
+        }
+        var detail = [];
+        if (q.rttMs) detail.push(q.rttMs + "ms");
+        if (State.mode === "video" && q.videoKbps) detail.push(compactKbps(q.videoKbps));
+        else if (q.audioKbps) detail.push(compactKbps(q.audioKbps));
+        setQualityBadge(detail.length ? text + " · " + detail.join(" · ") : text, tone);
+      }).catch(function (err) { warn("quality-stats", err); });
+    };
+    run();
+    State.statsTimer = setInterval(run, Number(CFG.statsIntervalMs || 2200));
+  }
+
+  function stopQualityMonitor() {
+    clearInterval(State.statsTimer);
+    State.statsTimer = null;
+    State.statsState = null;
+    var el = byId("cp-call-quality");
+    if (el) {
+      el.style.display = "none";
+      el.textContent = "网络检测中";
+      el.className = "cp-call-quality ok";
+    }
+  }
+
+  function requestWakeLock() {
+    if (CFG.keepScreenAwake === false || !navigator.wakeLock || State.wakeLock) return;
+    navigator.wakeLock.request("screen").then(function (lock) {
+      State.wakeLock = lock;
+      lock.addEventListener && lock.addEventListener("release", function () { State.wakeLock = null; });
+    }).catch(function (err) { warn("wake-lock", err); });
+  }
+
+  function releaseWakeLock() {
+    var lock = State.wakeLock;
+    State.wakeLock = null;
+    if (lock && lock.release) lock.release().catch(noop);
+  }
+
+  function ensureWakeLockLifecycle() {
+    if (State.visibilityHandler) return;
+    State.visibilityHandler = function () {
+      if (document.visibilityState === "visible" && State.callId) requestWakeLock();
+    };
+    document.addEventListener("visibilitychange", State.visibilityHandler);
   }
 
   // ----------------------------------------------------------------
@@ -1400,6 +1609,8 @@
     startTimer();
     setMainConnectedMode();
     scheduleControlsHide();
+    startQualityMonitor();
+    requestWakeLock();
     playConnectedTone();
   }
   function setStatus(text) {
@@ -1536,6 +1747,8 @@
     clearTimeout(State.iceGraceTimer);
     clearTimeout(State.controlsTimer);
     stopVideoWatchdog();
+    stopQualityMonitor();
+    releaseWakeLock();
 
     if (State.mediaCall) { try { State.mediaCall.close(); } catch (e) {} }
     stopTracks(State.localStream);
@@ -1568,6 +1781,7 @@
     State.connected = false;
     State.incomingInvite = null;
     State.remoteUser = { uid: "", name: "好友", avatar: "" };
+    State.activeToken = "";
     State.facingMode = "user";
     State.switchingCamera = false;
     State.mainVideoSource = "remote";
@@ -1634,11 +1848,15 @@
   async function startOutgoingCall(mode) {
     if (State.callId) { showToast("当前已有通话"); return; }
     await ensureWukong();
+    if (State.callId) { showToast("当前已有通话"); return; }
     var peerUid = getPeerUid();
     if (!peerUid) { showToast("请先进入私聊窗口"); return; }
 
     var peerId = await initPeer();
+    if (State.callId) { showToast("当前已有通话"); return; }
     State.callId = createId();
+    State.activeToken = State.callId;
+    var token = State.activeToken;
     State.direction = "outgoing";
     State.mode = mode || "audio";
     State.connected = false;
@@ -1653,6 +1871,7 @@
 
     try {
       await getMedia(State.mode);
+      if (!isActiveCallToken(token)) return;
       await sendSignal({
         type: "invite",
         callId: State.callId,
@@ -1662,12 +1881,15 @@
         fromAvatar: myAvatar(),
         peerId: peerId
       });
+      if (!isActiveCallToken(token)) return;
       setStatus(State.mode === "video" ? "等待对方接听…" : "正在呼叫…");
       playOutgoingRing();
     } catch (err) {
+      var msg = friendlyMediaError(err, State.mode === "video");
       if (State.callId) markClosedCall(State.callId);
       cleanupCall();
       hideUI();
+      showToast(msg || "发起通话失败");
       throw err;
     }
 
@@ -1680,6 +1902,7 @@
   async function acceptCall() {
     if (!State.incomingInvite) return;
     var invite = State.incomingInvite;
+    var token = State.activeToken || State.callId;
     if (!invite.peerId) throw new Error("缺少对方 Peer ID");
 
     stopRing();
@@ -1695,7 +1918,9 @@
     setStatus("连接中…");
 
     var stream = await getMedia(State.mode);
+    if (!isActiveCallToken(token)) return;
     await sendSignal({ type: "accept", callId: State.callId, to: State.remoteUser.uid });
+    if (!isActiveCallToken(token)) return;
 
     var call = State.peer.call(invite.peerId, stream, {
       metadata: { callId: State.callId, from: uid(), mode: State.mode }
@@ -1736,6 +1961,7 @@
         return;
       }
       State.callId = packet.callId;
+      State.activeToken = packet.callId;
       State.direction = "incoming";
       State.mode = packet.mode || "audio";
       State.connected = false;
@@ -1961,7 +2187,7 @@
   function scheduleControlsHide() {
     clearTimeout(State.controlsTimer);
     if (State.mode !== "video" || !State.connected) return;
-    State.controlsTimer = setTimeout(hideCallControls, 3000);
+    State.controlsTimer = setTimeout(hideCallControls, Number(CFG.autoHideControlsMs || 3500));
   }
   function showCallControls() {
     var main = byId("cp-call-main");
@@ -2029,6 +2255,9 @@
       #cp-call-avatar{width:108px;height:108px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,.16);box-shadow:0 16px 40px rgba(0,0,0,.4);background:#334155;}
       #cp-call-name{margin-top:20px;font-size:27px;font-weight:800;letter-spacing:.5px;text-shadow:0 2px 8px rgba(0,0,0,.3);}
       #cp-call-status{margin-top:10px;font-size:15px;opacity:.78;font-variant-numeric:tabular-nums;}
+      .cp-call-quality{margin-top:10px;display:none;align-items:center;justify-content:center;max-width:min(78vw,360px);padding:5px 10px;border-radius:999px;font-size:12px;font-weight:750;letter-spacing:.2px;background:rgba(34,197,94,.18);color:#dcfce7;border:1px solid rgba(187,247,208,.22);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
+      .cp-call-quality.warn{background:rgba(245,158,11,.20);color:#fef3c7;border-color:rgba(253,230,138,.25);}
+      .cp-call-quality.bad{background:rgba(239,68,68,.22);color:#fee2e2;border-color:rgba(254,202,202,.25);}
       #cp-call-main.is-video #cp-call-top{padding-top:calc(30px + env(safe-area-inset-top));background:linear-gradient(180deg,rgba(0,0,0,.45),rgba(0,0,0,0));padding-bottom:20px;}
       #cp-call-main.is-video #cp-call-avatar{display:none!important;}
       #cp-call-main.is-video #cp-call-name{font-size:20px;}
@@ -2090,6 +2319,7 @@
           '<img id="cp-call-avatar" src="" alt="">' +
           '<div id="cp-call-name">好友</div>' +
           '<div id="cp-call-status">连接中…</div>' +
+          '<div id="cp-call-quality" class="cp-call-quality" style="display:none">网络检测中</div>' +
         '</div>' +
         '<div id="cp-call-local-wrap"><video id="cp-call-local-video" autoplay muted playsinline webkit-playsinline></video></div>' +
         '<div id="cp-call-controls">' +
@@ -2257,6 +2487,10 @@
       try { document.removeEventListener("click", State.outsideClickHandler); } catch (e) {}
       State.outsideClickHandler = null;
     }
+    if (State.visibilityHandler) {
+      try { document.removeEventListener("visibilitychange", State.visibilityHandler); } catch (e) {}
+      State.visibilityHandler = null;
+    }
     var root = byId("cp-call-root");
     if (root && root.parentNode) root.parentNode.removeChild(root);
     var style = byId("cp-harmony-call-style");
@@ -2277,6 +2511,7 @@
     mountUI();
     refreshChatBindings();
     unlockAudioOnGesture();
+    ensureWakeLockLifecycle();
 
     if (CFG.globalListen !== false && CFG.autoConnectWukong !== false) {
       ensureWukong().catch(function (err) { warn("global-ensure-wukong", err); });
@@ -2315,7 +2550,7 @@
   }
 
   window.CPHarmonyCall = {
-    version: "v7.4-hd-wukong-call",
+    version: "v8.0-apprtc-ux-wukong-call",
     boot: boot,
     refresh: function () { injectHeaderButton(); hideSignalMessagesInDom(document); return !!byId("cp-harmony-call-entry"); },
     start: function (mode) { unlockAudioNow(); return startOutgoingCall(mode || "audio"); },
@@ -2330,6 +2565,8 @@
       return { local: localVideoSettings(), bitrate: Number(CFG.videoMaxBitrate || 2600000), framerate: Number(CFG.videoMaxFramerate || 30), degradation: CFG.videoDegradationPreference || "maintain-resolution" };
     },
     boostQuality: function () { if (State.mediaCall) boostOutboundQuality(State.mediaCall.peerConnection, "manual"); return this.videoQuality(); },
+    setAudioOutput: function (deviceId) { CFG.audioOutputDeviceId = String(deviceId || ""); applyAudioOutputSink(byId("cp-call-remote-audio")); return CFG.audioOutputDeviceId; },
+    getStats: function () { return State.statsState || null; },
     testAudio: function (kind) { unlockAudioNow(); if (kind === "incoming") playIncomingRing(); else playOutgoingRing(); return mediaAssetUrls(kind === "incoming" ? CFG.incomingRingUrl : CFG.outgoingRingUrl); },
     stopAudio: stopRing,
     destroy: destroy,
