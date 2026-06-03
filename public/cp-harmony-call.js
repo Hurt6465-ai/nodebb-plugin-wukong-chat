@@ -27,7 +27,7 @@
   // 配置
   // ----------------------------------------------------------------
   var DEFAULTS = {
-    enabled: true,
+    enabled: false,
     debug: false,
     signalPrefix: "__cp_harmony_call__:",
     protocol: "cp-harmony-peer-call-v7",
