@@ -631,10 +631,18 @@
       m.items = m.items.map(function (it) { return { url: cpSafeUrl(it && it.url, { allowDataImage: false }) }; }).filter(function (it) { return !!it.url; });
     }
 
+    var peipeGreetCode = cpGetPeipeGreetCode(m.serverText || m.text || m.html || "");
+    if (peipeGreetCode) {
+      m.type = "peipe_greet";
+      m.text = cpPeipeGreetText(peipeGreetCode);
+      m.serverText = m.serverText || m.text;
+      m.html = "";
+      m.mediaUrl = cpPeipeGreetUrl(peipeGreetCode);
+    }
+
     m.pendingLocal = false;
     m.failedLocal = false;
     if (!m._ver) m._ver = 1;
-    normalizePeipeGreetMessage(m);
     return normalizeMineFlag(m);
   }
 
@@ -903,6 +911,42 @@
     return s;
   }
 
+
+  function cpNormalizePeipeGreetText(value) {
+    return String(value == null ? "" : value)
+      .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, "-")
+      .trim();
+  }
+
+  function cpGetPeipeGreetCode(value) {
+    var text = cpNormalizePeipeGreetText(value);
+    var match = text.match(/\[\s*peipe\s*-\s*greet\s*:\s*(hello\s*-\s*(0[1-9]|10))\s*\]/i);
+    if (!match) return "";
+    return String(match[1] || "").replace(/\s+/g, "").toLowerCase();
+  }
+
+  function cpPeipeGreetUrl(code) {
+    code = String(code || "").trim().toLowerCase();
+    if (!/^hello-(0[1-9]|10)$/.test(code)) return "";
+    return getRelativePath() + "/plugins/nodebb-plugin-peipe-swipe-official/swipe/greet/" + code + ".webm";
+  }
+
+  function cpPeipeGreetText(code) {
+    code = String(code || "").trim().toLowerCase();
+    return code ? "[peipe-greet:" + code + "]" : "";
+  }
+
+  function cpBuildPeipeGreetHtml(m, timeStr) {
+    var url = cpSafeUrl((m && m.mediaUrl) || cpPeipeGreetUrl(cpGetPeipeGreetCode(m && (m.serverText || m.text))), { allowDataImage: false });
+    if (!url) return '<div class="cp-text">' + esc((m && (m.text || m.serverText)) || "") + '<span class="cp-inline-time">' + esc(timeStr || "") + '</span></div>';
+    return (
+      '<div class="cp-peipe-greet-wrap">' +
+        '<video class="cp-peipe-greet-sticker" src="' + escAttr(url) + '" autoplay loop muted playsinline webkit-playsinline preload="auto"></video>' +
+        '<span class="cp-media-time cp-peipe-greet-time">' + esc(timeStr || "") + '</span>' +
+      '</div>'
+    );
+  }
+
   function cpSafeColor(value, fallback) {
     var s = String(value || "").trim();
     if (/^#[0-9a-f]{3,8}$/i.test(s)) return s;
@@ -932,45 +976,6 @@
       h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
     }
     return (h >>> 0).toString(36);
-  }
-
-
-  function getPeipeGreetStickerInfo(value) {
-    var raw = String(value == null ? "" : value).trim();
-    var match = raw.match(/^\[peipe-greet:(hello-(?:0[1-9]|10))\]$/i);
-    if (!match) return null;
-
-    var key = match[1].toLowerCase();
-    return {
-      key: key,
-      shortcode: "[peipe-greet:" + key + "]",
-      url: getRelativePath() + "/plugins/nodebb-plugin-peipe-swipe-official/swipe/greet/" + key + ".webm"
-    };
-  }
-
-  function normalizePeipeGreetMessage(m) {
-    if (!m) return m;
-    var info = getPeipeGreetStickerInfo(m.serverText || m.text || "");
-    if (!info) return m;
-    m.type = "greetSticker";
-    m.mediaUrl = info.url;
-    m.html = "";
-    if (!m.text || m.text === "[视频]" || m.text === "[图片]") m.text = info.shortcode;
-    if (!m.serverText) m.serverText = info.shortcode;
-    return m;
-  }
-
-  function buildPeipeGreetStickerHtml(m, timeStr) {
-    var info = getPeipeGreetStickerInfo((m && (m.serverText || m.text)) || "");
-    var url = cpSafeUrl((info && info.url) || (m && m.mediaUrl) || "", { allowDataImage: false });
-    if (!url) return '<div class="cp-text">' + esc((m && (m.text || m.serverText)) || "") + '<span class="cp-inline-time">' + esc(timeStr) + '</span></div>';
-
-    return (
-      '<button class="cp-greet-sticker" data-act="preview-media" data-src="' + escAttr(url) + '" type="button" aria-label="打招呼贴纸">' +
-        '<video class="cp-greet-sticker-video" src="' + escAttr(url) + '" autoplay loop muted playsinline webkit-playsinline preload="metadata"></video>' +
-      '</button>' +
-      '<span class="cp-media-time cp-greet-sticker-time">' + esc(timeStr) + '</span>'
-    );
   }
 
   // 修复：检查滚动容器是否在底部
@@ -2007,11 +2012,12 @@
     var audioUrl = "";
     var displayHtml = esc(text);
     var match;
-    var greetSticker = getPeipeGreetStickerInfo(text);
+    var peipeGreetCode = cpGetPeipeGreetCode(text);
 
-    if (greetSticker) {
-      type = "greetSticker";
-      mediaUrl = greetSticker.url;
+    if (peipeGreetCode) {
+      type = "peipe_greet";
+      text = cpPeipeGreetText(peipeGreetCode);
+      mediaUrl = cpPeipeGreetUrl(peipeGreetCode);
       displayHtml = "";
     } else if ((match = text.match(/^!\[\]\((.+?)\)$/)) || (match = text.match(/^\[图片\]\((.+?)\)$/))) {
       mediaUrl = cpSafeUrl(match[1], { allowDataImage: false });
@@ -2062,8 +2068,6 @@
       serverText: "",
       _ver: 1
     };
-
-    normalizePeipeGreetMessage(obj);
 
     if (type === "voice") {
       if (payloadObj && payloadObj.duration) {
@@ -3163,37 +3167,31 @@
         margin-top:3px;
         text-align:right;
       }
-      #cp-chat-root .cp-bubble.greet-sticker-shell {
-        background:transparent!important;
-        box-shadow:none!important;
-        border:none!important;
-        padding:0!important;
-        overflow:visible!important;
+      #cp-chat-root .cp-bubble.media-shell .cp-peipe-greet-wrap {
+        position:relative;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width:112px;
+        min-height:112px;
+        padding:4px;
       }
-      #cp-chat-root .cp-greet-sticker {
-        display:block;
-        border:0;
-        background:transparent;
-        padding:0;
-        margin:0;
-        cursor:pointer;
-        line-height:0;
-        -webkit-tap-highlight-color:transparent;
-      }
-      #cp-chat-root .cp-greet-sticker-video {
-        display:block;
+      #cp-chat-root .cp-peipe-greet-sticker {
         width:132px;
-        max-width:36vw;
-        min-width:92px;
-        border-radius:18px;
-        object-fit:cover;
-        background:rgba(15,23,42,.06);
-        box-shadow:0 8px 22px rgba(15,23,42,.12);
-      }
-      #cp-chat-root .cp-greet-sticker-time {
+        max-width:42vw;
+        height:132px;
+        max-height:42vw;
         display:block;
-        margin-top:4px;
-        text-align:right;
+        object-fit:contain;
+        border-radius:18px;
+        background:transparent;
+      }
+      #cp-chat-root .cp-peipe-greet-time {
+        position:absolute;
+        right:8px;
+        bottom:4px;
+        color:rgba(15,23,42,.45);
+        font-size:11px;
       }
     `;
 
@@ -4702,7 +4700,7 @@
     var id = String(m.id || "");
     if (state.heightMap && state.heightMap[id]) return state.heightMap[id];
 
-    if (m.type === "greetSticker" || getPeipeGreetStickerInfo(m.serverText || m.text || "")) return 190;
+    if (m.type === "peipe_greet") return 170;
     if (m.type === "image") return 260;
     if (m.type === "video") return 280;
     if (m.type === "gallery") return 320;
@@ -4927,15 +4925,13 @@
         }
       }
 
-      normalizePeipeGreetMessage(m);
-      var isMediaType = m.type === "image" || m.type === "video" || m.type === "gallery" || m.type === "greetSticker";
+      var isMediaType = m.type === "image" || m.type === "video" || m.type === "gallery" || m.type === "peipe_greet";
       var showTail = isLastInGroup && !m.recalled && !isMediaType;
 
       var bubbleClass =
         "cp-bubble" +
         (m.recalled ? " recalled" : "") +
         (m.type === "voice" ? " voice-shell" : "") +
-        (m.type === "greetSticker" ? " greet-sticker-shell" : "") +
         (isMediaType ? " media-shell" : "");
 
       var rowClass = "cp-row " + (m.mine ? "mine" : "other");
@@ -4964,9 +4960,6 @@
               '<span class="cp-call-label">' + esc(callRecordLabel(m)) + "</span>" +
               inlineTimeHtml +
             "</div>";
-        } else if (m.type === "greetSticker" || getPeipeGreetStickerInfo(m.serverText || m.text || "")) {
-          normalizePeipeGreetMessage(m);
-          body = buildPeipeGreetStickerHtml(m, timeStr);
         } else if (m.type === "voice") {
           body =
             '<button class="cp-voice cp-lazy-audio" data-act="play-voice" data-audio-src="' +
@@ -4987,6 +4980,8 @@
                 '<span class="cp-voice-time">' + esc(timeStr) + "</span>" +
               "</div>" +
             "</button>";
+        } else if (m.type === "peipe_greet") {
+          body = cpBuildPeipeGreetHtml(m, timeStr);
         } else if (m.type === "image") {
           body =
             '<button class="cp-media-thumb" data-act="preview-media" style="position:relative;">' +
