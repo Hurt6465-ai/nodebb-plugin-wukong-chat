@@ -1,5 +1,5 @@
-<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=18safe2">
-<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.css?v=18safe2">
+<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=24">
+<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.css?v=24">
 
 <div id="nodebb-wukong-conversations-root" class="wkconv-root" data-wkconv-root="1">
   <div class="wkconv-loading">正在加载消息...</div>
@@ -7,26 +7,41 @@
 
 <script>
 (function () {
+  var meta = document.querySelector('meta[name="viewport"]');
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.name = 'viewport';
+    document.head.appendChild(meta);
+  }
+  meta.content = 'width=device-width, initial-scale=1.0, viewport-fit=cover';
+
   window.NBBWukongConversations = window.NBBWukongConversations || {};
   window.NBBWukongConversations.config = Object.assign({}, window.NBBWukongConversations.config || {}, {
     apiBase: "/api/wukong",
+    bridgeBase: "/bridge",
     chatBase: "/wukong",
     topicBase: "/topic",
 
-    wkSdkUrl: "/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js?v=1",
+    notificationUrl: "/notifications",
+    notificationApi: "/api/notifications",
     i18nBase: "/plugins/nodebb-plugin-wukong-chat/static/i18n",
 
+    syncInterval: 8000,
     syncIntervalConnected: 45000,
     syncIntervalFallback: 30000,
-    maxConversations: 300,
+    maxConversations: 500,
+    maxNotifications: 80,
 
-    
+    openTopicPage: true,
+
+    // 聊天室就是板块 7 的帖子
     createTopicCid: 7,
     roomCategoryCid: 7,
     roomSourceCid: 7,
-    openTopicPage: true,
 
-    composeApi: "/api/wukong/topics/create",
+    // v24 重点：用 NodeBB 官方发帖页
+    composeMode: "nodebb",
+    composePath: "/compose",
 
     roomBgBase: "/plugins/nodebb-plugin-wukong-chat/static/images/rooms",
     roomBgCount: 20,
@@ -37,4 +52,4 @@
 })();
 </script>
 
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=18safe2"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=24"></script>
