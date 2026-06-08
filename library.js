@@ -49,6 +49,13 @@ try {
   console.warn('[wukong-chat] topics module unavailable:', err.message);
 }
 
+let privileges = null;
+try {
+  privileges = require.main.require('./src/privileges');
+} catch (err) {
+  console.warn('[wukong-chat] privileges module unavailable:', err.message);
+}
+
 const plugin = {};
 
 const PLUGIN_ROOT = __dirname;
@@ -1697,6 +1704,65 @@ function registerApiRoutes(router, middleware) {
     res.json({ ok: true, room });
   }));
 
+
+
+
+  router.post(`${api}/topics/create`, ensureLogin, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ ok: false, error: 'unauthorized', message: 'not logged in' });
+    if (!topics || typeof topics.post !== 'function') return res.status(500).json({ ok: false, error: 'topics_module_missing' });
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const cid = clampInt(body.cid || body.category_id || body.categoryId, 1, 999999, 7);
+    const title = String(body.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const content = String(body.content || body.body || title || '').trim() || title;
+
+    if (!title) return res.status(400).json({ ok: false, error: 'missing_title', message: 'missing title' });
+
+    if (privileges && privileges.categories && typeof privileges.categories.can === 'function') {
+      const canCreate = await privileges.categories.can('topics:create', cid, Number(current.uid));
+      if (!canCreate) return res.status(403).json({ ok: false, error: 'no_privilege', message: 'no privilege to create topic' });
+    }
+
+    const result = await topics.post({
+      uid: Number(current.uid),
+      cid,
+      title,
+      content,
+      tags: [],
+      req,
+    });
+
+    const topicData = result && (result.topicData || result.topic || result);
+    const tid = String(topicData && topicData.tid || '').trim();
+    const slug = String(topicData && topicData.slug || '').trim();
+
+    if (tid) {
+      const store = readConversationState();
+      const topic = await getTopicPublic(tid);
+      if (topic) {
+        const globalRooms = getConversationGlobalRooms(store);
+        const key = conversationRoomKey(`${TOPIC_CHANNEL_PREFIX}${tid}`, TOPIC_CHANNEL_TYPE);
+        globalRooms[key] = topicRoomFromPublicTopic(topic, globalRooms[key]);
+
+        const userState = getConversationUserState(store, current.uid);
+        userState.readAt[key] = Math.max(Number(userState.readAt[key] || 0), Number(globalRooms[key].ts || Date.now()));
+        userState.readVersions[key] = Number(globalRooms[key].version || 0);
+        userState.rooms[key] = { ...globalRooms[key], unread: 0, updated_at: Date.now() };
+        userState.updatedAt = Date.now();
+        writeConversationState(store);
+      }
+    }
+
+    res.json({
+      ok: true,
+      tid,
+      cid,
+      slug,
+      url: tid ? (`/topic/${encodeURIComponent(tid)}${slug ? '/' + encodeURIComponent(slug) : ''}`) : '',
+      topic: topicData || null,
+    });
+  }));
 
   router.post(`${api}/topic-channel/ensure`, ensureLogin, asyncHandler(async (req, res) => {
     const current = await getCurrentUser(req);
