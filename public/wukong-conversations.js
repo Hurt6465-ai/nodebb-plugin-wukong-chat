@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v18.1-safe - room cards + translate + compose */
+/* Wukong independent conversation list v18 - room cards + title translate + compose modal */
 (function () {
   "use strict";
 
@@ -98,6 +98,8 @@
       roomBgCount: 20,
       translateSourceLang: "auto",
       translateTargetLang: "zh-CN",
+      composeMode: "nodebb",
+      composePath: "/compose",
       composeApi: "/api/wukong/topics/create",
       createTopicCid: 0,
       allowExternalNotificationUrls: false
@@ -1095,72 +1097,18 @@
     return '<span style="background:' + esc(bg) + ';display:grid;place-items:center;">' + esc(txt) + '</span>';
   }
 
-  function topicPoster(room) {
-    var tid = topicTid(room);
-    return (state.topics[tid] && state.topics[tid].poster) || {};
-  }
-
-  function topicPosterName(room) {
-    var poster = topicPoster(room);
-    return poster.displayname || poster.username || poster.userslug || "";
-  }
-
-  function roomName(room) {
-    if (state.remarks[roomKey(room)]) return state.remarks[roomKey(room)];
-    if (room.is_topic || room.isTopic) {
-      var tid = topicTid(room);
-      return (state.topics[tid] && state.topics[tid].title) || (t("topic", "聊天室") + " #" + tid);
-    }
-    return userName(directRoomId(room));
-  }
-
-  function topicAvatarHtml() {
-    return '<div class="wkconv-topic-avatar"><i></i><b></b></div>';
-  }
-
-  function roomAvatar(room) {
-    if (room.is_topic || room.isTopic) return topicAvatarHtml(room);
-    var id = directRoomId(room);
-    return avatarHtmlForUser(state.users[String(id)] || {}, userName(id));
-  }
-
-  function roomFlag(room) {
-    if (room.is_topic || room.isTopic) return "";
-    return userFlag(state.users[String(directRoomId(room))]);
-  }
-
-  function roomOnline(room) {
-    if (room.is_topic || room.isTopic) return false;
-    return isOnlineUser(state.users[String(directRoomId(room))]);
-  }
-
-  function previewText(room) {
-    var text = cleanPreviewText(room.text || "");
-    var fromUid = String(room.last_from_uid || "");
-    var fromName = String(room.last_from_name || "");
-    var self = String(state.uid || "");
-
-    if (fromUid && fromUid === self) fromName = "我";
-    if (!fromName && room.is_self) fromName = "我";
-    if (!fromName && fromUid) fromName = userName(fromUid);
-
-    if (room.is_topic || room.isTopic) {
-      return fromName && text ? (fromName + ": " + text) : text;
-    }
-    if ((fromName === "我" || fromUid === self || room.is_self) && text) return "我: " + text;
-    return text;
-  }
-
 
   function pruneTranslationsForStorage() {
     var source = objectMap(state.translations);
     var keys = Object.keys(source);
+
     if (keys.length > 300) {
       keys.sort(function (a, b) {
         return Number(source[b] && source[b].ts || 0) - Number(source[a] && source[a].ts || 0);
       });
       keys.slice(300).forEach(function (key) { delete source[key]; });
     }
+
     return source;
   }
 
@@ -1170,9 +1118,11 @@
   }
 
   function stableNumber(input) {
-    var str = String(input || "");
+    var s = String(input || "");
     var h = 0;
-    for (var i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+    for (var i = 0; i < s.length; i++) {
+      h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
     return Math.abs(h);
   }
 
@@ -1196,13 +1146,18 @@
     if (Array.isArray(topic.members)) raw = topic.members;
     else if (Array.isArray(room && room.members)) raw = room.members;
     else if (Array.isArray(room && room.participant_uids)) {
-      raw = room.participant_uids.map(function (uid) { return state.users[String(uid)] || { uid: uid }; });
+      raw = room.participant_uids.map(function (uid) {
+        return state.users[String(uid)] || { uid: uid };
+      });
     } else if (Array.isArray(room && room.member_uids)) {
-      raw = room.member_uids.map(function (uid) { return state.users[String(uid)] || { uid: uid }; });
+      raw = room.member_uids.map(function (uid) {
+        return state.users[String(uid)] || { uid: uid };
+      });
     }
 
     var seen = {};
     var list = [];
+
     raw.forEach(function (u) {
       if (!u) return;
       if (typeof u !== "object") u = state.users[String(u)] || { uid: u };
@@ -1215,7 +1170,9 @@
     });
 
     var total = Number(topic.member_count || topic.memberCount || topic.membersCount || topic.members_count || raw.length || list.length) || list.length;
-    return { list: list.slice(0, 5), overflow: Math.max(0, total - Math.min(5, list.length)) };
+    var overflow = Math.max(0, total - Math.min(5, list.length));
+
+    return { list: list.slice(0, 5), total: total, overflow: overflow };
   }
 
   function topicMembersHtml(room) {
@@ -1224,7 +1181,11 @@
       var name = u && (u.displayname || u.username || u.userslug || "成员");
       return '<span class="wkconv-room-member-avatar" title="' + esc(name) + '">' + avatarHtmlForUser(u, name) + '</span>';
     }).join("");
-    if (result.overflow > 0) html += '<span class="wkconv-room-member-more">+' + esc(result.overflow > 99 ? "99" : result.overflow) + '</span>';
+
+    if (result.overflow > 0) {
+      html += '<span class="wkconv-room-member-more">+' + esc(result.overflow > 99 ? "99" : result.overflow) + '</span>';
+    }
+
     return html || '<span class="wkconv-room-member-empty">' + esc(t("noMembers", "暂无成员")) + '</span>';
   }
 
@@ -1275,12 +1236,12 @@
   }
 
   async function translateRoomTitleByKey(key, showPopup) {
-    if (now() < Number(state.translateLongPressUntil || 0) && !showPopup) return;
     var room = findRoomByKey(key);
     if (!room) return;
 
     var original = originalTopicTitle(room);
     var cached = state.translations[key];
+
     if (cached && cached.original === original && cached.translated) {
       if (showPopup) openTranslatePopup(cached.original, cached.translated);
       return;
@@ -1291,13 +1252,20 @@
 
     try {
       var translated = await translateViaGoogle(original, translationSettings());
-      translated = String(translated || "").trim() || original;
-      state.translations[key] = { original: original, translated: translated, targetLang: translationSettings().targetLang, ts: now() };
+      translated = String(translated || "").trim();
+      if (!translated) translated = original;
+
+      state.translations[key] = {
+        original: original,
+        translated: translated,
+        targetLang: translationSettings().targetLang,
+        ts: now()
+      };
       saveLocal();
       if (showPopup) openTranslatePopup(original, translated);
     } catch (err) {
       if (showPopup) openTranslatePopup(original, t("translateFailed", "翻译失败，请稍后重试"));
-      try { if (W.alert) W.alert({ type: "warning", message: t("translateFailed", "翻译失败，请稍后重试") }); } catch (_) {}
+      try { W.alert && W.alert({ type: "warning", message: t("translateFailed", "翻译失败，请稍后重试") }); } catch (_) {}
     } finally {
       delete state.translatingKeys[key];
       render();
@@ -1358,7 +1326,20 @@
       '</div>';
   }
 
+  function composeHref() {
+    var cid = Number(cfg.createTopicCid || cfg.topicCid || cfg.roomCategoryCid || cfg.roomSourceCid || 7) || 7;
+    var path = String(cfg.composePath || "/compose");
+    var sep = path.indexOf("?") === -1 ? "?" : "&";
+    return withRelativePath(path + sep + "cid=" + encodeURIComponent(String(cid)));
+  }
+
   function openCompose() {
+    var mode = String(cfg.composeMode || "nodebb").toLowerCase();
+    if (mode !== "api" && mode !== "glass") {
+      location.href = composeHref();
+      return;
+    }
+
     if (!els.composeMask) return;
     if (state.tab !== "rooms") setTab("rooms");
     els.composeError.textContent = "";
@@ -1370,13 +1351,15 @@
   }
 
   function closeCompose() {
-    if (!els.composeMask || state.composeSubmitting) return;
+    if (!els.composeMask) return;
+    if (state.composeSubmitting) return;
     els.composeMask.removeAttribute("data-open");
     setBlur(false);
   }
 
   async function submitCompose() {
     if (!els.composeMask || state.composeSubmitting) return;
+
     var title = String(els.composeTitle.value || "").trim();
     var content = String(els.composeContent.value || "").trim();
     var cid = Number(cfg.createTopicCid || cfg.topicCid || 0) || 0;
@@ -1385,6 +1368,7 @@
       els.composeError.textContent = t("inputTitle", "请输入标题");
       return;
     }
+
     if (!cid) {
       els.composeError.textContent = t("missingCid", "请先配置 createTopicCid，也就是发帖默认板块 cid");
       return;
@@ -1400,8 +1384,10 @@
         method: "POST",
         body: JSON.stringify({ cid: cid, title: title, content: content || title })
       });
+
       closeCompose();
       await syncList("compose");
+
       var tid = data && (data.tid || data.topicId || data.topic_id);
       if (tid) location.href = rel() + cfg.topicBase + "/" + encodeURIComponent(String(tid)) + "?return=" + encodeURIComponent("/wukong/conversations?tab=rooms");
     } catch (err) {
@@ -1411,6 +1397,62 @@
       els.composeSubmit.disabled = false;
       els.composeSubmit.textContent = t("publish", "发布");
     }
+  }
+
+  function topicPoster(room) {
+    var tid = topicTid(room);
+    return (state.topics[tid] && state.topics[tid].poster) || {};
+  }
+
+  function topicPosterName(room) {
+    var poster = topicPoster(room);
+    return poster.displayname || poster.username || poster.userslug || "";
+  }
+
+  function roomName(room) {
+    if (state.remarks[roomKey(room)]) return state.remarks[roomKey(room)];
+    if (room.is_topic || room.isTopic) {
+      var tid = topicTid(room);
+      return (state.topics[tid] && state.topics[tid].title) || (t("topic", "聊天室") + " #" + tid);
+    }
+    return userName(directRoomId(room));
+  }
+
+  function topicAvatarHtml() {
+    return '<div class="wkconv-topic-avatar"><i></i><b></b></div>';
+  }
+
+  function roomAvatar(room) {
+    if (room.is_topic || room.isTopic) return topicAvatarHtml(room);
+    var id = directRoomId(room);
+    return avatarHtmlForUser(state.users[String(id)] || {}, userName(id));
+  }
+
+  function roomFlag(room) {
+    if (room.is_topic || room.isTopic) return "";
+    return userFlag(state.users[String(directRoomId(room))]);
+  }
+
+  function roomOnline(room) {
+    if (room.is_topic || room.isTopic) return false;
+    return isOnlineUser(state.users[String(directRoomId(room))]);
+  }
+
+  function previewText(room) {
+    var text = cleanPreviewText(room.text || "");
+    var fromUid = String(room.last_from_uid || "");
+    var fromName = String(room.last_from_name || "");
+    var self = String(state.uid || "");
+
+    if (fromUid && fromUid === self) fromName = "我";
+    if (!fromName && room.is_self) fromName = "我";
+    if (!fromName && fromUid) fromName = userName(fromUid);
+
+    if (room.is_topic || room.isTopic) {
+      return fromName && text ? (fromName + ": " + text) : text;
+    }
+    if ((fromName === "我" || fromUid === self || room.is_self) && text) return "我: " + text;
+    return text;
   }
 
   function openUrl(room) {
@@ -1550,6 +1592,10 @@
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-selected", active ? "true" : "false");
     });
+
+    if (els.composeFab) {
+      els.composeFab.style.display = state.tab === "rooms" ? "grid" : "none";
+    }
   }
 
   function render() {
@@ -1596,8 +1642,9 @@
       var pinned = !!state.pinnedRooms[key];
       var unread = Number(room.unread || 0);
       var isTopic = room.is_topic || room.isTopic;
-
-      if (isTopic) return roomCardHtml(room, key, pinned, unread);
+      if (isTopic) {
+        return roomCardHtml(room, key, pinned, unread);
+      }
 
       var name = roomName(room);
       var flag = roomFlag(room);
@@ -2359,12 +2406,6 @@
   }
 
   function handleItemClick(target) {
-    var translateBtn = target.closest && target.closest(".wkconv-translate-btn");
-    if (translateBtn) {
-      translateRoomTitleByKey(translateBtn.getAttribute("data-key"), false);
-      return;
-    }
-
     var notice = target.closest && target.closest(".wkconv-notice-item");
     if (notice) {
       openNotificationByIndex(notice.getAttribute("data-notice-index"));
@@ -2385,16 +2426,6 @@
 
     listen(els.drawerOpen, "click", openDrawer);
     listen(els.composeFab, "click", openCompose);
-    listen(els.translateMask, "click", function (e) {
-      if (e.target === els.translateMask || e.target.closest("[data-translate-close]")) closeTranslatePopup();
-    });
-    listen(els.composeMask, "click", function (e) {
-      if (e.target === els.composeMask || e.target.closest("[data-compose-cancel]")) closeCompose();
-      if (e.target.closest("[data-compose-submit]")) submitCompose();
-    });
-    listen(els.composeContent, "keydown", function (e) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitCompose();
-    });
 
     listen(els.drawerMask, "click", function (e) {
       if (e.target === els.drawerMask) closeDrawer();
@@ -2476,7 +2507,34 @@
     }, { passive: true });
 
     listen(els.items, "click", function (e) {
+      var translateBtn = e.target.closest && e.target.closest(".wkconv-translate-btn");
+      if (translateBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (now() < Number(state.translateLongPressUntil || 0)) return;
+        translateRoomTitleByKey(translateBtn.getAttribute("data-key"), false);
+        return;
+      }
+
       handleItemClick(e.target);
+    });
+
+    listen(els.items, "pointerdown", function (e) {
+      var translateBtn = e.target.closest && e.target.closest(".wkconv-translate-btn");
+      if (!translateBtn) return;
+      var key = translateBtn.getAttribute("data-key");
+      W.clearTimeout(state.translatePressTimer);
+      state.translatePressTimer = W.setTimeout(function () {
+        state.translateLongPressUntil = now() + 900;
+        translateRoomTitleByKey(key, true);
+      }, 560);
+    }, { passive: true });
+
+    ["pointerup", "pointercancel", "pointerleave"].forEach(function (name) {
+      listen(els.items, name, function () {
+        W.clearTimeout(state.translatePressTimer);
+        state.translatePressTimer = 0;
+      }, { passive: true });
     });
 
     listen(els.items, "keydown", function (e) {
@@ -2492,24 +2550,7 @@
     var longTimer = 0;
 
     listen(els.items, "touchstart", function (e) {
-      var btn = e.target.closest && e.target.closest(".wkconv-translate-btn");
-      if (!btn) return;
-      var key = btn.getAttribute("data-key");
-      W.clearTimeout(state.translatePressTimer);
-      state.translatePressTimer = W.setTimeout(function () {
-        state.translateLongPressUntil = now() + 800;
-        translateRoomTitleByKey(key, true);
-      }, 520);
-    }, { passive: true });
-
-    ["touchend", "touchmove", "touchcancel"].forEach(function (name) {
-      listen(els.items, name, function () {
-        W.clearTimeout(state.translatePressTimer);
-      }, { passive: true });
-    });
-
-    listen(els.items, "touchstart", function (e) {
-      if (e.target.closest(".wkconv-notice-item,.wkconv-translate-btn")) return;
+      if (e.target.closest(".wkconv-notice-item") || e.target.closest(".wkconv-translate-btn")) return;
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
 
@@ -2525,7 +2566,7 @@
     });
 
     listen(els.items, "contextmenu", function (e) {
-      if (e.target.closest(".wkconv-notice-item")) return;
+      if (e.target.closest(".wkconv-notice-item") || e.target.closest(".wkconv-translate-btn")) return;
 
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
@@ -2536,6 +2577,23 @@
 
     listen(els.menuMask, "click", function (e) {
       if (e.target === els.menuMask) closeMenu();
+    });
+
+    listen(els.translateMask, "click", function (e) {
+      if (e.target === els.translateMask || e.target.closest("[data-translate-close]")) closeTranslatePopup();
+    });
+
+    listen(els.composeMask, "click", function (e) {
+      if (e.target === els.composeMask || e.target.closest("[data-compose-cancel]")) closeCompose();
+      if (e.target.closest("[data-compose-submit]")) submitCompose();
+    });
+
+    listen(els.composeTitle, "keydown", function (e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitCompose();
+    });
+
+    listen(els.composeContent, "keydown", function (e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitCompose();
     });
 
     listen(els.menuList, "click", function (e) {
@@ -2708,17 +2766,15 @@
       try { D.body.classList.remove("wkconv-page"); } catch (_) {}
     });
 
-    state.tab = initialTabFromUrl();
-
-    mountHtml();
-    bind();
-    render();
-
-    await loadI18n().catch(function () {});
+    await loadI18n();
     await ensureToken().catch(function () {});
+
+    state.tab = initialTabFromUrl();
 
     loadLocal();
     updateAverageHeight();
+    mountHtml();
+    bind();
     bindNotificationEvents();
     render();
 
@@ -2728,7 +2784,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v18.1-safe-room-card-translate",
+      version: "v24-nodebb-compose-link",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
