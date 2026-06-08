@@ -1204,11 +1204,11 @@
   }
 
   function flaggedPosterAvatarHtml(u, fallbackText) {
-    return '<span class="wkconv-avatar-flag-wrap wkconv-avatar-flag-wrap-poster">' + avatarHtmlForUser(u, fallbackText) + avatarFlagBadge(u) + '</span>';
+    return '<span class="wkconv-avatar-flag-wrap wkconv-avatar-flag-wrap-poster"><span class="wkconv-avatar-photo">' + avatarHtmlForUser(u, fallbackText) + '</span>' + avatarFlagBadge(u) + '</span>';
   }
 
   function flaggedMemberAvatarHtml(u, fallbackText) {
-    return '<span class="wkconv-avatar-flag-wrap wkconv-avatar-flag-wrap-member">' + avatarHtmlForUser(u, fallbackText) + avatarFlagBadge(u) + '</span>';
+    return '<span class="wkconv-avatar-flag-wrap wkconv-avatar-flag-wrap-member"><span class="wkconv-avatar-photo">' + avatarHtmlForUser(u, fallbackText) + '</span>' + avatarFlagBadge(u) + '</span>';
   }
 
   function roomPublishedTs(room) {
@@ -1333,41 +1333,25 @@
   function roomCardHtml(room, key, pinned, unread) {
     var poster = topicPoster(room) || {};
     var posterName = topicPosterName(room) || poster.displayname || poster.username || poster.userslug || t("unknownUser", "未知用户");
-    var title = displayTopicTitle(room);
-    var translated = !!translatedTopicTitle(room);
+    var title = originalTopicTitle(room);
     var bg = topicBackgroundUrl(room);
-    var published = fmtTime(roomPublishedTs(room));
     var membersHtml = topicMembersHtml(room);
+    var unreadText = unread > 99 ? "99+" : String(unread || "");
 
     return '<div class="wkconv-item is-topic wkconv-room-card' +
       (pinned ? " is-pinned" : "") +
       (unread ? " has-unread" : "") +
-      (translated ? " is-translated" : "") +
       '" data-key="' + esc(key) + '" role="button" tabindex="0">' +
         '<div class="wkconv-room-bg"><img src="' + esc(bg) + '" alt="" loading="lazy" decoding="async"></div>' +
         '<div class="wkconv-room-frost"></div>' +
         '<div class="wkconv-room-content">' +
           '<div class="wkconv-room-title-row">' +
             '<div class="wkconv-room-title">' + esc(title) + '</div>' +
-            '<button class="wkconv-translate-btn' + (state.translatingKeys[key] ? " is-loading" : "") + '" type="button" data-key="' + esc(key) + '" aria-label="翻译标题">' +
-              '<i class="fa-solid fa-language" style="color: rgb(177, 151, 252);"></i>' +
-            '</button>' +
           '</div>' +
-          '<div class="wkconv-room-meta">' +
-            '<div class="wkconv-room-poster-avatar">' + flaggedPosterAvatarHtml(poster, posterName) + '</div>' +
-            '<div class="wkconv-room-poster-copy">' +
-              '<div class="wkconv-room-poster-name">' + esc(posterName) + '</div>' +
-            '</div>' +
-          '</div>' +
-          '<div class="wkconv-room-footer">' +
-            '<div class="wkconv-room-members-wrap">' +
-              '<span class="wkconv-room-footer-label">成员</span>' +
-              '<div class="wkconv-room-members">' + membersHtml + '</div>' +
-            '</div>' +
-            '<div class="wkconv-room-side">' +
-              (published ? '<span class="wkconv-room-time">发布 ' + esc(published) + '</span>' : '') +
-              '<span class="wkconv-badge">' + esc(unread > 99 ? "99+" : unread) + '</span>' +
-            '</div>' +
+          '<div class="wkconv-room-people-row">' +
+            '<div class="wkconv-room-poster-avatar" title="' + esc(posterName) + '">' + flaggedPosterAvatarHtml(poster, posterName) + '</div>' +
+            '<div class="wkconv-room-members" aria-label="成员头像">' + membersHtml + '</div>' +
+            '<span class="wkconv-room-unread">' + esc(unreadText) + '</span>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -2694,7 +2678,7 @@
             '<div class="wkconv-spacer wkconv-bottom-spacer"></div>' +
           '</div>' +
         '</main>' +
-        '<button class="wkconv-compose-fab" type="button" aria-label="发布聊天室话题"><span class="wkconv-compose-fab-icon">✎</span></button>' +
+        '<button class="wkconv-compose-fab" type="button" aria-label="发布聊天室话题"><span class="wkconv-compose-fab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 18.5l1.1-4.4L15.4 4.3a2.1 2.1 0 0 1 3 0l1.3 1.3a2.1 2.1 0 0 1 0 3l-9.8 9.8-4.4 1.1a.8.8 0 0 1-1-.96zM14 6.2l3.8 3.8M15.6 18.2h4.2M17.7 16.1v4.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>' +
       '</div>' +
       '<div class="wkconv-menu-mask"><div class="wkconv-menu"><div class="wkconv-menu-title"></div><div class="wkconv-menu-list"></div></div></div>' +
       '<div class="wkconv-translate-mask"><div class="wkconv-translate-pop"><button class="wkconv-translate-close" type="button" data-translate-close>×</button><div class="wkconv-translate-title">标题翻译</div><div class="wkconv-translate-section"><div class="wkconv-translate-label">原文</div><div class="wkconv-translate-original"></div></div><div class="wkconv-translate-section"><div class="wkconv-translate-label">目标文</div><div class="wkconv-translate-target"></div></div></div></div>' +
