@@ -20,7 +20,7 @@
     syncIntervalFallback: 30000,
     maxConversations: 300,
 
-    // 聊天室就是板块 7 的帖子
+    
     createTopicCid: 7,
     roomCategoryCid: 7,
     roomSourceCid: 7,
