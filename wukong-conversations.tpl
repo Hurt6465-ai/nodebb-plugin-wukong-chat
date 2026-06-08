@@ -1,5 +1,5 @@
-<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=24">
-<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.css?v=24">
+<link rel="preload" as="script" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=25">
+<link rel="stylesheet" href="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.css?v=25">
 
 <div id="nodebb-wukong-conversations-root" class="wkconv-root" data-wkconv-root="1">
   <div class="wkconv-loading">正在加载消息...</div>
@@ -39,9 +39,9 @@
     roomCategoryCid: 7,
     roomSourceCid: 7,
 
-    // v24 重点：用 NodeBB 官方发帖页
-    composeMode: "nodebb",
-    composePath: "/compose",
+    // v25：玻璃弹窗直接发布，不跳转 /compose
+    composeMode: "api",
+    composeApi: "/api/wukong/topics/create",
 
     roomBgBase: "/plugins/nodebb-plugin-wukong-chat/static/images/rooms",
     roomBgCount: 20,
@@ -52,4 +52,4 @@
 })();
 </script>
 
-<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=24"></script>
+<script charset="utf-8" src="/plugins/nodebb-plugin-wukong-chat/static/wukong-conversations.js?v=25"></script>
