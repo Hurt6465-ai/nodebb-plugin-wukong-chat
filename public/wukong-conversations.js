@@ -98,10 +98,9 @@
       roomBgCount: 20,
       translateSourceLang: "auto",
       translateTargetLang: "zh-CN",
-      composeMode: "nodebb",
-      composePath: "/compose",
       composeApi: "/api/wukong/topics/create",
-      createTopicCid: 0,
+      composeMode: "api",
+      createTopicCid: 7,
       allowExternalNotificationUrls: false
     }, (W.NBBWukongConversations && W.NBBWukongConversations.config) || {});
   }
@@ -144,6 +143,19 @@
     if (!base) return path;
     if (path === base || path.indexOf(base + "/") === 0) return path;
     return base + (path.charAt(0) === "/" ? path : "/" + path);
+  }
+
+  function csrfToken() {
+    try {
+      return String(
+        (W.config && (W.config.csrf_token || W.config.csrfToken)) ||
+        (D.querySelector('meta[name="csrf-token"]') && D.querySelector('meta[name="csrf-token"]').getAttribute("content")) ||
+        (D.querySelector('input[name="_csrf"]') && D.querySelector('input[name="_csrf"]').value) ||
+        ""
+      );
+    } catch (_) {
+      return "";
+    }
   }
 
   function absoluteAppUrl(url, allowExternal) {
@@ -594,10 +606,17 @@
   }
 
   async function fetchJson(url, opts) {
+    opts = opts || {};
+    var headers = Object.assign({ "Content-Type": "application/json", Accept: "application/json" }, opts.headers || {});
+    var csrf = csrfToken();
+    if (csrf && !headers["x-csrf-token"] && !headers["X-CSRF-Token"]) {
+      headers["x-csrf-token"] = csrf;
+    }
+
     var res = await fetch(url, Object.assign({
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json", Accept: "application/json" }
-    }, opts || {}));
+      headers: headers
+    }, opts, { headers: headers }));
     var data = null;
     try { data = await res.json(); } catch (_) { data = {}; }
     if (!res.ok) {
@@ -1169,24 +1188,50 @@
       list.push(u);
     });
 
-    var total = Number(topic.member_count || topic.memberCount || topic.membersCount || topic.members_count || raw.length || list.length) || list.length;
-    var overflow = Math.max(0, total - Math.min(5, list.length));
+    var explicitTotal = Number(topic.member_count || topic.memberCount || topic.membersCount || topic.members_count || 0) || 0;
+    var total = list.length;
+    if (explicitTotal > 0 && list.length >= 5) {
+      total = Math.max(list.length, explicitTotal - (posterUid ? 1 : 0));
+    }
+    var overflow = list.length >= 5 ? Math.max(0, total - 5) : 0;
 
     return { list: list.slice(0, 5), total: total, overflow: overflow };
+  }
+
+  function avatarFlagBadge(u) {
+    var flag = userFlag(u);
+    return flag ? '<span class="wkconv-avatar-flag-badge">' + esc(flag) + '</span>' : '';
+  }
+
+  function flaggedPosterAvatarHtml(u, fallbackText) {
+    return '<span class="wkconv-avatar-flag-wrap wkconv-avatar-flag-wrap-poster">' + avatarHtmlForUser(u, fallbackText) + avatarFlagBadge(u) + '</span>';
+  }
+
+  function flaggedMemberAvatarHtml(u, fallbackText) {
+    return '<span class="wkconv-avatar-flag-wrap wkconv-avatar-flag-wrap-member">' + avatarHtmlForUser(u, fallbackText) + avatarFlagBadge(u) + '</span>';
+  }
+
+  function roomPublishedTs(room) {
+    var topic = topicData(room);
+    var ts = Number(
+      topic.timestamp || topic.lastposttime || topic.posttime || topic.create_time || topic.createdAt || topic.created_at || room.ts || 0
+    );
+    if (ts && ts < 10000000000) ts *= 1000;
+    return ts || Number(room.ts || 0) || now();
   }
 
   function topicMembersHtml(room) {
     var result = topicMemberResult(room);
     var html = result.list.map(function (u) {
       var name = u && (u.displayname || u.username || u.userslug || "成员");
-      return '<span class="wkconv-room-member-avatar" title="' + esc(name) + '">' + avatarHtmlForUser(u, name) + '</span>';
+      return '<span class="wkconv-room-member-avatar" title="' + esc(name) + '">' + flaggedMemberAvatarHtml(u, name) + '</span>';
     }).join("");
 
     if (result.overflow > 0) {
       html += '<span class="wkconv-room-member-more">+' + esc(result.overflow > 99 ? "99" : result.overflow) + '</span>';
     }
 
-    return html || '<span class="wkconv-room-member-empty">' + esc(t("noMembers", "暂无成员")) + '</span>';
+    return html || '';
   }
 
   function originalTopicTitle(room) {
@@ -1291,7 +1336,8 @@
     var title = displayTopicTitle(room);
     var translated = !!translatedTopicTitle(room);
     var bg = topicBackgroundUrl(room);
-    var preview = previewText(room);
+    var published = fmtTime(roomPublishedTs(room));
+    var membersHtml = topicMembersHtml(room);
 
     return '<div class="wkconv-item is-topic wkconv-room-card' +
       (pinned ? " is-pinned" : "") +
@@ -1308,17 +1354,18 @@
             '</button>' +
           '</div>' +
           '<div class="wkconv-room-meta">' +
-            '<div class="wkconv-room-poster-avatar">' + avatarHtmlForUser(poster, posterName) + '</div>' +
+            '<div class="wkconv-room-poster-avatar">' + flaggedPosterAvatarHtml(poster, posterName) + '</div>' +
             '<div class="wkconv-room-poster-copy">' +
               '<div class="wkconv-room-poster-name">' + esc(posterName) + '</div>' +
-              '<div class="wkconv-room-preview">' + esc(preview || t("topic", "聊天室")) + '</div>' +
             '</div>' +
           '</div>' +
           '<div class="wkconv-room-footer">' +
-            '<div class="wkconv-room-members">' + topicMembersHtml(room) + '</div>' +
+            '<div class="wkconv-room-members-wrap">' +
+              '<span class="wkconv-room-footer-label">成员</span>' +
+              '<div class="wkconv-room-members">' + membersHtml + '</div>' +
+            '</div>' +
             '<div class="wkconv-room-side">' +
-              (pinned ? '<span class="wkconv-room-pin">' + esc(t("pinned", "置顶")) + '</span>' : '') +
-              '<span class="wkconv-room-time">' + esc(fmtTime(room.ts)) + '</span>' +
+              (published ? '<span class="wkconv-room-time">发布 ' + esc(published) + '</span>' : '') +
               '<span class="wkconv-badge">' + esc(unread > 99 ? "99+" : unread) + '</span>' +
             '</div>' +
           '</div>' +
@@ -1326,20 +1373,7 @@
       '</div>';
   }
 
-  function composeHref() {
-    var cid = Number(cfg.createTopicCid || cfg.topicCid || cfg.roomCategoryCid || cfg.roomSourceCid || 7) || 7;
-    var path = String(cfg.composePath || "/compose");
-    var sep = path.indexOf("?") === -1 ? "?" : "&";
-    return withRelativePath(path + sep + "cid=" + encodeURIComponent(String(cid)));
-  }
-
   function openCompose() {
-    var mode = String(cfg.composeMode || "nodebb").toLowerCase();
-    if (mode !== "api" && mode !== "glass") {
-      location.href = composeHref();
-      return;
-    }
-
     if (!els.composeMask) return;
     if (state.tab !== "rooms") setTab("rooms");
     els.composeError.textContent = "";
@@ -1386,12 +1420,13 @@
       });
 
       closeCompose();
+      setTab("rooms");
       await syncList("compose");
-
-      var tid = data && (data.tid || data.topicId || data.topic_id);
-      if (tid) location.href = rel() + cfg.topicBase + "/" + encodeURIComponent(String(tid)) + "?return=" + encodeURIComponent("/wukong/conversations?tab=rooms");
+      try { W.alert && W.alert({ type: "success", message: t("postSuccess", "发布成功") }); } catch (_) {}
     } catch (err) {
-      els.composeError.textContent = (err && err.message) || t("postFailed", "发布失败，请稍后重试");
+      var msg = (err && err.message) || t("postFailed", "发布失败，请稍后重试");
+      if (err && err.status === 404) msg = "后端缺少 /api/wukong/topics/create 路由，请先把 ZIP 里的 library-direct-compose-route.js 加到插件 library.js";
+      els.composeError.textContent = msg;
     } finally {
       state.composeSubmitting = false;
       els.composeSubmit.disabled = false;
@@ -2659,7 +2694,7 @@
             '<div class="wkconv-spacer wkconv-bottom-spacer"></div>' +
           '</div>' +
         '</main>' +
-        '<button class="wkconv-compose-fab" type="button" aria-label="发布聊天室话题"><i class="fa-solid fa-pen"></i></button>' +
+        '<button class="wkconv-compose-fab" type="button" aria-label="发布聊天室话题"><span class="wkconv-compose-fab-icon">✎</span></button>' +
       '</div>' +
       '<div class="wkconv-menu-mask"><div class="wkconv-menu"><div class="wkconv-menu-title"></div><div class="wkconv-menu-list"></div></div></div>' +
       '<div class="wkconv-translate-mask"><div class="wkconv-translate-pop"><button class="wkconv-translate-close" type="button" data-translate-close>×</button><div class="wkconv-translate-title">标题翻译</div><div class="wkconv-translate-section"><div class="wkconv-translate-label">原文</div><div class="wkconv-translate-original"></div></div><div class="wkconv-translate-section"><div class="wkconv-translate-label">目标文</div><div class="wkconv-translate-target"></div></div></div></div>' +
@@ -2784,7 +2819,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v24-nodebb-compose-link",
+      version: "v25-direct-compose-compact-card",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
