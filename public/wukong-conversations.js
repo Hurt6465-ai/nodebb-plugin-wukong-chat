@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v51 - stable poster + last commenters, no overflow count */
+/* Wukong independent conversation list v54 - write-maintained commenters, no read-time member scan */
 (function () {
   "use strict";
 
@@ -1256,12 +1256,13 @@
     var topic = topicData(room);
     return [
       publicUserId(topicPoster(room)),
-      String(room && room.last_from_uid || ""),
       userListSig(topicStableCommentMembers(room)),
+      userListSig(topic && topic.comment_members),
+      userListSig(topic && topic.last_commenters),
       userListSig(topic && topic.members),
-      userListSig(room && room.members),
-      userListSig(room && room.participant_uids),
-      userListSig(room && room.member_uids)
+      userListSig(room && room.comment_members),
+      userListSig(room && room.last_commenters),
+      userListSig(room && room.members)
     ].join("|");
   }
 
@@ -1453,16 +1454,16 @@
       userListFrom(list).forEach(function (u) { sources.push(u); });
     }
 
-    // 后端 getTopicPublic() 返回的 members 已经按最新回复去重排序。
+    // v54: only render the stable latest-commenter cache maintained by the backend
+    // when topic chat messages are upserted. Do not fall back to last_from_uid,
+    // participant_uids, member_uids, recent_members, or active_members.
+    addMany(topic && topic.comment_members);
+    addMany(topic && topic.last_commenters);
+    addMany(room && room.comment_members);
+    addMany(room && room.last_commenters);
     addMany(topic && topic.members);
     addMany(room && room.members);
-    addMany(room && room.participant_uids);
-    addMany(room && room.member_uids);
 
-    var lastUid = String(room && room.last_from_uid || "").trim();
-    if (lastUid) sources.unshift(state.users[lastUid] || { uid: lastUid, displayname: room.last_from_name || "" });
-
-    var posterUid = topicPosterUid(room);
     var seen = {};
     var list = [];
 
@@ -1470,7 +1471,6 @@
       var u = asPublicUser(raw);
       if (!u) return;
       var uid = publicUserId(u);
-      if (uid && uid === posterUid) return;
       var key = uid || String(u.username || u.userslug || u.displayname || "").trim();
       if (!key || seen[key]) return;
       seen[key] = 1;
