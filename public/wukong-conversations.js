@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v50 - recent active members restored, no overflow count */
+/* Wukong independent conversation list v51 - stable poster + last commenters, no overflow count */
 (function () {
   "use strict";
 
@@ -110,8 +110,9 @@
       roomBgBase: "/plugins/nodebb-plugin-wukong-chat/static/images/rooms",
       roomBgCount: 20,
       preloadRoomBackgrounds: true,
-      showRecentMembers: true,
-      recentMembersTtlMs: 5 * 60 * 1000,
+      showRecentMembers: false,
+      recentMembersTtlMs: 0,
+      roomMemberAvatarLimit: 7,
       composeTags: ["学习", "交友", "闲谈", "工作", "游戏", "影视"],
       composeLanguages: ["CN", "EN", "MY", "VI", "TH", "JP", "KR"],
       composeApi: "/api/wukong/topics/create",
@@ -1254,7 +1255,9 @@
   function topicMemberSignature(room) {
     var topic = topicData(room);
     return [
-      userListSig(topicRecentMembers(room)),
+      publicUserId(topicPoster(room)),
+      String(room && room.last_from_uid || ""),
+      userListSig(topicStableCommentMembers(room)),
       userListSig(topic && topic.members),
       userListSig(room && room.members),
       userListSig(room && room.participant_uids),
@@ -1420,46 +1423,67 @@
     return html ? '<div class="wkconv-room-chips">' + html + '</div>' : '';
   }
 
-  function topicMemberResult(room) {
-    var topic = topicData(room);
-    var posterUid = String(topic && topic.poster && topic.poster.uid || "");
-    var recentRaw = topicRecentMembers(room);
-    var usingRecent = recentRaw.length > 0;
-    var raw = usingRecent ? recentRaw : firstUserList(
-      topic && topic.members,
-      room && room.members,
-      room && room.participant_uids,
-      room && room.member_uids
-    );
+  function asPublicUser(value) {
+    if (!value) return null;
+    if (typeof value === "object") {
+      var uid = publicUserId(value);
+      if (uid && state.users[uid]) return Object.assign({}, state.users[uid], value);
+      return value;
+    }
+    var id = String(value || "").trim();
+    if (!id) return null;
+    return state.users[id] || { uid: id };
+  }
 
-    if (!raw.length && Array.isArray(room && room.participant_uids)) {
-      raw = room.participant_uids.map(function (uid) {
-        return state.users[String(uid)] || { uid: uid };
-      });
-    } else if (!raw.length && Array.isArray(room && room.member_uids)) {
-      raw = room.member_uids.map(function (uid) {
-        return state.users[String(uid)] || { uid: uid };
-      });
+  function topicPosterUid(room) {
+    var topic = topicData(room);
+    return String(
+      (topic && topic.poster && topic.poster.uid) ||
+      (topic && topic.uid) ||
+      (room && (room.poster_uid || room.posterUid || room.uid || room.owner_uid || room.ownerUid)) ||
+      ""
+    ).trim();
+  }
+
+  function topicStableCommentMembers(room) {
+    var topic = topicData(room);
+    var sources = [];
+
+    function addMany(list) {
+      userListFrom(list).forEach(function (u) { sources.push(u); });
     }
 
+    // 后端 getTopicPublic() 返回的 members 已经按最新回复去重排序。
+    addMany(topic && topic.members);
+    addMany(room && room.members);
+    addMany(room && room.participant_uids);
+    addMany(room && room.member_uids);
+
+    var lastUid = String(room && room.last_from_uid || "").trim();
+    if (lastUid) sources.unshift(state.users[lastUid] || { uid: lastUid, displayname: room.last_from_name || "" });
+
+    var posterUid = topicPosterUid(room);
     var seen = {};
     var list = [];
 
-    raw.forEach(function (u) {
+    sources.forEach(function (raw) {
+      var u = asPublicUser(raw);
       if (!u) return;
-      if (typeof u !== "object") u = state.users[String(u)] || { uid: u };
       var uid = publicUserId(u);
-      // 普通成员列表避免和左侧发帖人头像重复；最近活跃列表不排除发帖人，
-      // 否则只有发帖人活跃时会出现“没人显示、只剩 +1”的错觉。
-      if (!usingRecent && uid && uid === posterUid) return;
-      var key = uid || String(u.username || u.userslug || u.displayname || "");
+      if (uid && uid === posterUid) return;
+      var key = uid || String(u.username || u.userslug || u.displayname || "").trim();
       if (!key || seen[key]) return;
       seen[key] = 1;
       list.push(u);
     });
 
-    // 不显示 +1 / +N，只显示最多 5 个头像；recent 只用于数据语义，不加高亮样式。
-    return { list: list.slice(0, 5), total: list.length, overflow: 0, recent: usingRecent };
+    return list;
+  }
+
+  function topicMemberResult(room) {
+    var limit = Math.max(1, Number(cfg.roomMemberAvatarLimit || 7) || 7);
+    var list = topicStableCommentMembers(room).slice(0, limit);
+    return { list: list, total: list.length, overflow: 0, recent: false };
   }
 
   function avatarFlagBadge(u) {
@@ -1700,7 +1724,11 @@
 
   function topicPoster(room) {
     var tid = topicTid(room);
-    return (state.topics[tid] && state.topics[tid].poster) || {};
+    var topic = state.topics[tid] || {};
+    if (topic.poster && typeof topic.poster === "object") return topic.poster;
+    var uid = topicPosterUid(room);
+    if (uid && state.users[uid]) return state.users[uid];
+    return uid ? { uid: uid } : {};
   }
 
   function topicPosterName(room) {
@@ -3150,7 +3178,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v50-active-members-no-overflow",
+      version: "v51-stable-poster-last-commenters",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
