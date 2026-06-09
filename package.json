@@ -1,19 +1,36 @@
 {
   "name": "nodebb-plugin-wukong-chat",
-  "version": "0.18.48",
-  "description": "悟空独立聊天窗口、会话列表和一对一 WebRTC 通话",
+  "version": "0.19.0",
+  "description": "悟空独立聊天窗口、会话列表、一对一 WebRTC 通话和板块话题群聊核心后端",
   "main": "library.js",
   "keywords": [
     "nodebb",
     "plugin",
     "wukongim",
-    "chat"
+    "chat",
+    "nodebb-plugin",
+    "topic",
+    "wukong",
+    "cp"
   ],
   "license": "MIT",
   "nbbpm": {
-    "compatibility": "^4.0.0"
+    "compatibility": "^3.0.0 || ^4.0.0"
   },
   "dependencies": {
     "multer": "^1.4.5-lts.1"
-  }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "library.js",
+    "plugin.json",
+    "README.md",
+    "docs",
+    "templates",
+    "languages",
+    "scss",
+    "public"
+  ]
 }
