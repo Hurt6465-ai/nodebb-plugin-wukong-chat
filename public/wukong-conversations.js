@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v27 - HelloTalk room UI + direct compose */
+/* Wukong independent conversation list v29 - HelloTalk room UI + direct compose + i18n */
 (function () {
   "use strict";
 
@@ -290,8 +290,12 @@
       navigator.language ||
       "zh-CN"
     );
-    if (/^my/i.test(raw)) return "my";
+    if (/^(my|mm)/i.test(raw)) return "my";
     if (/^en/i.test(raw)) return "en-US";
+    if (/^(vi|vn)/i.test(raw)) return "vi";
+    if (/^th/i.test(raw)) return "th";
+    if (/^(ja|jp)/i.test(raw)) return "jp";
+    if (/^(ko|kr)/i.test(raw)) return "kr";
     return "zh-CN";
   }
 
@@ -299,13 +303,21 @@
     var loc = locale();
     try {
       var base = String(cfg.i18nBase || "").replace(/\/+$/, "");
-      var res = await fetch(base + "/wukong-conversations." + loc + ".json?v=7", {
-        credentials: "same-origin",
-        headers: { Accept: "application/json" }
-      });
-      if (res.ok) {
+      var urls = [
+        base + "/" + loc + ".json?v=29",
+        base + "/wukong-conversations." + loc + ".json?v=29"
+      ];
+      for (var i = 0; i < urls.length; i++) {
+        var res = await fetch(urls[i], {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" }
+        });
+        if (!res.ok) continue;
         var data = await res.json();
-        if (isPlainObject(data)) i18n = data;
+        if (isPlainObject(data)) {
+          i18n = data;
+          return;
+        }
       }
     } catch (_) {}
   }
@@ -1250,19 +1262,31 @@
     }
   };
 
+  function i18nObject(key) {
+    var obj = i18n && i18n[key];
+    return isPlainObject(obj) ? obj : {};
+  }
+
   function uiText(key, fallback) {
+    var i18nKey = "wkconv_" + key;
+    var fromFile = i18n && i18n[i18nKey];
+    if (fromFile !== undefined && fromFile !== null && String(fromFile).trim() !== "") return String(fromFile);
     var pack = WKCONV_UI[uiLocaleKey()] || WKCONV_UI.zh;
     return (pack && pack[key]) || (WKCONV_UI.zh && WKCONV_UI.zh[key]) || fallback || key;
   }
 
   function tagLabel(value) {
     value = String(value || "").trim();
+    var tagMap = i18nObject("wkconv_tags");
+    if (tagMap[value]) return String(tagMap[value]);
     var pack = WKCONV_UI[uiLocaleKey()] || WKCONV_UI.zh;
     return (pack.tags && pack.tags[value]) || (WKCONV_UI.zh.tags && WKCONV_UI.zh.tags[value]) || value;
   }
 
   function roomLangLabel(value) {
     var code = langLabel(value);
+    var langMap = i18nObject("wkconv_languages");
+    if (langMap[code]) return String(langMap[code]);
     var pack = WKCONV_UI[uiLocaleKey()] || WKCONV_UI.zh;
     return (pack.langs && pack.langs[code]) || (WKCONV_UI.zh.langs && WKCONV_UI.zh.langs[code]) || code;
   }
@@ -1461,18 +1485,18 @@
       (pinned ? " is-pinned" : "") +
       (unread ? " has-unread" : "") +
       '" data-key="' + esc(key) + '" role="button" tabindex="0">' +
-        '<div class="wkconv-room-bg"><img src="' + esc(bg) + '" alt="" loading="lazy" decoding="async"></div>' +
+        '<div class="wkconv-room-bg"><img src="' + esc(bg) + '" alt="" loading="eager" decoding="async"></div>' +
         '<div class="wkconv-room-frost"></div>' +
+        (pinned ? '<span class="wkconv-room-pin-corner" aria-label="置顶">📌</span>' : '') +
         '<div class="wkconv-room-content">' +
           roomChipHtml(room) +
           '<div class="wkconv-room-title-row">' +
-            (pinned ? '<span class="wkconv-room-star" aria-label="置顶">★</span>' : '') +
             '<div class="wkconv-room-title">' + esc(title) + '</div>' +
           '</div>' +
           '<div class="wkconv-room-people-row">' +
             '<div class="wkconv-room-poster-avatar" title="' + esc(posterName) + '">' + flaggedPosterAvatarHtml(poster, posterName) + '</div>' +
             '<div class="wkconv-room-members" aria-label="成员头像">' + membersHtml + '</div>' +
-            '<span class="wkconv-room-unread">' + esc(unreadText) + '</span>' +
+            '<span class="wkconv-room-unread" aria-label="未读消息">' + esc(unreadText) + '</span>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -1513,9 +1537,9 @@
     W.setTimeout(function () { try { els.composeTitle.focus(); } catch (_) {} }, 60);
   }
 
-  function closeCompose() {
+  function closeCompose(force) {
     if (!els.composeMask) return;
-    if (state.composeSubmitting) return;
+    if (state.composeSubmitting && !force) return;
     els.composeMask.removeAttribute("data-open");
     setBlur(false);
   }
@@ -1550,7 +1574,10 @@
         body: JSON.stringify({ cid: cid, title: title, content: content || title, tag: tag, language: language })
       });
 
-      closeCompose();
+      state.composeSubmitting = false;
+      els.composeSubmit.disabled = false;
+      els.composeSubmit.textContent = uiText("publish", t("publish", "发布"));
+      closeCompose(true);
       setTab("rooms");
       await syncList("compose");
     } catch (err) {
@@ -2738,11 +2765,11 @@
     listen(els.items, "touchstart", function (e) {
       if (e.target.closest(".wkconv-notice-item") || e.target.closest(".wkconv-translate-btn")) return;
       var item = e.target.closest(".wkconv-item");
-      if (!item) return;
+      if (!item || item.classList.contains("wkconv-room-card")) return;
 
       longTimer = W.setTimeout(function () {
         openMenu(findRoomByKey(item.getAttribute("data-key")));
-      }, 520);
+      }, 700);
     }, { passive: true });
 
     ["touchend", "touchmove", "touchcancel"].forEach(function (name) {
