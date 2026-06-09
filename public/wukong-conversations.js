@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v30 - HelloTalk room UI + direct compose + i18n, no title translate */
+/* Wukong independent conversation list v31 - low-pressure active room users + stable room cards */
 (function () {
   "use strict";
 
@@ -31,6 +31,8 @@
     pinnedRooms: {},
     remarks: {},
     renderSig: "",
+    roomBgPreloaded: false,
+    roomBgPreloads: [],
     composeSubmitting: false,
     touchX: 0,
     touchY: 0,
@@ -94,6 +96,8 @@
       defaultRowHeight: 70,
       roomBgBase: "/plugins/nodebb-plugin-wukong-chat/static/images/rooms",
       roomBgCount: 20,
+      preloadRoomBackgrounds: true,
+      recentMembersTtlMs: 10 * 60 * 1000,
       composeTags: ["学习", "交友", "闲谈", "工作", "游戏", "影视"],
       composeLanguages: ["CN", "EN", "MY", "VI", "TH", "JP", "KR"],
       composeApi: "/api/wukong/topics/create",
@@ -134,7 +138,11 @@
   }
 
   function numberFromAny(value) {
-    var n = Number(value);
+    if (typeof value === "number") return isFinite(value) && value > 0 ? value : 0;
+    var s = String(value == null ? "" : value).trim();
+    var m = s.match(/\d+/);
+    if (!m) return 0;
+    var n = Number(m[0]);
     return isFinite(n) && n > 0 ? n : 0;
   }
 
@@ -680,11 +688,13 @@
           state.users[String(data.topics[tid].poster.uid)] = data.topics[tid].poster;
         }
 
-        if (Array.isArray(data.topics[tid].members)) {
-          data.topics[tid].members.forEach(function (u) {
-            if (u && u.uid) state.users[String(u.uid)] = u;
-          });
-        }
+        ["members", "active_members", "activeMembers", "recent_members", "recentMembers"].forEach(function (field) {
+          if (Array.isArray(data.topics[tid][field])) {
+            data.topics[tid][field].forEach(function (u) {
+              if (u && u.uid) state.users[String(u.uid)] = u;
+            });
+          }
+        });
       });
     }
 
@@ -723,6 +733,14 @@
 
       map[key] = Object.assign({}, old, r);
       map[key].text = cleanPreviewText(map[key].text);
+
+      ["members", "active_members", "activeMembers", "recent_members", "recentMembers"].forEach(function (field) {
+        if (Array.isArray(r[field])) {
+          r[field].forEach(function (u) {
+            if (u && u.uid) state.users[String(u.uid)] = u;
+          });
+        }
+      });
 
       if (r.unread_abs) map[key].unread = Number(r.unread || 0);
     });
@@ -1167,6 +1185,87 @@
     return state.topics[topicTid(room)] || {};
   }
 
+  function userListFrom(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
+  function freshRecentUserList(value) {
+    var ttl = Number(cfg.recentMembersTtlMs || 0) || 0;
+    var n = now();
+    return userListFrom(value).filter(function (u) {
+      if (!ttl || !u || typeof u !== "object") return true;
+      var ts = Number(u.active_at || u.activeAt || u.ts || u.updated_at || u.updatedAt || 0) || 0;
+      return !ts || n - ts <= ttl;
+    });
+  }
+
+  function firstUserList() {
+    for (var i = 0; i < arguments.length; i++) {
+      var list = userListFrom(arguments[i]);
+      if (list.length) return list;
+    }
+    return [];
+  }
+
+  function topicRecentMembers(room) {
+    var topic = topicData(room);
+    return firstUserList(
+      freshRecentUserList(room && room.active_members),
+      freshRecentUserList(room && room.activeMembers),
+      freshRecentUserList(room && room.recent_members),
+      freshRecentUserList(room && room.recentMembers),
+      freshRecentUserList(topic && topic.active_members),
+      freshRecentUserList(topic && topic.activeMembers),
+      freshRecentUserList(topic && topic.recent_members),
+      freshRecentUserList(topic && topic.recentMembers)
+    );
+  }
+
+  function publicUserId(u) {
+    if (!u) return "";
+    return String(u.uid || u.userId || u.id || "").trim();
+  }
+
+  function userListSig(list) {
+    return userListFrom(list).map(function (u) {
+      if (!u) return "";
+      if (typeof u !== "object") return String(u);
+      return [publicUserId(u), u.username || "", u.displayname || "", u.picture || "", u.active_at || u.activeAt || ""].join("/");
+    }).filter(Boolean).join(",");
+  }
+
+  function topicMemberSignature(room) {
+    var topic = topicData(room);
+    return [
+      userListSig(topicRecentMembers(room)),
+      userListSig(topic && topic.members),
+      userListSig(room && room.members),
+      userListSig(room && room.participant_uids),
+      userListSig(room && room.member_uids)
+    ].join("|");
+  }
+
+  function preloadRoomBackgrounds() {
+    if (state.roomBgPreloaded || cfg.preloadRoomBackgrounds === false) return;
+    state.roomBgPreloaded = true;
+
+    var count = Math.max(1, Number(cfg.roomBgCount || 20) || 20);
+    var base = String(cfg.roomBgBase || "/plugins/nodebb-plugin-wukong-chat/static/images/rooms").replace(/\/+$/, "");
+    state.roomBgPreloads = [];
+
+    for (var i = 1; i <= count; i++) {
+      var src = safeAssetUrl(base + "/room-" + pad2(i) + ".webp");
+      if (!src) continue;
+      try {
+        var img = new Image();
+        img.decoding = "async";
+        img.loading = "eager";
+        img.src = src;
+        state.roomBgPreloads.push(img);
+      } catch (_) {}
+    }
+  }
+
 
   function topicTag(room) {
     var topic = topicData(room);
@@ -1290,15 +1389,16 @@
   function topicMemberResult(room) {
     var topic = topicData(room);
     var posterUid = String(topic && topic.poster && topic.poster.uid || "");
-    var raw = [];
+    var raw = topicRecentMembers(room);
+    var isRecent = raw.length > 0;
 
-    if (Array.isArray(topic.members)) raw = topic.members;
-    else if (Array.isArray(room && room.members)) raw = room.members;
-    else if (Array.isArray(room && room.participant_uids)) {
+    if (!raw.length && Array.isArray(topic.members)) raw = topic.members;
+    else if (!raw.length && Array.isArray(room && room.members)) raw = room.members;
+    else if (!raw.length && Array.isArray(room && room.participant_uids)) {
       raw = room.participant_uids.map(function (uid) {
         return state.users[String(uid)] || { uid: uid };
       });
-    } else if (Array.isArray(room && room.member_uids)) {
+    } else if (!raw.length && Array.isArray(room && room.member_uids)) {
       raw = room.member_uids.map(function (uid) {
         return state.users[String(uid)] || { uid: uid };
       });
@@ -1310,7 +1410,7 @@
     raw.forEach(function (u) {
       if (!u) return;
       if (typeof u !== "object") u = state.users[String(u)] || { uid: u };
-      var uid = String(u.uid || u.userId || u.id || "");
+      var uid = publicUserId(u);
       if (uid && uid === posterUid) return;
       var key = uid || String(u.username || u.userslug || u.displayname || "");
       if (!key || seen[key]) return;
@@ -1318,14 +1418,15 @@
       list.push(u);
     });
 
-    var explicitTotal = Number(topic.member_count || topic.memberCount || topic.membersCount || topic.members_count || 0) || 0;
-    var total = list.length;
-    if (explicitTotal > 0 && list.length >= 5) {
-      total = Math.max(list.length, explicitTotal - (posterUid ? 1 : 0));
-    }
-    var overflow = list.length >= 5 ? Math.max(0, total - 5) : 0;
+    var explicitTotal = Number(
+      (isRecent && (room.active_count || room.activeCount || room.recent_count || room.recentCount || topic.active_count || topic.activeCount || topic.recent_count || topic.recentCount)) ||
+      topic.member_count || topic.memberCount || topic.membersCount || topic.members_count || 0
+    ) || 0;
+    var shown = Math.min(list.length, 5);
+    var total = explicitTotal > 0 ? Math.max(list.length, explicitTotal - (!isRecent && posterUid ? 1 : 0)) : list.length;
+    var overflow = Math.max(0, total - shown);
 
-    return { list: list.slice(0, 5), total: total, overflow: overflow };
+    return { list: list.slice(0, 5), total: total, overflow: overflow, recent: isRecent };
   }
 
   function avatarFlagBadge(u) {
@@ -1361,6 +1462,10 @@
       html += '<span class="wkconv-room-member-more">+' + esc(result.overflow > 99 ? "99" : result.overflow) + '</span>';
     }
 
+    if (html && result.recent) {
+      return '<span class="wkconv-room-members-active" aria-label="最近活跃">' + html + '</span>';
+    }
+
     return html || '';
   }
 
@@ -1381,9 +1486,8 @@
       (pinned ? " is-pinned" : "") +
       (unread ? " has-unread" : "") +
       '" data-key="' + esc(key) + '" role="button" tabindex="0">' +
-        '<div class="wkconv-room-bg" style="background-image:url(&quot;' + esc(bg) + '&quot;)"></div>' +
+        '<div class="wkconv-room-bg" style="--wk-room-bg:url(&quot;' + esc(bg) + '&quot;)"></div>' +
         '<div class="wkconv-room-frost"></div>' +
-        (pinned ? '<span class="wkconv-room-pin-corner" aria-label="置顶">📌</span>' : '') +
         (unread ? '<span class="wkconv-room-unread" aria-label="未读消息">' + esc(unreadText) + '</span>' : '') +
         '<div class="wkconv-room-content">' +
           roomChipHtml(room) +
@@ -1426,7 +1530,7 @@
     if (state.tab !== "rooms") setTab("rooms");
     els.composeError.textContent = "";
     els.composeTitle.value = "";
-    els.composeContent.value = "";
+    if (els.composeContent) els.composeContent.value = "";
     if (els.composeTags) els.composeTags.innerHTML = composeOptionsHtml(cfg.composeTags, "compose-tag", "交友");
     if (els.composeLangs) els.composeLangs.innerHTML = composeOptionsHtml(cfg.composeLanguages, "compose-lang", "CN");
     els.composeMask.setAttribute("data-open", "1");
@@ -1445,7 +1549,7 @@
     if (!els.composeMask || state.composeSubmitting) return;
 
     var title = String(els.composeTitle.value || "").trim();
-    var content = String(els.composeContent.value || "").trim();
+    var content = title;
     var cid = Number(cfg.createTopicCid || cfg.topicCid || 0) || 0;
 
     if (!title) {
@@ -1741,7 +1845,8 @@
         Number(room.ts || 0),
         Number(!!state.pinnedRooms[roomKey(room)]),
         room.text || "",
-        roomName(room)
+        roomName(room),
+        topicMemberSignature(room)
       ].join(":");
     })).join("|");
 
@@ -2776,7 +2881,7 @@
         '<button class="wkconv-compose-fab" type="button" aria-label="发布聊天室话题"><span class="wkconv-compose-fab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 19.4l1.25-5.1L15.25 4.5a2.15 2.15 0 0 1 3.05 0l1.2 1.2a2.15 2.15 0 0 1 0 3.05l-9.8 9.8-5.1 1.25a.78.78 0 0 1-.94-.94zM14.1 5.65l4.25 4.25M6.05 14.3l3.65 3.65" fill="none" stroke="currentColor" stroke-width="2.35" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>' +
       '</div>' +
       '<div class="wkconv-menu-mask"><div class="wkconv-menu"><div class="wkconv-menu-title"></div><div class="wkconv-menu-list"></div></div></div>' +
-      '<div class="wkconv-compose-mask"><div class="wkconv-compose-pop"><div class="wkconv-compose-title">' + esc(uiText("composeTitle", "发布聊天室话题")) + '</div><input class="wkconv-compose-input" type="text" maxlength="80" placeholder="' + esc(uiText("titlePlaceholder", "话题标题")) + '"><textarea class="wkconv-compose-textarea" maxlength="2000" placeholder="' + esc(uiText("contentPlaceholder", "说点什么，可留空")) + '"></textarea><div class="wkconv-compose-field"><div class="wkconv-compose-label">' + esc(uiText("tagLabel", "标签")) + '</div><div class="wkconv-compose-pills wkconv-compose-tags"></div></div><div class="wkconv-compose-field"><div class="wkconv-compose-label">' + esc(uiText("langLabel", "聊天室语言")) + '</div><div class="wkconv-compose-pills wkconv-compose-langs"></div></div><div class="wkconv-compose-error"></div><div class="wkconv-compose-actions"><button class="wkconv-compose-cancel" type="button" data-compose-cancel>' + esc(uiText("cancel", "取消")) + '</button><button class="wkconv-compose-submit" type="button" data-compose-submit>' + esc(uiText("publish", "发布")) + '</button></div></div></div>' +
+      '<div class="wkconv-compose-mask"><div class="wkconv-compose-pop"><div class="wkconv-compose-title">' + esc(uiText("composeTitle", "发布聊天室话题")) + '</div><input class="wkconv-compose-input" type="text" maxlength="80" placeholder="' + esc(uiText("titlePlaceholder", "话题标题")) + '"><div class="wkconv-compose-field"><div class="wkconv-compose-label">' + esc(uiText("tagLabel", "标签")) + '</div><div class="wkconv-compose-pills wkconv-compose-tags"></div></div><div class="wkconv-compose-field"><div class="wkconv-compose-label">' + esc(uiText("langLabel", "聊天室语言")) + '</div><div class="wkconv-compose-pills wkconv-compose-langs"></div></div><div class="wkconv-compose-error"></div><div class="wkconv-compose-actions"><button class="wkconv-compose-cancel" type="button" data-compose-cancel>' + esc(uiText("cancel", "取消")) + '</button><button class="wkconv-compose-submit" type="button" data-compose-submit>' + esc(uiText("publish", "发布")) + '</button></div></div></div>' +
       '<div class="wkconv-drawer-mask"><aside class="wkconv-drawer"><div class="wkconv-drawer-head"></div><nav class="wkconv-drawer-links"></nav></aside></div>' +
       '<div class="wkconv-edge-swipe" aria-hidden="true"></div>';
 
@@ -2879,6 +2984,7 @@
     });
 
     await loadI18n();
+    preloadRoomBackgrounds();
     await ensureToken().catch(function () {});
 
     state.tab = initialTabFromUrl();
@@ -2897,7 +3003,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v30-no-title-translate-room-notice-flicker-fix",
+      version: "v31-low-pressure-active-users-room-card-tune",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
