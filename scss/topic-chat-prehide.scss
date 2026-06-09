@@ -1,0 +1,81 @@
+/* CP Wukong Topic Chat prehide - v46
+ * Purpose: hide the original NodeBB topic only for the target room category
+ * before topic-chat.js mounts the chat shell. Keep a short fallback so a JS
+ * error does not leave the topic invisible forever.
+ */
+
+$cp-topic-category-id: 7 !default;
+$cp-prehide-timeout: 1.8s !default;
+
+@mixin cp-topic-prehide-target($cid) {
+  body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted) [component="topic"],
+  body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted) [component="post"],
+  body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted) [component="topic/quickreply/container"],
+  body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted) .topic,
+  body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted) .posts,
+  body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted) .pagination-block,
+  body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted) [component="pagination"],
+  body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted) .topic-main-buttons {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    animation: cp-topic-prehide-fallback 0s linear $cp-prehide-timeout forwards;
+  }
+
+  body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted)::before {
+    content: "\6B63\5728\6253\5F00\804A\5929\5BA4...";
+    position: fixed;
+    left: 50%;
+    top: 45%;
+    transform: translate(-50%, -50%);
+    z-index: 20;
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .88);
+    color: #667085;
+    font-size: 14px;
+    box-shadow: 0 8px 28px rgba(15, 23, 42, .12);
+    animation: cp-topic-prehide-loader-hide 0s linear $cp-prehide-timeout forwards;
+  }
+}
+
+@include cp-topic-prehide-target($cp-topic-category-id);
+
+body.cp-topic-chat-mounted::before,
+body.cp-topic-chat-on-v20::before {
+  content: none !important;
+  display: none !important;
+}
+
+.cp-unread-sep {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 14px 0;
+  color: #8a94a6;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.cp-unread-sep span {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .78);
+  box-shadow: 0 1px 5px rgba(15, 23, 42, .06);
+}
+
+.cp-msg-highlight {
+  animation: cp-msg-highlight-pulse 1.8s ease-out;
+}
+
+@keyframes cp-topic-prehide-fallback {
+  to { opacity: 1; pointer-events: auto; }
+}
+
+@keyframes cp-topic-prehide-loader-hide {
+  to { opacity: 0; visibility: hidden; pointer-events: none; }
+}
+
+@keyframes cp-msg-highlight-pulse {
+  0%, 100% { box-shadow: none; }
+  18% { box-shadow: 0 0 0 4px rgba(59, 130, 246, .22), 0 0 0 10px rgba(59, 130, 246, .10); }
+}
