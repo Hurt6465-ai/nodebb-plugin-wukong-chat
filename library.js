@@ -85,6 +85,8 @@ const USER_PROFILE_CACHE_TTL_MS = Number(process.env.USER_PROFILE_CACHE_TTL_MS |
 const PRESENCE_TTL_MS = 45000;
 const RECENT_ROOM_MEMBERS_TTL_MS = Number(process.env.WK_RECENT_ROOM_MEMBERS_TTL_MS || 10 * 60 * 1000);
 const RECENT_ROOM_MEMBERS_LIMIT = clampInt(process.env.WK_RECENT_ROOM_MEMBERS_LIMIT, 1, 20, 8);
+const TOPIC_COMMENTER_MEMBER_LIMIT = clampInt(process.env.WK_TOPIC_COMMENTER_MEMBER_LIMIT, 1, 20, 7);
+const TOPIC_COMMENTER_POST_SCAN_LIMIT = clampInt(process.env.WK_TOPIC_COMMENTER_POST_SCAN_LIMIT, 10, 200, 60);
 const MEDIA_TTL_MS = Number(process.env.WK_MEDIA_TTL_MS || 48 * 60 * 60 * 1000);
 const TOPIC_CONVERSATION_IDLE_DELETE_MS = Number(process.env.WK_TOPIC_CONVERSATION_IDLE_DELETE_MS || 3 * 60 * 60 * 1000);
 const TOPIC_CONVERSATION_DELETE_TOPIC = !/^(0|false|no)$/i.test(String(process.env.WK_TOPIC_CONVERSATION_DELETE_TOPIC || 'true'));
@@ -847,38 +849,94 @@ async function getTopicPostIds(tid, limit = 12) {
   return [];
 }
 
-async function getTopicParticipantUsers(tid, posterUid, limit = 4) {
+async function getPostFieldsBatch(pids, fields) {
+  pids = Array.isArray(pids) ? pids.map(pid => String(pid || '').trim()).filter(Boolean) : [];
+  fields = Array.isArray(fields) ? fields : [];
+  if (!pids.length) return [];
+
+  if (posts && typeof posts.getPostsFields === 'function') {
+    try {
+      const rows = await posts.getPostsFields(pids, fields);
+      if (Array.isArray(rows)) return rows;
+    } catch (err) {
+      console.warn('[wukong-chat] get posts fields batch failed:', err.message);
+    }
+  }
+
+  if (db && typeof db.getObjectsFields === 'function') {
+    try {
+      const rows = await db.getObjectsFields(pids.map(pid => `post:${pid}`), fields);
+      if (Array.isArray(rows)) return rows;
+    } catch (err) {
+      // Fall through to per-post fetch for older NodeBB/database adapters.
+    }
+  }
+
+  const rows = [];
+  if (posts && typeof posts.getPostFields === 'function') {
+    for (const pid of pids) {
+      try {
+        rows.push(await posts.getPostFields(pid, fields));
+      } catch (err) {
+        rows.push(null);
+      }
+    }
+  }
+  return rows;
+}
+
+function isPostDeletedFields(fields) {
+  if (!fields || typeof fields !== 'object') return false;
+  return /^(1|true|yes)$/i.test(String(fields.deleted || fields.isDeleted || fields.deletedAt || ''));
+}
+
+async function getTopicParticipantUsers(tid, posterUid, limit = TOPIC_COMMENTER_MEMBER_LIMIT) {
+  const maxMembers = clampInt(limit, 1, 20, TOPIC_COMMENTER_MEMBER_LIMIT);
   const seen = new Set();
   const uids = [];
+  const poster = String(posterUid || '').trim();
 
-  function addUid(uid) {
+  function addCommenterUid(uid) {
     uid = String(uid || '').trim();
-    if (!/^\d+$/.test(uid) || seen.has(uid)) return;
+    if (!/^\d+$/.test(uid)) return;
+    // The poster is returned separately as topic.poster. Keep members as the
+    // latest unique commenters so the card can render: poster + commenters.
+    if (poster && uid === poster) return;
+    if (seen.has(uid)) return;
     seen.add(uid);
     uids.push(uid);
   }
 
-  addUid(posterUid);
+  const scanLimit = Math.max(TOPIC_COMMENTER_POST_SCAN_LIMIT, maxMembers * 8);
+  const pids = await getTopicPostIds(tid, scanLimit);
+  const rows = await getPostFieldsBatch(pids, ['uid', 'deleted', 'isDeleted', 'deletedAt']);
 
-  if (posts && typeof posts.getPostFields === 'function') {
-    const pids = await getTopicPostIds(tid, 16);
-    for (const pid of pids) {
-      if (uids.length >= limit) break;
-      try {
-        const fields = await posts.getPostFields(pid, ['uid']);
-        addUid(fields && fields.uid);
-      } catch (err) {
-        // Keep this best-effort. A broken post should not break the list.
-      }
-    }
+  for (const fields of rows) {
+    if (uids.length >= maxMembers) break;
+    if (isPostDeletedFields(fields)) continue;
+    addCommenterUid(fields && fields.uid);
   }
 
   const users = [];
-  for (const uid of uids.slice(0, limit)) {
+  for (const uid of uids.slice(0, maxMembers)) {
     const u = await fetchNodeBBUserPublic(uid);
     if (u) users.push(u);
   }
   return users;
+}
+
+function stripTopicActiveMemberFields(room) {
+  if (!room || typeof room !== 'object' || !room.is_topic) return room;
+  const clean = { ...room };
+  delete clean.recent_members;
+  delete clean.recentMembers;
+  delete clean.active_members;
+  delete clean.activeMembers;
+  delete clean.recent_count;
+  delete clean.recentCount;
+  delete clean.active_count;
+  delete clean.activeCount;
+  return clean;
 }
 
 async function getTopicPublic(tid) {
@@ -905,7 +963,7 @@ async function getTopicPublic(tid) {
 
     const posterUid = String(fields.uid || '').trim();
     const poster = posterUid ? await fetchNodeBBUserPublic(posterUid) : null;
-    const members = await getTopicParticipantUsers(tid, posterUid, 4);
+    const members = await getTopicParticipantUsers(tid, posterUid, TOPIC_COMMENTER_MEMBER_LIMIT);
 
     return {
       tid: String(fields.tid),
@@ -1016,15 +1074,6 @@ async function buildConversationListForUser(current, rawData) {
   for (const tid of topicTids) {
     const topic = await getTopicPublic(tid);
     if (topic) {
-      const key = conversationRoomKey(`${TOPIC_CHANNEL_PREFIX}${tid}`, TOPIC_CHANNEL_TYPE);
-      const sourceRoom = (userState.rooms && userState.rooms[key]) || globalRooms[key] || {};
-      const recentMembers = normalizeRecentRoomMembers(sourceRoom.recent_members || sourceRoom.active_members || [], Date.now());
-      if (recentMembers.length) {
-        topic.recent_members = recentMembers;
-        topic.active_members = recentMembers;
-        topic.recent_count = Math.max(recentMembers.length, Number(sourceRoom.recent_count || sourceRoom.active_count || recentMembers.length));
-        topic.active_count = topic.recent_count;
-      }
       topicMap[tid] = topic;
       if (topic.poster && topic.poster.uid) users[String(topic.poster.uid)] = topic.poster;
       for (const field of ['members', 'recent_members', 'active_members']) {
@@ -1048,7 +1097,7 @@ async function buildConversationListForUser(current, rawData) {
 
   return {
     ok: true,
-    rooms,
+    rooms: rooms.map(stripTopicActiveMemberFields),
     users,
     topics: topicMap,
     removed_keys: Array.from(new Set(removedKeys)),
