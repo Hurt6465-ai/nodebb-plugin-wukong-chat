@@ -479,22 +479,35 @@ body.wkconv-page {
   min-height: 20px;
 }
 
-.wkconv-room-chip,
-.wkconv-room-lang,
-.wkconv-room-tag {
+.wkconv-room-chip {
   height: 20px;
   padding: 0 7px;
   border-radius: 7px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255,255,255,.74);
-  color: #111827 !important;
   font-size: 11px;
   font-weight: 820;
   line-height: 20px;
   box-shadow: 0 2px 8px rgba(15,23,42,.07);
 }
+
+.wkconv-room-lang {
+  background: rgba(255,255,255,.76);
+  color: #111827;
+}
+
+.wkconv-room-tag {
+  background: rgba(139,92,246,.88);
+  color: #fff;
+}
+
+.wkconv-room-tag-study { background: rgba(37,99,235,.88); color: #fff; }
+.wkconv-room-tag-friends { background: rgba(236,72,153,.88); color: #fff; }
+.wkconv-room-tag-chat { background: rgba(16,185,129,.88); color: #fff; }
+.wkconv-room-tag-work { background: rgba(245,158,11,.92); color: #111827; }
+.wkconv-room-tag-games { background: rgba(124,58,237,.90); color: #fff; }
+.wkconv-room-tag-movies { background: rgba(14,165,233,.90); color: #fff; }
 
 .wkconv-room-title-row {
   display: flex;
@@ -590,12 +603,11 @@ body.wkconv-page {
 }
 
 .wkconv-room-member-more {
-  display: grid;
-  place-items: center;
-  background: rgba(255,255,255,.80);
-  color: #111827;
-  font-size: 10px;
-  font-weight: 900;
+  display: none !important;
+}
+
+.wkconv-room-members-active {
+  display: contents;
 }
 
 .wkconv-avatar-flag-wrap {
@@ -653,9 +665,6 @@ body.wkconv-page {
   font-size: 11px;
 }
 
-.wkconv-room-members-active .wkconv-avatar-photo {
-  box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 0 0 3px rgba(34,197,94,.24), 0 4px 11px rgba(15,23,42,.12);
-}
 
 .wkconv-room-unread {
   position: absolute;
