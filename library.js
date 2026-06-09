@@ -559,6 +559,8 @@ function topicRoomFromPublicTopic(topic, oldRoom) {
     peer_uid: '',
     tid: String(topic.tid),
     title: topic.title,
+    wukong_tag: topic.wukong_tag || oldRoom.wukong_tag || '',
+    wukong_lang: topic.wukong_lang || oldRoom.wukong_lang || '',
     ts: Number(oldRoom.ts || 0) > topicTs ? Number(oldRoom.ts || 0) : topicTs,
     text: conversationPayloadText(oldRoom.text || ''),
     last_from_uid: String(oldRoom.last_from_uid || topic.uid || ''),
@@ -735,6 +737,8 @@ async function getTopicPublic(tid) {
       'slug',
       'timestamp',
       'lastposttime',
+      'wukong_tag',
+      'wukong_lang',
       'deleted',
       'isDeleted',
       'deletedAt',
@@ -756,6 +760,8 @@ async function getTopicPublic(tid) {
       members,
       timestamp: Number(fields.timestamp || 0),
       lastposttime: Number(fields.lastposttime || 0),
+      wukong_tag: firstNonEmpty(fields.wukong_tag),
+      wukong_lang: firstNonEmpty(fields.wukong_lang),
     };
   } catch (err) {
     console.warn('[wukong-chat] get topic failed:', tid, err.message);
@@ -1716,6 +1722,12 @@ function registerApiRoutes(router, middleware) {
     const cid = clampInt(body.cid || body.category_id || body.categoryId, 1, 999999, 7);
     const title = String(body.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
     const content = String(body.content || body.body || title || '').trim() || title;
+    const allowedTags = new Set(['学习', '交友', '闲谈', '工作', '游戏', '影视']);
+    const rawTag = String(body.tag || body.room_tag || '').trim();
+    const tag = allowedTags.has(rawTag) ? rawTag : '交友';
+    const allowedLangs = new Set(['CN', 'EN', 'MY', 'VI', 'TH', 'JP', 'KR']);
+    const rawLang = String(body.language || body.lang || body.room_lang || 'CN').trim().toUpperCase();
+    const language = allowedLangs.has(rawLang) ? rawLang : 'CN';
 
     if (!title) return res.status(400).json({ ok: false, error: 'missing_title', message: 'missing title' });
 
@@ -1729,13 +1741,25 @@ function registerApiRoutes(router, middleware) {
       cid,
       title,
       content,
-      tags: [],
+      tags: [tag],
       req,
     });
 
     const topicData = result && (result.topicData || result.topic || result);
     const tid = String(topicData && topicData.tid || '').trim();
     const slug = String(topicData && topicData.slug || '').trim();
+
+    if (tid && db) {
+      try {
+        if (typeof db.setObjectFields === 'function') await db.setObjectFields(`topic:${tid}`, { wukong_tag: tag, wukong_lang: language });
+        else if (typeof db.setObjectField === 'function') {
+          await db.setObjectField(`topic:${tid}`, 'wukong_tag', tag);
+          await db.setObjectField(`topic:${tid}`, 'wukong_lang', language);
+        }
+      } catch (err) {
+        console.warn('[wukong-chat] save topic room meta failed:', tid, err.message);
+      }
+    }
 
     if (tid) {
       const store = readConversationState();
@@ -1759,6 +1783,8 @@ function registerApiRoutes(router, middleware) {
       tid,
       cid,
       slug,
+      tag,
+      language,
       url: tid ? (`/topic/${encodeURIComponent(tid)}${slug ? '/' + encodeURIComponent(slug) : ''}`) : '',
       topic: topicData || null,
     });
