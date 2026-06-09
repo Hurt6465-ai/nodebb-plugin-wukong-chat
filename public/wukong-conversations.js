@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v29 - HelloTalk room UI + direct compose + i18n */
+/* Wukong independent conversation list v30 - HelloTalk room UI + direct compose + i18n, no title translate */
 (function () {
   "use strict";
 
@@ -30,10 +30,7 @@
     hiddenRooms: {},
     pinnedRooms: {},
     remarks: {},
-    translations: {},
-    translatingKeys: {},
-    translatePressTimer: 0,
-    translateLongPressUntil: 0,
+    renderSig: "",
     composeSubmitting: false,
     touchX: 0,
     touchY: 0,
@@ -97,8 +94,8 @@
       defaultRowHeight: 70,
       roomBgBase: "/plugins/nodebb-plugin-wukong-chat/static/images/rooms",
       roomBgCount: 20,
-      translateSourceLang: "auto",
-      translateTargetLang: "zh-CN",
+      composeTags: ["学习", "交友", "闲谈", "工作", "游戏", "影视"],
+      composeLanguages: ["CN", "EN", "MY", "VI", "TH", "JP", "KR"],
       composeApi: "/api/wukong/topics/create",
       composeMode: "api",
       createTopicCid: 7,
@@ -128,7 +125,10 @@
     for (var i = 0; i < keys.length; i++) {
       var key = keys[i];
       var val = obj && obj[key];
-      if (val !== undefined && val !== null && String(val).trim() !== "") return val;
+      if (val === undefined || val === null) continue;
+      if (typeof val === "object") continue;
+      if (typeof val === "string" && val.trim() === "") continue;
+      return val;
     }
     return fallback;
   }
@@ -345,7 +345,6 @@
     state.hiddenRooms = objectMap(data.hiddenRooms);
     state.pinnedRooms = objectMap(data.pinnedRooms);
     state.remarks = objectMap(data.remarks);
-    state.translations = objectMap(data.translations);
     state.rooms = Array.isArray(data.rooms) ? data.rooms : [];
     state.users = objectMap(data.users);
     state.topics = objectMap(data.topics);
@@ -374,7 +373,6 @@
         hiddenRooms: state.hiddenRooms,
         pinnedRooms: state.pinnedRooms,
         remarks: state.remarks,
-        translations: pruneTranslationsForStorage(),
         rooms: state.rooms,
         users: state.users,
         topics: state.topics,
@@ -866,9 +864,11 @@
 
   function roomEventId(room) {
     if (!room) return "";
-    if (room.event_id) return String(room.event_id);
-    var bucket = room.ts ? Math.floor(Number(room.ts) / 5000) : 0;
-    return [room.channel_type || 1, room.channel_id || "", room.incoming ? "in" : "out", room.last_from_uid || "", bucket, room.text || ""].join("|");
+    return room.event_id ? String(room.event_id) : "";
+  }
+
+  function hasStableEventId(room) {
+    return !!(room && room.event_id);
   }
 
   function rememberEvent(eventId) {
@@ -896,7 +896,7 @@
     }
 
     var eventId = roomEventId(room);
-    var duplicate = rememberEvent(eventId);
+    var duplicate = hasStableEventId(room) ? rememberEvent(eventId) : false;
     var isSelf = !!room.is_self || (!!room.last_from_uid && String(room.last_from_uid) === String(state.uid || ""));
     var nextUnread = old ? Number(old.unread || 0) : 0;
 
@@ -1140,19 +1140,6 @@
   }
 
 
-  function pruneTranslationsForStorage() {
-    var source = objectMap(state.translations);
-    var keys = Object.keys(source);
-
-    if (keys.length > 300) {
-      keys.sort(function (a, b) {
-        return Number(source[b] && source[b].ts || 0) - Number(source[a] && source[a].ts || 0);
-      });
-      keys.slice(300).forEach(function (key) { delete source[key]; });
-    }
-
-    return source;
-  }
 
   function pad2(n) {
     n = Number(n || 0) || 0;
@@ -1381,98 +1368,6 @@
     return roomName(room);
   }
 
-  function translatedTopicTitle(room) {
-    var item = state.translations[roomKey(room)] || {};
-    return item && item.translated ? String(item.translated) : "";
-  }
-
-  function displayTopicTitle(room) {
-    return translatedTopicTitle(room) || originalTopicTitle(room);
-  }
-
-  function translationSettings() {
-    return {
-      sourceLang: cfg.translateSourceLang || "auto",
-      targetLang: cfg.translateTargetLang || (/^en/i.test(locale()) ? "en" : "zh-CN")
-    };
-  }
-
-  function translateViaGoogle(text, settings) {
-    var sl = settings.sourceLang && settings.sourceLang !== "auto"
-      ? settings.sourceLang
-      : "auto";
-
-    var url =
-      "https://translate.googleapis.com/translate_a/single" +
-      "?client=gtx" +
-      "&sl=" + encodeURIComponent(sl) +
-      "&tl=" + encodeURIComponent(settings.targetLang || "en") +
-      "&dt=t" +
-      "&q=" + encodeURIComponent(text);
-
-    return fetch(url, { cache: "force-cache" })
-      .then(function (res) {
-        if (!res.ok) throw new Error("google translate failed");
-        return res.json();
-      })
-      .then(function (data) {
-        var parts = Array.isArray(data && data[0]) ? data[0] : [];
-        return parts.map(function (item) {
-          return item && item[0] ? item[0] : "";
-        }).join("");
-      });
-  }
-
-  async function translateRoomTitleByKey(key, showPopup) {
-    var room = findRoomByKey(key);
-    if (!room) return;
-
-    var original = originalTopicTitle(room);
-    var cached = state.translations[key];
-
-    if (cached && cached.original === original && cached.translated) {
-      if (showPopup) openTranslatePopup(cached.original, cached.translated);
-      return;
-    }
-
-    state.translatingKeys[key] = 1;
-    render();
-
-    try {
-      var translated = await translateViaGoogle(original, translationSettings());
-      translated = String(translated || "").trim();
-      if (!translated) translated = original;
-
-      state.translations[key] = {
-        original: original,
-        translated: translated,
-        targetLang: translationSettings().targetLang,
-        ts: now()
-      };
-      saveLocal();
-      if (showPopup) openTranslatePopup(original, translated);
-    } catch (err) {
-      if (showPopup) openTranslatePopup(original, t("translateFailed", "翻译失败，请稍后重试"));
-      try { W.alert && W.alert({ type: "warning", message: t("translateFailed", "翻译失败，请稍后重试") }); } catch (_) {}
-    } finally {
-      delete state.translatingKeys[key];
-      render();
-    }
-  }
-
-  function openTranslatePopup(original, translated) {
-    if (!els.translateMask) return;
-    els.translateOriginal.textContent = original || "";
-    els.translateTarget.textContent = translated || "";
-    els.translateMask.setAttribute("data-open", "1");
-    setBlur(true);
-  }
-
-  function closeTranslatePopup() {
-    if (els.translateMask) els.translateMask.removeAttribute("data-open");
-    setBlur(false);
-  }
-
   function roomCardHtml(room, key, pinned, unread) {
     var poster = topicPoster(room) || {};
     var posterName = topicPosterName(room) || poster.displayname || poster.username || poster.userslug || t("unknownUser", "未知用户");
@@ -1480,23 +1375,25 @@
     var bg = topicBackgroundUrl(room);
     var membersHtml = topicMembersHtml(room);
     var unreadText = unread > 99 ? "99+" : String(unread || "");
+    var notice = unread ? cleanPreviewText(previewText(room)) : "";
 
     return '<div class="wkconv-item is-topic wkconv-room-card' +
       (pinned ? " is-pinned" : "") +
       (unread ? " has-unread" : "") +
       '" data-key="' + esc(key) + '" role="button" tabindex="0">' +
-        '<div class="wkconv-room-bg"><img src="' + esc(bg) + '" alt="" loading="eager" decoding="async"></div>' +
+        '<div class="wkconv-room-bg" style="background-image:url(&quot;' + esc(bg) + '&quot;)"></div>' +
         '<div class="wkconv-room-frost"></div>' +
         (pinned ? '<span class="wkconv-room-pin-corner" aria-label="置顶">📌</span>' : '') +
+        (unread ? '<span class="wkconv-room-unread" aria-label="未读消息">' + esc(unreadText) + '</span>' : '') +
         '<div class="wkconv-room-content">' +
           roomChipHtml(room) +
           '<div class="wkconv-room-title-row">' +
             '<div class="wkconv-room-title">' + esc(title) + '</div>' +
           '</div>' +
+          (notice ? '<div class="wkconv-room-new">' + esc(notice) + '</div>' : '') +
           '<div class="wkconv-room-people-row">' +
             '<div class="wkconv-room-poster-avatar" title="' + esc(posterName) + '">' + flaggedPosterAvatarHtml(poster, posterName) + '</div>' +
             '<div class="wkconv-room-members" aria-label="成员头像">' + membersHtml + '</div>' +
-            '<span class="wkconv-room-unread" aria-label="未读消息">' + esc(unreadText) + '</span>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -1809,6 +1706,7 @@
       disconnectResizeObserver();
       els.topSpacer.style.height = "0px";
       els.bottomSpacer.style.height = "0px";
+      state.renderSig = "error:" + state.tab;
       els.items.innerHTML = '<div class="wkconv-error"><div><strong>' + esc(t("errorTitle", "加载失败")) + '</strong></div></div>';
       return;
     }
@@ -1821,6 +1719,7 @@
       var title = state.tab === "rooms" ? t("emptyRoomsTitle", "暂无聊天室") : t("emptyTitle", "暂无消息");
       var desc = state.tab === "rooms" ? t("emptyRoomsDesc", "后续板块帖子聊天室会显示在这里。") : t("emptyDesc", "打开个人主页，点击聊天即可开始。");
 
+      state.renderSig = "empty:" + state.tab;
       els.items.innerHTML = '<div class="wkconv-empty"><div><strong>' + esc(title) + '</strong><div>' + esc(desc) + '</div></div></div>';
       return;
     }
@@ -1828,6 +1727,26 @@
     var slice = rooms.slice(state.virtual.start, state.virtual.end);
     els.topSpacer.style.height = state.virtual.top + "px";
     els.bottomSpacer.style.height = state.virtual.bottom + "px";
+
+    var renderSig = [
+      state.tab,
+      state.virtual.start,
+      state.virtual.end,
+      state.virtual.top,
+      state.virtual.bottom
+    ].concat(slice.map(function (room) {
+      return [
+        roomKey(room),
+        Number(room.unread || 0),
+        Number(room.ts || 0),
+        Number(!!state.pinnedRooms[roomKey(room)]),
+        room.text || "",
+        roomName(room)
+      ].join(":");
+    })).join("|");
+
+    if (state.renderSig === renderSig) return;
+    state.renderSig = renderSig;
 
     els.items.innerHTML = slice.map(function (room) {
       var key = roomKey(room);
@@ -2504,6 +2423,7 @@
     state.tab = tab;
     updateTabUrl(tab);
 
+    state.renderSig = "";
     if (els.listWrap) els.listWrap.scrollTop = 0;
 
     if (tab === "notifications") {
@@ -2720,35 +2640,10 @@
     }, { passive: true });
 
     listen(els.items, "click", function (e) {
-      var translateBtn = e.target.closest && e.target.closest(".wkconv-translate-btn");
-      if (translateBtn) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (now() < Number(state.translateLongPressUntil || 0)) return;
-        translateRoomTitleByKey(translateBtn.getAttribute("data-key"), false);
-        return;
-      }
 
       handleItemClick(e.target);
     });
 
-    listen(els.items, "pointerdown", function (e) {
-      var translateBtn = e.target.closest && e.target.closest(".wkconv-translate-btn");
-      if (!translateBtn) return;
-      var key = translateBtn.getAttribute("data-key");
-      W.clearTimeout(state.translatePressTimer);
-      state.translatePressTimer = W.setTimeout(function () {
-        state.translateLongPressUntil = now() + 900;
-        translateRoomTitleByKey(key, true);
-      }, 560);
-    }, { passive: true });
-
-    ["pointerup", "pointercancel", "pointerleave"].forEach(function (name) {
-      listen(els.items, name, function () {
-        W.clearTimeout(state.translatePressTimer);
-        state.translatePressTimer = 0;
-      }, { passive: true });
-    });
 
     listen(els.items, "keydown", function (e) {
       if (e.key !== "Enter" && e.key !== " ") return;
@@ -2763,7 +2658,7 @@
     var longTimer = 0;
 
     listen(els.items, "touchstart", function (e) {
-      if (e.target.closest(".wkconv-notice-item") || e.target.closest(".wkconv-translate-btn")) return;
+      if (e.target.closest(".wkconv-notice-item")) return;
       var item = e.target.closest(".wkconv-item");
       if (!item || item.classList.contains("wkconv-room-card")) return;
 
@@ -2779,7 +2674,7 @@
     });
 
     listen(els.items, "contextmenu", function (e) {
-      if (e.target.closest(".wkconv-notice-item") || e.target.closest(".wkconv-translate-btn")) return;
+      if (e.target.closest(".wkconv-notice-item")) return;
 
       var item = e.target.closest(".wkconv-item");
       if (!item) return;
@@ -2792,9 +2687,6 @@
       if (e.target === els.menuMask) closeMenu();
     });
 
-    listen(els.translateMask, "click", function (e) {
-      if (e.target === els.translateMask || e.target.closest("[data-translate-close]")) closeTranslatePopup();
-    });
 
     listen(els.composeMask, "click", function (e) {
       var pill = e.target.closest && e.target.closest(".wkconv-compose-pill");
@@ -2884,7 +2776,6 @@
         '<button class="wkconv-compose-fab" type="button" aria-label="发布聊天室话题"><span class="wkconv-compose-fab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 19.4l1.25-5.1L15.25 4.5a2.15 2.15 0 0 1 3.05 0l1.2 1.2a2.15 2.15 0 0 1 0 3.05l-9.8 9.8-5.1 1.25a.78.78 0 0 1-.94-.94zM14.1 5.65l4.25 4.25M6.05 14.3l3.65 3.65" fill="none" stroke="currentColor" stroke-width="2.35" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>' +
       '</div>' +
       '<div class="wkconv-menu-mask"><div class="wkconv-menu"><div class="wkconv-menu-title"></div><div class="wkconv-menu-list"></div></div></div>' +
-      '<div class="wkconv-translate-mask"><div class="wkconv-translate-pop"><button class="wkconv-translate-close" type="button" data-translate-close>×</button><div class="wkconv-translate-title">标题翻译</div><div class="wkconv-translate-section"><div class="wkconv-translate-label">原文</div><div class="wkconv-translate-original"></div></div><div class="wkconv-translate-section"><div class="wkconv-translate-label">目标文</div><div class="wkconv-translate-target"></div></div></div></div>' +
       '<div class="wkconv-compose-mask"><div class="wkconv-compose-pop"><div class="wkconv-compose-title">' + esc(uiText("composeTitle", "发布聊天室话题")) + '</div><input class="wkconv-compose-input" type="text" maxlength="80" placeholder="' + esc(uiText("titlePlaceholder", "话题标题")) + '"><textarea class="wkconv-compose-textarea" maxlength="2000" placeholder="' + esc(uiText("contentPlaceholder", "说点什么，可留空")) + '"></textarea><div class="wkconv-compose-field"><div class="wkconv-compose-label">' + esc(uiText("tagLabel", "标签")) + '</div><div class="wkconv-compose-pills wkconv-compose-tags"></div></div><div class="wkconv-compose-field"><div class="wkconv-compose-label">' + esc(uiText("langLabel", "聊天室语言")) + '</div><div class="wkconv-compose-pills wkconv-compose-langs"></div></div><div class="wkconv-compose-error"></div><div class="wkconv-compose-actions"><button class="wkconv-compose-cancel" type="button" data-compose-cancel>' + esc(uiText("cancel", "取消")) + '</button><button class="wkconv-compose-submit" type="button" data-compose-submit>' + esc(uiText("publish", "发布")) + '</button></div></div></div>' +
       '<div class="wkconv-drawer-mask"><aside class="wkconv-drawer"><div class="wkconv-drawer-head"></div><nav class="wkconv-drawer-links"></nav></aside></div>' +
       '<div class="wkconv-edge-swipe" aria-hidden="true"></div>';
@@ -2905,9 +2796,6 @@
       menuMask: root.querySelector(".wkconv-menu-mask"),
       menuTitle: root.querySelector(".wkconv-menu-title"),
       menuList: root.querySelector(".wkconv-menu-list"),
-      translateMask: root.querySelector(".wkconv-translate-mask"),
-      translateOriginal: root.querySelector(".wkconv-translate-original"),
-      translateTarget: root.querySelector(".wkconv-translate-target"),
       composeFab: root.querySelector(".wkconv-compose-fab"),
       composeMask: root.querySelector(".wkconv-compose-mask"),
       composeTitle: root.querySelector(".wkconv-compose-input"),
@@ -3009,7 +2897,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v28-multilingual-tight-room-ui",
+      version: "v30-no-title-translate-room-notice-flicker-fix",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
