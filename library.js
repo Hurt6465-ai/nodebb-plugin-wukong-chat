@@ -83,6 +83,8 @@ const TOPIC_CHANNEL_TYPE = 2;
 const TOPIC_CHANNEL_PREFIX = 'nbb_topic_';
 const USER_PROFILE_CACHE_TTL_MS = Number(process.env.USER_PROFILE_CACHE_TTL_MS || 30 * 24 * 60 * 60 * 1000);
 const PRESENCE_TTL_MS = 45000;
+const RECENT_ROOM_MEMBERS_TTL_MS = Number(process.env.WK_RECENT_ROOM_MEMBERS_TTL_MS || 10 * 60 * 1000);
+const RECENT_ROOM_MEMBERS_LIMIT = clampInt(process.env.WK_RECENT_ROOM_MEMBERS_LIMIT, 1, 20, 8);
 const MEDIA_TTL_MS = Number(process.env.WK_MEDIA_TTL_MS || 48 * 60 * 60 * 1000);
 const TOPIC_CONVERSATION_IDLE_DELETE_MS = Number(process.env.WK_TOPIC_CONVERSATION_IDLE_DELETE_MS || 24 * 60 * 60 * 1000);
 const TOPIC_CONVERSATION_DELETE_TOPIC = !/^(0|false|no)$/i.test(String(process.env.WK_TOPIC_CONVERSATION_DELETE_TOPIC || 'true'));
@@ -236,6 +238,47 @@ function getConversationUserState(store, uid) {
 function getConversationGlobalRooms(store) {
   store.globalRooms = store.globalRooms && typeof store.globalRooms === 'object' && !Array.isArray(store.globalRooms) ? store.globalRooms : {};
   return store.globalRooms;
+}
+
+function compactPublicUser(input, fallbackUid = '') {
+  const u = input && typeof input === 'object' ? input : {};
+  const uid = String(u.uid || u.userId || u.id || fallbackUid || '').trim();
+  if (!uid) return null;
+  return {
+    uid,
+    username: firstNonEmpty(u.username, u.userslug, u.displayname, uid),
+    userslug: firstNonEmpty(u.userslug, u.slug, u.username, ''),
+    displayname: firstNonEmpty(u.displayname, u.fullname, u.name, u.username, ''),
+    picture: firstNonEmpty(u.picture, u.uploadedpicture, u.avatar, ''),
+    icontext: firstNonEmpty(u.icontext, u.username, u.displayname, ''),
+    iconbgColor: firstNonEmpty(u.iconbgColor, u.iconBgColor, ''),
+    language_flag: firstNonEmpty(u.language_flag, u.country, u.nationality, u.language, ''),
+  };
+}
+
+function normalizeRecentRoomMembers(list, nowMs = Date.now()) {
+  const out = [];
+  const seen = new Set();
+  const arr = Array.isArray(list) ? list : [];
+  for (const item of arr) {
+    const u = compactPublicUser(item, item && item.uid);
+    if (!u || seen.has(u.uid)) continue;
+    const activeAt = Number(item && (item.active_at || item.activeAt || item.ts || item.updated_at || item.updatedAt || 0)) || nowMs;
+    if (RECENT_ROOM_MEMBERS_TTL_MS > 0 && nowMs - activeAt > RECENT_ROOM_MEMBERS_TTL_MS) continue;
+    seen.add(u.uid);
+    out.push({ ...u, active_at: activeAt });
+    if (out.length >= RECENT_ROOM_MEMBERS_LIMIT) break;
+  }
+  return out;
+}
+
+function mergeRecentRoomMembers(oldList, member, activeAt = Date.now()) {
+  const nowMs = Date.now();
+  const base = normalizeRecentRoomMembers(oldList, nowMs);
+  const u = compactPublicUser(member, member && member.uid);
+  if (!u) return base.slice(0, RECENT_ROOM_MEMBERS_LIMIT);
+  const filtered = base.filter(item => String(item.uid) !== String(u.uid));
+  return [{ ...u, active_at: Number(activeAt || nowMs) || nowMs }, ...filtered].slice(0, RECENT_ROOM_MEMBERS_LIMIT);
 }
 
 function conversationRoomKey(channelId, channelType) {
@@ -863,11 +906,22 @@ async function buildConversationListForUser(current, rawData) {
   for (const tid of topicTids) {
     const topic = await getTopicPublic(tid);
     if (topic) {
+      const key = conversationRoomKey(`${TOPIC_CHANNEL_PREFIX}${tid}`, TOPIC_CHANNEL_TYPE);
+      const sourceRoom = (userState.rooms && userState.rooms[key]) || globalRooms[key] || {};
+      const recentMembers = normalizeRecentRoomMembers(sourceRoom.recent_members || sourceRoom.active_members || [], Date.now());
+      if (recentMembers.length) {
+        topic.recent_members = recentMembers;
+        topic.active_members = recentMembers;
+        topic.recent_count = Math.max(recentMembers.length, Number(sourceRoom.recent_count || sourceRoom.active_count || recentMembers.length));
+        topic.active_count = topic.recent_count;
+      }
       topicMap[tid] = topic;
       if (topic.poster && topic.poster.uid) users[String(topic.poster.uid)] = topic.poster;
-      if (Array.isArray(topic.members)) {
-        for (const member of topic.members) {
-          if (member && member.uid) users[String(member.uid)] = member;
+      for (const field of ['members', 'recent_members', 'active_members']) {
+        if (Array.isArray(topic[field])) {
+          for (const member of topic[field]) {
+            if (member && member.uid) users[String(member.uid)] = member;
+          }
         }
       }
     } else {
@@ -952,6 +1006,9 @@ function upsertConversationForUser(uid, room, currentUser = null) {
       room.last_from_uid ? `user${room.last_from_uid}` : ''
     );
     const versionBump = room.text && (room.text !== globalOld.text || roomTs > Number(globalOld.ts || 0)) ? 1 : 0;
+    const senderUid = String(room.last_from_uid || (currentUser && currentUser.uid) || '').trim();
+    const senderMember = compactPublicUser(currentUser, senderUid) || (senderUid ? { uid: senderUid, username: senderName || `user${senderUid}`, displayname: senderName || '' } : null);
+    const recentMembers = mergeRecentRoomMembers(globalOld.recent_members || globalOld.active_members || [], senderMember, roomTs);
     const globalNext = {
       ...globalOld,
       ...room,
@@ -960,6 +1017,10 @@ function upsertConversationForUser(uid, room, currentUser = null) {
       unread: 0,
       last_from_uid: room.last_from_uid || globalOld.last_from_uid || '',
       last_from_name: senderName || globalOld.last_from_name || '',
+      recent_members: recentMembers,
+      active_members: recentMembers,
+      recent_count: Math.max(recentMembers.length, Number(globalOld.recent_count || globalOld.active_count || recentMembers.length)),
+      active_count: Math.max(recentMembers.length, Number(globalOld.recent_count || globalOld.active_count || recentMembers.length)),
       version: Number(globalOld.version || 0) + versionBump,
       updated_at: Date.now(),
     };
@@ -1772,6 +1833,12 @@ function registerApiRoutes(router, middleware) {
         const globalRooms = getConversationGlobalRooms(store);
         const key = conversationRoomKey(`${TOPIC_CHANNEL_PREFIX}${tid}`, TOPIC_CHANNEL_TYPE);
         globalRooms[key] = topicRoomFromPublicTopic(topic, globalRooms[key]);
+        const creatorMember = compactPublicUser(current, current.uid);
+        const creatorRecentMembers = mergeRecentRoomMembers(globalRooms[key].recent_members || globalRooms[key].active_members || [], creatorMember, Date.now());
+        globalRooms[key].recent_members = creatorRecentMembers;
+        globalRooms[key].active_members = creatorRecentMembers;
+        globalRooms[key].recent_count = creatorRecentMembers.length;
+        globalRooms[key].active_count = creatorRecentMembers.length;
 
         const userState = getConversationUserState(store, current.uid);
         userState.readAt[key] = Math.max(Number(userState.readAt[key] || 0), Number(globalRooms[key].ts || Date.now()));
