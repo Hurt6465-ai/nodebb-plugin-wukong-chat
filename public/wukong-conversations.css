@@ -562,7 +562,7 @@ body.wkconv-page {
 .wkconv-room-people-row {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 14px;
   min-width: 0;
 }
 
@@ -583,16 +583,16 @@ body.wkconv-page {
   display: flex;
   align-items: flex-end;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 5px;
   padding: 0 4px 1px 0;
   overflow: visible;
 }
 
 .wkconv-room-member-avatar,
 .wkconv-room-member-more {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: 29px;
+  height: 29px;
+  flex: 0 0 29px;
   margin-left: 0;
   border: 0;
   border-radius: 50%;
@@ -627,7 +627,9 @@ body.wkconv-page {
   overflow: hidden;
   border-radius: 50%;
   background: transparent;
-  box-shadow: none;
+  border: 1px solid rgba(255,255,255,.88);
+  box-shadow: 0 4px 10px rgba(15,23,42,.08);
+  box-sizing: border-box;
 }
 
 .wkconv-avatar-photo > img,
@@ -662,7 +664,9 @@ body.wkconv-page {
 }
 
 .wkconv-avatar-flag-wrap-member .wkconv-avatar-flag-badge {
-  font-size: 11px;
+  font-size: 10px;
+  left: -2px;
+  bottom: -2px;
 }
 
 
@@ -1072,7 +1076,7 @@ body.wkconv-page {
   .wkconv-room-content { min-height: 120px; padding: 10px 13px 9px; }
   .wkconv-room-title { font-size: 18px; }
   .wkconv-room-poster-avatar { width: 40px; height: 40px; flex-basis: 40px; }
-  .wkconv-room-member-avatar, .wkconv-room-member-more { width: 28px; height: 28px; flex-basis: 28px; }
+  .wkconv-room-member-avatar, .wkconv-room-member-more { width: 27px; height: 27px; flex-basis: 27px; }
 }
 
 @media (prefers-color-scheme: dark) {
