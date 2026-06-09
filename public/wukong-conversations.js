@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v31 - low-pressure active room users + stable room cards */
+/* Wukong independent conversation list v48 - deduped CSS support + draggable compose + stable menu */
 (function () {
   "use strict";
 
@@ -34,6 +34,19 @@
     roomBgPreloaded: false,
     roomBgPreloads: [],
     composeSubmitting: false,
+    composeFabPos: null,
+    composeFabPointerId: null,
+    composeFabDragging: false,
+    composeFabMoved: false,
+    composeFabStartX: 0,
+    composeFabStartY: 0,
+    composeFabStartLeft: 0,
+    composeFabStartTop: 0,
+    composeFabSuppressClickUntil: 0,
+    longTimer: 0,
+    longStartX: 0,
+    longStartY: 0,
+    longPressOpenUntil: 0,
     touchX: 0,
     touchY: 0,
     edgeTouchX: 0,
@@ -353,6 +366,7 @@
     state.hiddenRooms = objectMap(data.hiddenRooms);
     state.pinnedRooms = objectMap(data.pinnedRooms);
     state.remarks = objectMap(data.remarks);
+    state.composeFabPos = isPlainObject(data.composeFabPos) ? data.composeFabPos : null;
     state.rooms = Array.isArray(data.rooms) ? data.rooms : [];
     state.users = objectMap(data.users);
     state.topics = objectMap(data.topics);
@@ -381,6 +395,7 @@
         hiddenRooms: state.hiddenRooms,
         pinnedRooms: state.pinnedRooms,
         remarks: state.remarks,
+        composeFabPos: state.composeFabPos,
         rooms: state.rooms,
         users: state.users,
         topics: state.topics,
@@ -1545,6 +1560,87 @@
     setBlur(false);
   }
 
+  function clampComposeFabPos(left, top) {
+    var size = els.composeFab ? Math.max(44, els.composeFab.offsetWidth || 54) : 54;
+    var margin = 10;
+    var maxLeft = Math.max(margin, W.innerWidth - size - margin);
+    var maxTop = Math.max(margin, W.innerHeight - size - margin - 6);
+    return {
+      left: Math.max(margin, Math.min(Number(left || 0), maxLeft)),
+      top: Math.max(margin, Math.min(Number(top || 0), maxTop))
+    };
+  }
+
+  function applyComposeFabPosition() {
+    if (!els.composeFab) return;
+    var pos = state.composeFabPos;
+    if (!pos || !isFinite(Number(pos.left)) || !isFinite(Number(pos.top))) {
+      els.composeFab.style.removeProperty("left");
+      els.composeFab.style.removeProperty("top");
+      els.composeFab.style.removeProperty("right");
+      els.composeFab.style.removeProperty("bottom");
+      return;
+    }
+
+    pos = clampComposeFabPos(pos.left, pos.top);
+    state.composeFabPos = pos;
+    els.composeFab.style.left = pos.left + "px";
+    els.composeFab.style.top = pos.top + "px";
+    els.composeFab.style.right = "auto";
+    els.composeFab.style.bottom = "auto";
+  }
+
+  function composePointerXY(e) {
+    if (!e) return null;
+    if (e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    if (e.changedTouches && e.changedTouches[0]) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+    if (e.clientX !== undefined) return { x: e.clientX, y: e.clientY };
+    return null;
+  }
+
+  function beginComposeFabDrag(e) {
+    if (!els.composeFab || state.tab !== "rooms") return;
+    if (e && e.button !== undefined && e.button !== 0) return;
+    var p = composePointerXY(e);
+    if (!p) return;
+    var rect = els.composeFab.getBoundingClientRect();
+    state.composeFabPointerId = e && e.pointerId !== undefined ? e.pointerId : null;
+    state.composeFabDragging = true;
+    state.composeFabMoved = false;
+    state.composeFabStartX = p.x;
+    state.composeFabStartY = p.y;
+    state.composeFabStartLeft = rect.left;
+    state.composeFabStartTop = rect.top;
+    try { if (e && e.pointerId !== undefined && els.composeFab.setPointerCapture) els.composeFab.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  function moveComposeFabDrag(e) {
+    if (!state.composeFabDragging || !els.composeFab) return;
+    if (state.composeFabPointerId !== null && e && e.pointerId !== undefined && e.pointerId !== state.composeFabPointerId) return;
+    var p = composePointerXY(e);
+    if (!p) return;
+    var dx = p.x - state.composeFabStartX;
+    var dy = p.y - state.composeFabStartY;
+    if (!state.composeFabMoved && Math.sqrt(dx * dx + dy * dy) < 5) return;
+    state.composeFabMoved = true;
+    if (e && e.cancelable) e.preventDefault();
+    var pos = clampComposeFabPos(state.composeFabStartLeft + dx, state.composeFabStartTop + dy);
+    state.composeFabPos = pos;
+    applyComposeFabPosition();
+  }
+
+  function endComposeFabDrag(e) {
+    if (!state.composeFabDragging) return;
+    if (state.composeFabPointerId !== null && e && e.pointerId !== undefined && e.pointerId !== state.composeFabPointerId) return;
+    try { if (e && e.pointerId !== undefined && els.composeFab && els.composeFab.releasePointerCapture) els.composeFab.releasePointerCapture(e.pointerId); } catch (_) {}
+    state.composeFabDragging = false;
+    state.composeFabPointerId = null;
+    if (state.composeFabMoved) {
+      state.composeFabSuppressClickUntil = now() + 450;
+      saveLocal();
+    }
+  }
+
   async function submitCompose() {
     if (!els.composeMask || state.composeSubmitting) return;
 
@@ -1788,6 +1884,7 @@
 
     if (els.composeFab) {
       els.composeFab.style.display = state.tab === "rooms" ? "grid" : "none";
+      applyComposeFabPosition();
     }
   }
 
@@ -1934,13 +2031,13 @@
       '<button data-menu="cancel" type="button">' + esc(t("cancel", "取消")) + '</button>';
 
     els.menuMask.setAttribute("data-open", "1");
-    setBlur(true);
+    if (els.app) els.app.classList.add("is-menu-open");
   }
 
   function closeMenu() {
     if (els.menuMask) els.menuMask.removeAttribute("data-open");
+    if (els.app) els.app.classList.remove("is-menu-open");
     state.menuRoom = null;
-    setBlur(false);
   }
 
   function openDrawer() {
@@ -2644,6 +2741,7 @@
   }
 
   function handleItemClick(target) {
+    if (now() < Number(state.longPressOpenUntil || 0) || now() < Number(state.composeFabSuppressClickUntil || 0)) return;
     var notice = target.closest && target.closest(".wkconv-notice-item");
     if (notice) {
       openNotificationByIndex(notice.getAttribute("data-notice-index"));
@@ -2663,7 +2761,26 @@
     });
 
     listen(els.drawerOpen, "click", openDrawer);
-    listen(els.composeFab, "click", openCompose);
+    listen(els.composeFab, "click", function (e) {
+      if (now() < Number(state.composeFabSuppressClickUntil || 0)) {
+        if (e && e.preventDefault) e.preventDefault();
+        return;
+      }
+      openCompose();
+    });
+    if (W.PointerEvent) {
+      listen(els.composeFab, "pointerdown", beginComposeFabDrag, { passive: false });
+      listen(W, "pointermove", moveComposeFabDrag, { passive: false });
+      listen(W, "pointerup", endComposeFabDrag, { passive: false });
+      listen(W, "pointercancel", endComposeFabDrag, { passive: false });
+    } else {
+      listen(els.composeFab, "touchstart", beginComposeFabDrag, { passive: true });
+      listen(W, "touchmove", moveComposeFabDrag, { passive: false });
+      listen(W, "touchend", endComposeFabDrag, { passive: true });
+      listen(els.composeFab, "mousedown", beginComposeFabDrag);
+      listen(W, "mousemove", moveComposeFabDrag);
+      listen(W, "mouseup", endComposeFabDrag);
+    }
 
     listen(els.drawerMask, "click", function (e) {
       if (e.target === els.drawerMask) closeDrawer();
@@ -2760,22 +2877,40 @@
       handleItemClick(target);
     });
 
-    var longTimer = 0;
+    function clearLongPressTimer() {
+      if (state.longTimer) {
+        W.clearTimeout(state.longTimer);
+        state.longTimer = 0;
+      }
+    }
 
     listen(els.items, "touchstart", function (e) {
       if (e.target.closest(".wkconv-notice-item")) return;
       var item = e.target.closest(".wkconv-item");
-      if (!item || item.classList.contains("wkconv-room-card")) return;
-
-      longTimer = W.setTimeout(function () {
+      if (!item) return;
+      var p = e.touches && e.touches[0];
+      if (!p) return;
+      clearLongPressTimer();
+      state.longStartX = p.clientX;
+      state.longStartY = p.clientY;
+      state.longTimer = W.setTimeout(function () {
+        state.longTimer = 0;
+        state.longPressOpenUntil = now() + 900;
         openMenu(findRoomByKey(item.getAttribute("data-key")));
-      }, 700);
+      }, 620);
     }, { passive: true });
 
-    ["touchend", "touchmove", "touchcancel"].forEach(function (name) {
-      listen(els.items, name, function () {
-        W.clearTimeout(longTimer);
-      }, { passive: true });
+    listen(els.items, "touchmove", function (e) {
+      if (!state.longTimer) return;
+      var p = e.touches && e.touches[0];
+      if (!p) return;
+      var dx = Math.abs(p.clientX - state.longStartX);
+      var dy = Math.abs(p.clientY - state.longStartY);
+      if (dx > 10 || dy > 10) clearLongPressTimer();
+    }, { passive: true });
+
+    ["touchend", "touchcancel"].forEach(function (name) {
+      listen(els.items, name, clearLongPressTimer, { passive: true });
     });
 
     listen(els.items, "contextmenu", function (e) {
@@ -2785,6 +2920,7 @@
       if (!item) return;
 
       e.preventDefault();
+      state.longPressOpenUntil = now() + 900;
       openMenu(findRoomByKey(item.getAttribute("data-key")));
     });
 
@@ -2916,6 +3052,7 @@
     };
 
     renderDrawerLinks();
+    applyComposeFabPosition();
   }
 
   function destroy() {
