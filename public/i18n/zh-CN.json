@@ -143,5 +143,33 @@
   "call_peer_rejected": "对方已拒绝",
   "call_peer_busy": "对方忙线中",
   "call_missed": "未接听",
-  "call_declined": "已拒绝"
+  "call_declined": "已拒绝",
+  "wkconv_composeTitle": "发布聊天室话题",
+  "wkconv_titlePlaceholder": "话题标题",
+  "wkconv_contentPlaceholder": "说点什么，可留空",
+  "wkconv_tagLabel": "气囊标签",
+  "wkconv_langLabel": "聊天室语言",
+  "wkconv_cancel": "取消",
+  "wkconv_publish": "发布",
+  "wkconv_posting": "发布中...",
+  "wkconv_inputTitle": "请输入标题",
+  "wkconv_missingCid": "请先配置发帖默认板块 cid",
+  "wkconv_postFailed": "发布失败，请稍后重试",
+  "wkconv_tags": {
+    "学习": "学习",
+    "交友": "交友",
+    "闲谈": "闲谈",
+    "工作": "工作",
+    "游戏": "游戏",
+    "影视": "影视"
+  },
+  "wkconv_languages": {
+    "CN": "中文",
+    "EN": "英语",
+    "MY": "缅语",
+    "VI": "越南语",
+    "TH": "泰语",
+    "JP": "日语",
+    "KR": "韩语"
+  }
 }
