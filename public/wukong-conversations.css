@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v48 - deduped, compact header, draggable compose, stable menu */
+/* Wukong independent conversation list v54 - deduped, compact header, write-maintained commenters */
 html,
 body {
   min-height: 100%;
@@ -562,7 +562,7 @@ body.wkconv-page {
 .wkconv-room-people-row {
   display: flex;
   align-items: flex-end;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
 }
 
@@ -627,7 +627,7 @@ body.wkconv-page {
   overflow: hidden;
   border-radius: 50%;
   background: transparent;
-  border: 1px solid rgba(255,255,255,.88);
+  border: 1px solid rgba(255,255,255,.92);
   box-shadow: 0 4px 10px rgba(15,23,42,.08);
   box-sizing: border-box;
 }
