@@ -1,7 +1,7 @@
 {
   "id": "nodebb-plugin-wukong-chat",
   "name": "NodeBB Wukong Chat",
-  "description": "Independent WuKongIM chat page for NodeBB",
+  "description": "Independent WuKongIM chat, conversation list, WebRTC calls, and topic-page chat core for NodeBB",
   "url": "https://bbs.886.best",
   "library": "./library.js",
   "hooks": [
@@ -16,6 +16,10 @@
     {
       "hook": "action:user.create",
       "method": "onUserCreate"
+    },
+    {
+      "hook": "filter:config.get",
+      "method": "getConfig"
     }
   ],
   "templates": "templates",
@@ -24,6 +28,12 @@
   },
   "scripts": [
     "public/cp-harmony-call.js",
-    "public/wukong-nav-redirect.js"
+    "public/wukong-nav-redirect.js",
+    "public/lib/topic-chat.js"
+  ],
+  "languages": "languages",
+  "scss": [
+    "scss/topic-chat-prehide.scss",
+    "scss/topic-chat-ui.scss"
   ]
 }
