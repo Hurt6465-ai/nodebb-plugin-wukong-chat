@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v18 - room cards + title translate + compose modal */
+/* Wukong independent conversation list v27 - HelloTalk room UI + direct compose */
 (function () {
   "use strict";
 
@@ -50,6 +50,7 @@
     notificationCount: 0,
     notificationCheckInFlight: false,
     notificationTimer: 0,
+    listSyncTimer: 0,
     notificationSeenIds: {},
     notificationSuppressUntil: 0,
     notifications: [],
@@ -628,6 +629,16 @@
     return data;
   }
 
+  function humanErrorMessage(err, fallback) {
+    if (!err) return fallback || "error";
+    var data = err.data || {};
+    var value = (data && (data.message || data.error || data.reason)) || err.message || fallback || "error";
+    if (value && typeof value === "object") {
+      try { value = JSON.stringify(value); } catch (_) { value = fallback || "error"; }
+    }
+    return String(value || fallback || "error");
+  }
+
   async function ensureToken() {
     if (state.uid && state.token) return;
     var data = await fetchJson(withRelativePath(cfg.apiBase) + "/token");
@@ -1157,6 +1168,114 @@
     return state.topics[topicTid(room)] || {};
   }
 
+
+  function topicTag(room) {
+    var topic = topicData(room);
+    var value = get(topic, ["wukong_tag", "wukongTag", "room_tag", "roomTag", "tag", "categoryTag"], "");
+    if (!value && Array.isArray(topic.tags) && topic.tags.length) {
+      var first = topic.tags[0];
+      value = typeof first === "string" ? first : get(first, ["value", "name", "tag"], "");
+    }
+    return String(value || "").trim();
+  }
+
+  function topicLanguage(room) {
+    var topic = topicData(room);
+    var value = get(topic, ["wukong_lang", "wukongLang", "room_lang", "roomLang", "language", "lang"], "");
+    return String(value || "").trim().toUpperCase();
+  }
+
+  function langLabel(value) {
+    var s = String(value || "").trim().toUpperCase();
+    var map = {
+      CN: "CN", ZH: "CN", "ZH-CN": "CN", 中文: "CN",
+      EN: "EN", MY: "MY", MM: "MY", VI: "VI", VN: "VI", TH: "TH", JP: "JP", JA: "JP", KR: "KR", KO: "KR"
+    };
+    return map[s] || s;
+  }
+
+  function uiLocaleKey() {
+    var raw = String(locale() || "zh-CN").toLowerCase();
+    if (/^en/.test(raw)) return "en";
+    if (/^(my|mm)/.test(raw)) return "my";
+    if (/^(vi|vn)/.test(raw)) return "vi";
+    if (/^th/.test(raw)) return "th";
+    if (/^(ja|jp)/.test(raw)) return "jp";
+    if (/^(ko|kr)/.test(raw)) return "kr";
+    return "zh";
+  }
+
+  var WKCONV_UI = {
+    zh: {
+      composeTitle: "发布聊天室话题", titlePlaceholder: "话题标题", contentPlaceholder: "说点什么，可留空",
+      tagLabel: "标签", langLabel: "聊天室语言", cancel: "取消", publish: "发布", posting: "发布中...",
+      tags: { "学习": "学习", "交友": "交友", "闲谈": "闲谈", "工作": "工作", "游戏": "游戏", "影视": "影视" },
+      langs: { CN: "中文", EN: "英语", MY: "缅语", VI: "越南语", TH: "泰语", JP: "日语", KR: "韩语" }
+    },
+    en: {
+      composeTitle: "Create room topic", titlePlaceholder: "Topic title", contentPlaceholder: "Say something, optional",
+      tagLabel: "Tag", langLabel: "Room language", cancel: "Cancel", publish: "Post", posting: "Posting...",
+      tags: { "学习": "Study", "交友": "Friends", "闲谈": "Chat", "工作": "Work", "游戏": "Games", "影视": "Movies" },
+      langs: { CN: "Chinese", EN: "English", MY: "Burmese", VI: "Vietnamese", TH: "Thai", JP: "Japanese", KR: "Korean" }
+    },
+    my: {
+      composeTitle: "စကားဝိုင်းခေါင်းစဉ် တင်ရန်", titlePlaceholder: "ခေါင်းစဉ်", contentPlaceholder: "ပြောချင်တာ ရေးပါ၊ မရေးလည်းရသည်",
+      tagLabel: "အမျိုးအစား", langLabel: "စကားဝိုင်းဘာသာစကား", cancel: "မလုပ်တော့", publish: "တင်မယ်", posting: "တင်နေသည်...",
+      tags: { "学习": "လေ့လာ", "交友": "မိတ်ဆွေ", "闲谈": "စကားပြော", "工作": "အလုပ်", "游戏": "ဂိမ်း", "影视": "ရုပ်ရှင်" },
+      langs: { CN: "တရုတ်", EN: "အင်္ဂလိပ်", MY: "မြန်မာ", VI: "ဗီယက်နမ်", TH: "ထိုင်း", JP: "ဂျပန်", KR: "ကိုရီးယား" }
+    },
+    vi: {
+      composeTitle: "Đăng chủ đề phòng chat", titlePlaceholder: "Tiêu đề", contentPlaceholder: "Viết gì đó, có thể để trống",
+      tagLabel: "Nhãn", langLabel: "Ngôn ngữ phòng", cancel: "Hủy", publish: "Đăng", posting: "Đang đăng...",
+      tags: { "学习": "Học tập", "交友": "Kết bạn", "闲谈": "Trò chuyện", "工作": "Công việc", "游戏": "Game", "影视": "Phim" },
+      langs: { CN: "Trung", EN: "Anh", MY: "Myanmar", VI: "Việt", TH: "Thái", JP: "Nhật", KR: "Hàn" }
+    },
+    th: {
+      composeTitle: "สร้างหัวข้อห้องแชต", titlePlaceholder: "ชื่อหัวข้อ", contentPlaceholder: "เขียนอะไรสักอย่าง หรือเว้นว่างได้",
+      tagLabel: "แท็ก", langLabel: "ภาษาห้อง", cancel: "ยกเลิก", publish: "โพสต์", posting: "กำลังโพสต์...",
+      tags: { "学习": "เรียน", "交友": "เพื่อน", "闲谈": "คุยเล่น", "工作": "งาน", "游戏": "เกม", "影视": "หนัง" },
+      langs: { CN: "จีน", EN: "อังกฤษ", MY: "พม่า", VI: "เวียดนาม", TH: "ไทย", JP: "ญี่ปุ่น", KR: "เกาหลี" }
+    },
+    jp: {
+      composeTitle: "チャットルーム投稿", titlePlaceholder: "タイトル", contentPlaceholder: "内容は任意です",
+      tagLabel: "タグ", langLabel: "ルーム言語", cancel: "取消", publish: "投稿", posting: "投稿中...",
+      tags: { "学习": "学習", "交友": "友達", "闲谈": "雑談", "工作": "仕事", "游戏": "ゲーム", "影视": "映像" },
+      langs: { CN: "中国語", EN: "英語", MY: "ミャンマー語", VI: "ベトナム語", TH: "タイ語", JP: "日本語", KR: "韓国語" }
+    },
+    kr: {
+      composeTitle: "채팅방 주제 올리기", titlePlaceholder: "제목", contentPlaceholder: "내용은 비워도 됩니다",
+      tagLabel: "태그", langLabel: "채팅방 언어", cancel: "취소", publish: "등록", posting: "등록 중...",
+      tags: { "学习": "학습", "交友": "친구", "闲谈": "잡담", "工作": "업무", "游戏": "게임", "影视": "영상" },
+      langs: { CN: "중국어", EN: "영어", MY: "미얀마어", VI: "베트남어", TH: "태국어", JP: "일본어", KR: "한국어" }
+    }
+  };
+
+  function uiText(key, fallback) {
+    var pack = WKCONV_UI[uiLocaleKey()] || WKCONV_UI.zh;
+    return (pack && pack[key]) || (WKCONV_UI.zh && WKCONV_UI.zh[key]) || fallback || key;
+  }
+
+  function tagLabel(value) {
+    value = String(value || "").trim();
+    var pack = WKCONV_UI[uiLocaleKey()] || WKCONV_UI.zh;
+    return (pack.tags && pack.tags[value]) || (WKCONV_UI.zh.tags && WKCONV_UI.zh.tags[value]) || value;
+  }
+
+  function roomLangLabel(value) {
+    var code = langLabel(value);
+    var pack = WKCONV_UI[uiLocaleKey()] || WKCONV_UI.zh;
+    return (pack.langs && pack.langs[code]) || (WKCONV_UI.zh.langs && WKCONV_UI.zh.langs[code]) || code;
+  }
+
+  function roomChipHtml(room) {
+    var lang = langLabel(topicLanguage(room));
+    var tag = topicTag(room);
+    var html = "";
+    if (lang) html += '<span class="wkconv-room-chip wkconv-room-lang">' + esc(roomLangLabel(lang)) + '</span>';
+    if (tag) html += '<span class="wkconv-room-chip wkconv-room-tag"># ' + esc(tagLabel(tag)) + '</span>';
+    return html ? '<div class="wkconv-room-chips">' + html + '</div>' : '';
+  }
+
   function topicMemberResult(room) {
     var topic = topicData(room);
     var posterUid = String(topic && topic.poster && topic.poster.uid || "");
@@ -1200,7 +1319,7 @@
 
   function avatarFlagBadge(u) {
     var flag = userFlag(u);
-    return flag ? '<span class="wkconv-avatar-flag-badge">' + esc(flag) + '</span>' : '';
+    return flag ? '<span class="wkconv-avatar-flag-badge" aria-hidden="true">' + esc(flag) + '</span>' : '';
   }
 
   function flaggedPosterAvatarHtml(u, fallbackText) {
@@ -1345,7 +1464,9 @@
         '<div class="wkconv-room-bg"><img src="' + esc(bg) + '" alt="" loading="lazy" decoding="async"></div>' +
         '<div class="wkconv-room-frost"></div>' +
         '<div class="wkconv-room-content">' +
+          roomChipHtml(room) +
           '<div class="wkconv-room-title-row">' +
+            (pinned ? '<span class="wkconv-room-star" aria-label="置顶">★</span>' : '') +
             '<div class="wkconv-room-title">' + esc(title) + '</div>' +
           '</div>' +
           '<div class="wkconv-room-people-row">' +
@@ -1357,12 +1478,36 @@
       '</div>';
   }
 
+
+  function composeOptionLabel(item, attr) {
+    if (attr === "compose-tag") return tagLabel(item);
+    if (attr === "compose-lang") return roomLangLabel(item);
+    return String(item || "");
+  }
+
+  function composeOptionsHtml(items, attr, defaultValue) {
+    items = Array.isArray(items) ? items : [];
+    return items.map(function (item, idx) {
+      item = String(item || "").trim();
+      if (!item) return "";
+      var active = item === defaultValue || (!defaultValue && idx === 0);
+      return '<button class="wkconv-compose-pill' + (active ? ' is-active' : '') + '" type="button" data-' + attr + '="' + esc(item) + '">' + esc(composeOptionLabel(item, attr)) + '</button>';
+    }).join("");
+  }
+
+  function selectedComposeValue(selector, dataAttr, fallback) {
+    var el = els.composeMask && els.composeMask.querySelector(selector + ' .wkconv-compose-pill.is-active');
+    return String((el && el.getAttribute(dataAttr)) || fallback || "").trim();
+  }
+
   function openCompose() {
     if (!els.composeMask) return;
     if (state.tab !== "rooms") setTab("rooms");
     els.composeError.textContent = "";
     els.composeTitle.value = "";
     els.composeContent.value = "";
+    if (els.composeTags) els.composeTags.innerHTML = composeOptionsHtml(cfg.composeTags, "compose-tag", "交友");
+    if (els.composeLangs) els.composeLangs.innerHTML = composeOptionsHtml(cfg.composeLanguages, "compose-lang", "CN");
     els.composeMask.setAttribute("data-open", "1");
     setBlur(true);
     W.setTimeout(function () { try { els.composeTitle.focus(); } catch (_) {} }, 60);
@@ -1394,27 +1539,28 @@
 
     state.composeSubmitting = true;
     els.composeSubmit.disabled = true;
-    els.composeSubmit.textContent = t("posting", "发布中...");
+    els.composeSubmit.textContent = uiText("posting", t("posting", "发布中..."));
     els.composeError.textContent = "";
 
     try {
-      var data = await fetchJson(withRelativePath(cfg.composeApi || "/api/wukong/topics/create"), {
+      var tag = selectedComposeValue(".wkconv-compose-tags", "data-compose-tag", "交友");
+      var language = selectedComposeValue(".wkconv-compose-langs", "data-compose-lang", "CN");
+      await fetchJson(withRelativePath(cfg.composeApi || "/api/wukong/topics/create"), {
         method: "POST",
-        body: JSON.stringify({ cid: cid, title: title, content: content || title })
+        body: JSON.stringify({ cid: cid, title: title, content: content || title, tag: tag, language: language })
       });
 
       closeCompose();
       setTab("rooms");
       await syncList("compose");
-      try { W.alert && W.alert({ type: "success", message: t("postSuccess", "发布成功") }); } catch (_) {}
     } catch (err) {
-      var msg = (err && err.message) || t("postFailed", "发布失败，请稍后重试");
-      if (err && err.status === 404) msg = "后端缺少 /api/wukong/topics/create 路由，请先把 ZIP 里的 library-direct-compose-route.js 加到插件 library.js";
+      var msg = humanErrorMessage(err, t("postFailed", "发布失败，请稍后重试"));
+      if (err && err.status === 404) msg = "后端缺少 /api/wukong/topics/create 路由，请先替换 ZIP 里的 library.js";
       els.composeError.textContent = msg;
     } finally {
       state.composeSubmitting = false;
       els.composeSubmit.disabled = false;
-      els.composeSubmit.textContent = t("publish", "发布");
+      els.composeSubmit.textContent = uiText("publish", t("publish", "发布"));
     }
   }
 
@@ -2254,6 +2400,27 @@
     }
   }
 
+  function roomSyncIntervalMs() {
+    var n = Number(cfg.roomSyncInterval || cfg.syncIntervalConnected || cfg.syncIntervalFallback || cfg.syncInterval || 45000) || 45000;
+    return Math.max(15000, n);
+  }
+
+  function startListSyncTimer() {
+    if (state.listSyncTimer) return;
+    state.listSyncTimer = W.setInterval(function () {
+      if (D.hidden) return;
+      if (state.tab !== "rooms" && state.tab !== "direct") return;
+      if (now() - state.lastSyncAt < 12000) return;
+      syncList("timer");
+    }, roomSyncIntervalMs());
+    cleanups.push(function () {
+      if (state.listSyncTimer) {
+        W.clearInterval(state.listSyncTimer);
+        state.listSyncTimer = 0;
+      }
+    });
+  }
+
   function tabOrder() {
     return ["direct", "rooms", "notifications"];
   }
@@ -2603,6 +2770,15 @@
     });
 
     listen(els.composeMask, "click", function (e) {
+      var pill = e.target.closest && e.target.closest(".wkconv-compose-pill");
+      if (pill) {
+        var group = pill.parentNode;
+        if (group) {
+          Array.prototype.forEach.call(group.querySelectorAll(".wkconv-compose-pill"), function (btn) { btn.classList.remove("is-active"); });
+          pill.classList.add("is-active");
+        }
+        return;
+      }
       if (e.target === els.composeMask || e.target.closest("[data-compose-cancel]")) closeCompose();
       if (e.target.closest("[data-compose-submit]")) submitCompose();
     });
@@ -2678,11 +2854,11 @@
             '<div class="wkconv-spacer wkconv-bottom-spacer"></div>' +
           '</div>' +
         '</main>' +
-        '<button class="wkconv-compose-fab" type="button" aria-label="发布聊天室话题"><span class="wkconv-compose-fab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 18.5l1.1-4.4L15.4 4.3a2.1 2.1 0 0 1 3 0l1.3 1.3a2.1 2.1 0 0 1 0 3l-9.8 9.8-4.4 1.1a.8.8 0 0 1-1-.96zM14 6.2l3.8 3.8M15.6 18.2h4.2M17.7 16.1v4.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>' +
+        '<button class="wkconv-compose-fab" type="button" aria-label="发布聊天室话题"><span class="wkconv-compose-fab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 19.4l1.25-5.1L15.25 4.5a2.15 2.15 0 0 1 3.05 0l1.2 1.2a2.15 2.15 0 0 1 0 3.05l-9.8 9.8-5.1 1.25a.78.78 0 0 1-.94-.94zM14.1 5.65l4.25 4.25M6.05 14.3l3.65 3.65" fill="none" stroke="currentColor" stroke-width="2.35" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>' +
       '</div>' +
       '<div class="wkconv-menu-mask"><div class="wkconv-menu"><div class="wkconv-menu-title"></div><div class="wkconv-menu-list"></div></div></div>' +
       '<div class="wkconv-translate-mask"><div class="wkconv-translate-pop"><button class="wkconv-translate-close" type="button" data-translate-close>×</button><div class="wkconv-translate-title">标题翻译</div><div class="wkconv-translate-section"><div class="wkconv-translate-label">原文</div><div class="wkconv-translate-original"></div></div><div class="wkconv-translate-section"><div class="wkconv-translate-label">目标文</div><div class="wkconv-translate-target"></div></div></div></div>' +
-      '<div class="wkconv-compose-mask"><div class="wkconv-compose-pop"><div class="wkconv-compose-title">发布聊天室话题</div><input class="wkconv-compose-input" type="text" maxlength="80" placeholder="话题标题"><textarea class="wkconv-compose-textarea" maxlength="2000" placeholder="说点什么，可留空"></textarea><div class="wkconv-compose-error"></div><div class="wkconv-compose-actions"><button class="wkconv-compose-cancel" type="button" data-compose-cancel>取消</button><button class="wkconv-compose-submit" type="button" data-compose-submit>发布</button></div></div></div>' +
+      '<div class="wkconv-compose-mask"><div class="wkconv-compose-pop"><div class="wkconv-compose-title">' + esc(uiText("composeTitle", "发布聊天室话题")) + '</div><input class="wkconv-compose-input" type="text" maxlength="80" placeholder="' + esc(uiText("titlePlaceholder", "话题标题")) + '"><textarea class="wkconv-compose-textarea" maxlength="2000" placeholder="' + esc(uiText("contentPlaceholder", "说点什么，可留空")) + '"></textarea><div class="wkconv-compose-field"><div class="wkconv-compose-label">' + esc(uiText("tagLabel", "标签")) + '</div><div class="wkconv-compose-pills wkconv-compose-tags"></div></div><div class="wkconv-compose-field"><div class="wkconv-compose-label">' + esc(uiText("langLabel", "聊天室语言")) + '</div><div class="wkconv-compose-pills wkconv-compose-langs"></div></div><div class="wkconv-compose-error"></div><div class="wkconv-compose-actions"><button class="wkconv-compose-cancel" type="button" data-compose-cancel>' + esc(uiText("cancel", "取消")) + '</button><button class="wkconv-compose-submit" type="button" data-compose-submit>' + esc(uiText("publish", "发布")) + '</button></div></div></div>' +
       '<div class="wkconv-drawer-mask"><aside class="wkconv-drawer"><div class="wkconv-drawer-head"></div><nav class="wkconv-drawer-links"></nav></aside></div>' +
       '<div class="wkconv-edge-swipe" aria-hidden="true"></div>';
 
@@ -2711,6 +2887,8 @@
       composeContent: root.querySelector(".wkconv-compose-textarea"),
       composeError: root.querySelector(".wkconv-compose-error"),
       composeSubmit: root.querySelector(".wkconv-compose-submit"),
+      composeTags: root.querySelector(".wkconv-compose-tags"),
+      composeLangs: root.querySelector(".wkconv-compose-langs"),
       drawerMask: root.querySelector(".wkconv-drawer-mask"),
       edgeSwipe: root.querySelector(".wkconv-edge-swipe"),
       drawerHead: root.querySelector(".wkconv-drawer-head"),
@@ -2795,6 +2973,7 @@
     mountHtml();
     bind();
     bindNotificationEvents();
+    startListSyncTimer();
     render();
 
     if (state.tab === "notifications") loadNotifications("boot");
@@ -2803,7 +2982,7 @@
     startRealtime();
 
     W.WukongConversations = {
-      version: "v25-direct-compose-compact-card",
+      version: "v28-multilingual-tight-room-ui",
       sync: syncList,
       setTab: setTab,
       openDrawer: openDrawer,
