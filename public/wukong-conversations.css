@@ -1,4 +1,4 @@
-/* Wukong independent conversation list v18 - room cards + title translate + compose modal */
+/* Wukong independent conversation list v30 - room cards + compose modal, no title translate */
 html,
 body {
   min-height: 100%;
@@ -2186,8 +2186,7 @@ body.wkconv-page {
 .wkconv-room-frost {
   background:
     radial-gradient(circle at 12% -12%, rgba(255,255,255,.18), transparent 34%),
-    linear-gradient(180deg, rgba(255,255,255,.05), rgba(0,0,0,.08)),
-    repeating-linear-gradient(135deg, rgba(255,255,255,.045) 0 1px, rgba(255,255,255,0) 1px 7px) !important;
+    linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,.10)) !important;
   backdrop-filter: blur(.45px) saturate(1.06) !important;
   -webkit-backdrop-filter: blur(.45px) saturate(1.06) !important;
 }
@@ -2396,4 +2395,114 @@ body.wkconv-page {
   .wkconv-room-title { font-size: 18px !important; line-height: 1.38 !important; max-height: calc(1.38em * 2 + 6px) !important; }
   .wkconv-room-poster-avatar { width: 34px !important; height: 34px !important; flex-basis: 34px !important; }
   .wkconv-room-member-avatar, .wkconv-room-member-more { width: 28px !important; height: 28px !important; flex-basis: 28px !important; }
+}
+
+
+/* v30 fixes: remove title translate, clear topic unread notice, no dashed texture, stable backgrounds */
+.wkconv-translate-btn,
+.wkconv-translate-mask,
+.wkconv-translate-pop,
+.wkconv-translate-section {
+  display: none !important;
+}
+
+.wkconv-item.wkconv-room-card {
+  min-height: 128px !important;
+  border: 0 !important;
+  outline: none !important;
+  backface-visibility: hidden !important;
+  -webkit-backface-visibility: hidden !important;
+}
+
+.wkconv-item.wkconv-room-card:focus,
+.wkconv-item.wkconv-room-card:focus-visible {
+  outline: none !important;
+}
+
+.wkconv-item.wkconv-room-card::before {
+  display: none !important;
+  content: none !important;
+}
+
+.wkconv-room-bg {
+  background-size: cover !important;
+  background-position: center center !important;
+  background-repeat: no-repeat !important;
+  transform: translateZ(0) !important;
+  backface-visibility: hidden !important;
+  -webkit-backface-visibility: hidden !important;
+}
+
+.wkconv-room-bg img {
+  display: none !important;
+}
+
+.wkconv-room-frost {
+  background:
+    radial-gradient(circle at 12% -12%, rgba(255,255,255,.18), transparent 34%),
+    linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,.10)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.wkconv-room-content {
+  min-height: 128px !important;
+  padding: 11px 15px 10px !important;
+}
+
+.wkconv-room-title {
+  padding-right: 44px !important;
+}
+
+.wkconv-room-new {
+  display: none;
+  max-width: calc(100% - 42px);
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.72);
+  color: #111827;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 3px 9px rgba(15,23,42,.10);
+}
+
+.wkconv-room-card.has-unread .wkconv-room-new {
+  display: inline-block !important;
+}
+
+.wkconv-room-unread {
+  position: absolute !important;
+  right: 10px !important;
+  top: 9px !important;
+  z-index: 6 !important;
+  display: none !important;
+  min-width: 23px !important;
+  height: 23px !important;
+  padding: 0 7px !important;
+  border-radius: 999px !important;
+  background: #ff2f66 !important;
+  color: #fff !important;
+  font-size: 11px !important;
+  font-weight: 950 !important;
+  line-height: 23px !important;
+  text-align: center !important;
+  box-shadow: 0 6px 15px rgba(255,47,102,.34) !important;
+}
+
+.wkconv-room-card.has-unread .wkconv-room-unread {
+  display: inline-block !important;
+}
+
+.wkconv-room-card.has-unread .wkconv-room-pin-corner {
+  right: 42px !important;
+}
+
+@media (max-width: 640px) {
+  .wkconv-item.wkconv-room-card { min-height: 124px !important; }
+  .wkconv-room-content { min-height: 124px !important; }
 }
