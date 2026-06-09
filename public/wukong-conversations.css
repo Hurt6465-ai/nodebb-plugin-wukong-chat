@@ -2506,3 +2506,91 @@ body.wkconv-page {
   .wkconv-item.wkconv-room-card { min-height: 124px !important; }
   .wkconv-room-content { min-height: 124px !important; }
 }
+
+
+/* v31: low-pressure active avatars + stable room card polish */
+.wkconv-room-bg {
+  background-color: #e9e5ff !important;
+  background-image:
+    var(--wk-room-bg),
+    radial-gradient(circle at 18% 0%, rgba(255,255,255,.72), rgba(255,255,255,0) 36%),
+    linear-gradient(135deg, #dbeafe 0%, #ede9fe 48%, #fce7f3 100%) !important;
+  background-size: cover, cover, cover !important;
+  background-position: center center, center center, center center !important;
+  background-repeat: no-repeat !important;
+  will-change: transform !important;
+}
+
+.wkconv-room-frost {
+  background:
+    linear-gradient(180deg, rgba(0,0,0,.04), rgba(0,0,0,.13)),
+    radial-gradient(circle at 10% -10%, rgba(255,255,255,.18), transparent 34%) !important;
+}
+
+.wkconv-room-chip,
+.wkconv-room-lang,
+.wkconv-room-tag {
+  color: #111827 !important;
+}
+
+.wkconv-room-pin-corner {
+  display: none !important;
+  content: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.wkconv-room-title {
+  padding-right: 34px !important;
+}
+
+.wkconv-room-unread {
+  right: 11px !important;
+  top: 10px !important;
+  min-width: 26px !important;
+  height: 22px !important;
+  padding: 0 7px !important;
+  border-radius: 12px !important;
+  background: #ff2f66 !important;
+  line-height: 22px !important;
+  overflow: visible !important;
+}
+
+.wkconv-room-unread::after {
+  content: "" !important;
+  position: absolute !important;
+  right: 5px !important;
+  bottom: -4px !important;
+  width: 8px !important;
+  height: 8px !important;
+  background: #ff2f66 !important;
+  border-bottom-left-radius: 8px !important;
+  transform: rotate(32deg) !important;
+}
+
+.wkconv-room-card.has-unread .wkconv-room-pin-corner {
+  display: none !important;
+}
+
+.wkconv-room-members-active .wkconv-avatar-photo {
+  box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 0 0 3px rgba(34,197,94,.26), 0 4px 11px rgba(15,23,42,.12) !important;
+}
+
+.wkconv-compose-textarea {
+  display: none !important;
+}
+
+.wkconv-compose-pop {
+  max-width: 420px !important;
+}
+
+.wkconv-compose-input {
+  margin-bottom: 2px !important;
+}
+
+.wkconv-room-members-active {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  min-width: 0 !important;
+}
