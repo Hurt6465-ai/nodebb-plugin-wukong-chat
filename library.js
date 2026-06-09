@@ -550,6 +550,9 @@ function topicRoomFromPublicTopic(topic, oldRoom) {
   const channelType = TOPIC_CHANNEL_TYPE;
   const key = conversationRoomKey(channelId, channelType);
   const topicTs = Number(topic.lastposttime || topic.timestamp || 0) || Date.now();
+  const oldTopicTs = Number(oldRoom.topic_lastposttime || oldRoom.lastposttime || oldRoom.ts || 0) || 0;
+  const hasOldRoom = !!oldRoom.channel_id;
+  const versionBump = hasOldRoom && topicTs > oldTopicTs ? 1 : 0;
   return {
     ...oldRoom,
     key,
@@ -561,11 +564,12 @@ function topicRoomFromPublicTopic(topic, oldRoom) {
     title: topic.title,
     wukong_tag: topic.wukong_tag || oldRoom.wukong_tag || '',
     wukong_lang: topic.wukong_lang || oldRoom.wukong_lang || '',
-    ts: Number(oldRoom.ts || 0) > topicTs ? Number(oldRoom.ts || 0) : topicTs,
+    ts: Math.max(Number(oldRoom.ts || 0), topicTs),
+    topic_lastposttime: topicTs,
     text: conversationPayloadText(oldRoom.text || ''),
     last_from_uid: String(oldRoom.last_from_uid || topic.uid || ''),
     last_from_name: String(oldRoom.last_from_name || (topic.poster && (topic.poster.displayname || topic.poster.username)) || ''),
-    version: Number(oldRoom.version || 0),
+    version: Number(oldRoom.version || 0) + versionBump,
     updated_at: Date.now(),
   };
 }
