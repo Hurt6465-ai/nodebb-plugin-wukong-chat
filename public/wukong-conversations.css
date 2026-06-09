@@ -2167,3 +2167,233 @@ body.wkconv-page {
   .wkconv-room-poster-avatar { width: 36px !important; height: 36px !important; flex-basis: 36px !important; }
   .wkconv-room-member-avatar, .wkconv-room-member-more { width: 28px !important; height: 28px !important; flex-basis: 28px !important; }
 }
+
+
+/* v29 final: i18n + less blur + pin corner + stable touch + readable unread */
+.wkconv-item.wkconv-room-card {
+  min-height: 118px !important;
+  margin: 8px 10px !important;
+  border-radius: 20px !important;
+  background: rgba(255,255,255,.12) !important;
+  box-shadow: 0 10px 26px rgba(15,23,42,.10) !important;
+  border: 1px solid rgba(255,255,255,.36) !important;
+  transform: translateZ(0) !important;
+}
+.wkconv-room-bg img {
+  transform: scale(1.003) !important;
+  filter: saturate(1.12) contrast(1.04) brightness(.94) !important;
+}
+.wkconv-room-frost {
+  background:
+    radial-gradient(circle at 12% -12%, rgba(255,255,255,.18), transparent 34%),
+    linear-gradient(180deg, rgba(255,255,255,.05), rgba(0,0,0,.08)),
+    repeating-linear-gradient(135deg, rgba(255,255,255,.045) 0 1px, rgba(255,255,255,0) 1px 7px) !important;
+  backdrop-filter: blur(.45px) saturate(1.06) !important;
+  -webkit-backdrop-filter: blur(.45px) saturate(1.06) !important;
+}
+.wkconv-room-content {
+  min-height: 118px !important;
+  padding: 11px 15px 10px !important;
+  gap: 3px !important;
+  justify-content: space-between !important;
+}
+.wkconv-room-chips {
+  min-height: 19px !important;
+  gap: 5px !important;
+  margin: 0 !important;
+}
+.wkconv-room-chip {
+  height: 19px !important;
+  padding: 0 7px !important;
+  border-radius: 8px !important;
+  font-size: 11px !important;
+  line-height: 19px !important;
+  background: rgba(255,255,255,.62) !important;
+  color: #111827 !important;
+  box-shadow: 0 2px 8px rgba(15,23,42,.08) !important;
+}
+.wkconv-room-title-row {
+  margin: 0 !important;
+  gap: 0 !important;
+}
+.wkconv-room-star { display: none !important; }
+.wkconv-room-pin-corner {
+  position: absolute !important;
+  right: 13px !important;
+  top: 10px !important;
+  z-index: 4 !important;
+  width: 25px !important;
+  height: 25px !important;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 10px !important;
+  background: rgba(255,255,255,.58) !important;
+  box-shadow: 0 5px 16px rgba(15,23,42,.10) !important;
+  font-size: 16px !important;
+  line-height: 1 !important;
+}
+.wkconv-room-title {
+  color: #fff !important;
+  font-size: 19px !important;
+  line-height: 1.36 !important;
+  max-height: calc(1.36em * 2 + 5px) !important;
+  padding: 1px 36px 2px 0 !important;
+  text-shadow: 0 1px 6px rgba(0,0,0,.38), 0 1px 1px rgba(0,0,0,.22) !important;
+  letter-spacing: -.02em !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+.wkconv-room-people-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  margin-top: 2px !important;
+  min-height: 34px !important;
+}
+.wkconv-room-poster-avatar {
+  width: 34px !important;
+  height: 34px !important;
+  flex: 0 0 34px !important;
+  overflow: visible !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.wkconv-room-members {
+  display: flex !important;
+  align-items: center !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  gap: 6px !important;
+  padding: 0 !important;
+  overflow: visible !important;
+}
+.wkconv-room-member-avatar,
+.wkconv-room-member-more {
+  width: 29px !important;
+  height: 29px !important;
+  flex: 0 0 29px !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.wkconv-room-member-more {
+  display: grid !important;
+  place-items: center !important;
+  background: rgba(255,255,255,.78) !important;
+  border-radius: 50% !important;
+  color: #111827 !important;
+  font-size: 11px !important;
+  font-weight: 900 !important;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.75), 0 4px 10px rgba(15,23,42,.10) !important;
+}
+.wkconv-avatar-flag-wrap {
+  position: relative !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: visible !important;
+  border-radius: 50% !important;
+}
+.wkconv-avatar-photo {
+  position: relative !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.82), 0 4px 11px rgba(15,23,42,.12) !important;
+}
+.wkconv-avatar-photo > img,
+.wkconv-avatar-photo > span:not(.wkconv-avatar-flag-badge) {
+  display: grid !important;
+  place-items: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  border-radius: 50% !important;
+  object-fit: cover !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+.wkconv-avatar-flag-wrap > .wkconv-avatar-flag-badge,
+.wkconv-avatar-flag-badge {
+  position: absolute !important;
+  left: -2px !important;
+  right: auto !important;
+  top: auto !important;
+  bottom: -4px !important;
+  z-index: 30 !important;
+  display: block !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  line-height: 1 !important;
+  font-size: 14px !important;
+  transform: none !important;
+  overflow: visible !important;
+  pointer-events: none !important;
+}
+.wkconv-avatar-flag-wrap-member > .wkconv-avatar-flag-badge {
+  left: -2px !important;
+  bottom: -4px !important;
+  font-size: 11px !important;
+}
+.wkconv-room-unread {
+  display: none !important;
+  min-width: 22px !important;
+  height: 22px !important;
+  padding: 0 6px !important;
+  border-radius: 999px !important;
+  background: #ff2f66 !important;
+  color: #fff !important;
+  font-size: 11px !important;
+  font-weight: 900 !important;
+  line-height: 22px !important;
+  text-align: center !important;
+  box-shadow: 0 6px 14px rgba(255,47,102,.28) !important;
+}
+.wkconv-room-card.has-unread .wkconv-room-unread { display: inline-block !important; }
+.wkconv-compose-fab {
+  width: 50px !important;
+  height: 50px !important;
+  right: max(18px, env(safe-area-inset-right)) !important;
+  bottom: calc(22px + env(safe-area-inset-bottom)) !important;
+  border-radius: 50% !important;
+}
+.wkconv-compose-fab::after { display: none !important; content: none !important; }
+.wkconv-compose-fab-icon,
+.wkconv-compose-fab-icon svg {
+  width: 35px !important;
+  height: 35px !important;
+}
+.wkconv-compose-cancel,
+.wkconv-compose-submit {
+  min-height: 38px !important;
+  padding: 0 15px !important;
+  border-radius: 17px !important;
+  font-size: 14px !important;
+}
+.wkconv-compose-submit {
+  min-width: 76px !important;
+  flex: 0 0 auto !important;
+}
+@media (max-width: 640px) {
+  .wkconv-item.wkconv-room-card { min-height: 116px !important; margin: 8px 10px !important; }
+  .wkconv-room-content { min-height: 116px !important; padding: 11px 15px 10px !important; gap: 3px !important; }
+  .wkconv-room-title { font-size: 18px !important; line-height: 1.38 !important; max-height: calc(1.38em * 2 + 6px) !important; }
+  .wkconv-room-poster-avatar { width: 34px !important; height: 34px !important; flex-basis: 34px !important; }
+  .wkconv-room-member-avatar, .wkconv-room-member-more { width: 28px !important; height: 28px !important; flex-basis: 28px !important; }
+}
