@@ -1448,21 +1448,21 @@
 
   function topicStableCommentMembers(room) {
     var topic = topicData(room);
+    var posterUid = topicPosterUid(room);
     var sources = [];
 
     function addMany(list) {
       userListFrom(list).forEach(function (u) { sources.push(u); });
     }
 
-    // v54: only render the stable latest-commenter cache maintained by the backend
-    // when topic chat messages are upserted. Do not fall back to last_from_uid,
-    // participant_uids, member_uids, recent_members, or active_members.
+    // v55: lowest-pressure commenter avatars. Only render the stable latest-commenter
+    // cache maintained by /api/wukong/conversations/upsert. Do not scan posts here,
+    // and do not fall back to old participant/recent/active fields; old rooms can
+    // show only the poster until new chat activity writes comment_members.
     addMany(topic && topic.comment_members);
     addMany(topic && topic.last_commenters);
     addMany(room && room.comment_members);
     addMany(room && room.last_commenters);
-    addMany(topic && topic.members);
-    addMany(room && room.members);
 
     var seen = {};
     var list = [];
@@ -1471,6 +1471,7 @@
       var u = asPublicUser(raw);
       if (!u) return;
       var uid = publicUserId(u);
+      if (uid && posterUid && String(uid) === String(posterUid)) return;
       var key = uid || String(u.username || u.userslug || u.displayname || "").trim();
       if (!key || seen[key]) return;
       seen[key] = 1;
@@ -1529,7 +1530,7 @@
     var bg = topicBackgroundUrl(room);
     var membersHtml = topicMembersHtml(room);
     var unreadText = unread > 99 ? "99+" : String(unread || "");
-    var notice = unread ? cleanPreviewText(previewText(room)) : "";
+    var notice = cleanPreviewText(previewText(room));
 
     return '<div class="wkconv-item is-topic wkconv-room-card' +
       (pinned ? " is-pinned" : "") +
@@ -1544,9 +1545,9 @@
             '<div class="wkconv-room-title">' + esc(title) + '</div>' +
           '</div>' +
           (notice ? '<div class="wkconv-room-new">' + esc(notice) + '</div>' : '') +
-          '<div class="wkconv-room-people-row">' +
+          '<div class="wkconv-room-people-row' + (membersHtml ? ' has-members' : '') + '">' +
             '<div class="wkconv-room-poster-avatar" title="' + esc(posterName) + '">' + flaggedPosterAvatarHtml(poster, posterName) + '</div>' +
-            '<div class="wkconv-room-members" aria-label="成员头像">' + membersHtml + '</div>' +
+            (membersHtml ? '<div class="wkconv-room-members" aria-label="最近评论用户">' + membersHtml + '</div>' : '') +
           '</div>' +
         '</div>' +
       '</div>';
