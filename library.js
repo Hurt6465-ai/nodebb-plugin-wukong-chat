@@ -86,7 +86,6 @@ const PRESENCE_TTL_MS = 45000;
 const RECENT_ROOM_MEMBERS_TTL_MS = Number(process.env.WK_RECENT_ROOM_MEMBERS_TTL_MS || 10 * 60 * 1000);
 const RECENT_ROOM_MEMBERS_LIMIT = clampInt(process.env.WK_RECENT_ROOM_MEMBERS_LIMIT, 1, 20, 8);
 const TOPIC_COMMENTER_MEMBER_LIMIT = clampInt(process.env.WK_TOPIC_COMMENTER_MEMBER_LIMIT, 1, 20, 7);
-const TOPIC_COMMENTER_POST_SCAN_LIMIT = clampInt(process.env.WK_TOPIC_COMMENTER_POST_SCAN_LIMIT, 10, 200, 60);
 const MEDIA_TTL_MS = Number(process.env.WK_MEDIA_TTL_MS || 48 * 60 * 60 * 1000);
 const TOPIC_CONVERSATION_IDLE_DELETE_MS = Number(process.env.WK_TOPIC_CONVERSATION_IDLE_DELETE_MS || 3 * 60 * 60 * 1000);
 const TOPIC_CONVERSATION_DELETE_TOPIC = !/^(0|false|no)$/i.test(String(process.env.WK_TOPIC_CONVERSATION_DELETE_TOPIC || 'true'));
@@ -358,6 +357,38 @@ function mergeRecentRoomMembers(oldList, member, activeAt = Date.now()) {
   if (!u) return base.slice(0, RECENT_ROOM_MEMBERS_LIMIT);
   const filtered = base.filter(item => String(item.uid) !== String(u.uid));
   return [{ ...u, active_at: Number(activeAt || nowMs) || nowMs }, ...filtered].slice(0, RECENT_ROOM_MEMBERS_LIMIT);
+}
+
+function normalizeTopicCommentMembers(list, limit = TOPIC_COMMENTER_MEMBER_LIMIT) {
+  const maxMembers = clampInt(limit, 1, 20, TOPIC_COMMENTER_MEMBER_LIMIT);
+  const out = [];
+  const seen = new Set();
+  const arr = Array.isArray(list) ? list : [];
+  for (const item of arr) {
+    const u = compactPublicUser(item, item && item.uid);
+    if (!u || seen.has(String(u.uid))) continue;
+    seen.add(String(u.uid));
+    out.push(u);
+    if (out.length >= maxMembers) break;
+  }
+  return out;
+}
+
+function mergeTopicCommentMembers(oldList, member, limit = TOPIC_COMMENTER_MEMBER_LIMIT) {
+  const maxMembers = clampInt(limit, 1, 20, TOPIC_COMMENTER_MEMBER_LIMIT);
+  const u = compactPublicUser(member, member && member.uid);
+  const base = normalizeTopicCommentMembers(oldList, maxMembers);
+  if (!u) return base.slice(0, maxMembers);
+  const filtered = base.filter(item => String(item.uid) !== String(u.uid));
+  return [u, ...filtered].slice(0, maxMembers);
+}
+
+function firstTopicCommentMemberList(...lists) {
+  for (const list of lists) {
+    const normalized = normalizeTopicCommentMembers(list, TOPIC_COMMENTER_MEMBER_LIMIT);
+    if (normalized.length) return normalized;
+  }
+  return [];
 }
 
 function conversationRoomKey(channelId, channelType) {
@@ -708,6 +739,11 @@ function topicRoomFromPublicTopic(topic, oldRoom) {
   const oldTopicTs = Number(oldRoom.topic_lastposttime || oldRoom.lastposttime || oldRoom.ts || 0) || 0;
   const hasOldRoom = !!oldRoom.channel_id;
   const versionBump = hasOldRoom && topicTs > oldTopicTs ? 1 : 0;
+  const commentMembers = firstTopicCommentMemberList(
+    oldRoom.comment_members,
+    oldRoom.last_commenters
+  );
+
   return {
     ...oldRoom,
     key,
@@ -724,6 +760,9 @@ function topicRoomFromPublicTopic(topic, oldRoom) {
     text: conversationPayloadText(oldRoom.text || ''),
     last_from_uid: String(oldRoom.last_from_uid || topic.uid || ''),
     last_from_name: String(oldRoom.last_from_name || (topic.poster && (topic.poster.displayname || topic.poster.username)) || ''),
+    comment_members: commentMembers,
+    last_commenters: commentMembers,
+    members: commentMembers,
     version: Number(oldRoom.version || 0) + versionBump,
     updated_at: Date.now(),
   };
@@ -828,102 +867,9 @@ async function pruneInvalidTopicRooms(store, userState, activeKeys) {
   return removedKeys;
 }
 
-async function getTopicPostIds(tid, limit = 12) {
-  tid = String(tid || '').trim();
-  if (!/^\d+$/.test(tid) || !db) return [];
-
-  const key = `tid:${tid}:posts`;
-  const stop = Math.max(0, Number(limit || 12) - 1);
-  try {
-    if (typeof db.getSortedSetRevRange === 'function') {
-      const pids = await db.getSortedSetRevRange(key, 0, stop);
-      return (pids || []).map(x => String(x)).filter(Boolean);
-    }
-    if (typeof db.getSortedSetRange === 'function') {
-      const pids = await db.getSortedSetRange(key, 0, stop);
-      return (pids || []).map(x => String(x)).filter(Boolean).reverse();
-    }
-  } catch (err) {
-    console.warn('[wukong-chat] get topic post ids failed:', tid, err.message);
-  }
-  return [];
-}
-
-async function getPostFieldsBatch(pids, fields) {
-  pids = Array.isArray(pids) ? pids.map(pid => String(pid || '').trim()).filter(Boolean) : [];
-  fields = Array.isArray(fields) ? fields : [];
-  if (!pids.length) return [];
-
-  if (posts && typeof posts.getPostsFields === 'function') {
-    try {
-      const rows = await posts.getPostsFields(pids, fields);
-      if (Array.isArray(rows)) return rows;
-    } catch (err) {
-      console.warn('[wukong-chat] get posts fields batch failed:', err.message);
-    }
-  }
-
-  if (db && typeof db.getObjectsFields === 'function') {
-    try {
-      const rows = await db.getObjectsFields(pids.map(pid => `post:${pid}`), fields);
-      if (Array.isArray(rows)) return rows;
-    } catch (err) {
-      // Fall through to per-post fetch for older NodeBB/database adapters.
-    }
-  }
-
-  const rows = [];
-  if (posts && typeof posts.getPostFields === 'function') {
-    for (const pid of pids) {
-      try {
-        rows.push(await posts.getPostFields(pid, fields));
-      } catch (err) {
-        rows.push(null);
-      }
-    }
-  }
-  return rows;
-}
-
-function isPostDeletedFields(fields) {
-  if (!fields || typeof fields !== 'object') return false;
-  return /^(1|true|yes)$/i.test(String(fields.deleted || fields.isDeleted || fields.deletedAt || ''));
-}
-
-async function getTopicParticipantUsers(tid, posterUid, limit = TOPIC_COMMENTER_MEMBER_LIMIT) {
-  const maxMembers = clampInt(limit, 1, 20, TOPIC_COMMENTER_MEMBER_LIMIT);
-  const seen = new Set();
-  const uids = [];
-  const poster = String(posterUid || '').trim();
-
-  function addCommenterUid(uid) {
-    uid = String(uid || '').trim();
-    if (!/^\d+$/.test(uid)) return;
-    // The poster is returned separately as topic.poster. Keep members as the
-    // latest unique commenters so the card can render: poster + commenters.
-    if (poster && uid === poster) return;
-    if (seen.has(uid)) return;
-    seen.add(uid);
-    uids.push(uid);
-  }
-
-  const scanLimit = Math.max(TOPIC_COMMENTER_POST_SCAN_LIMIT, maxMembers * 8);
-  const pids = await getTopicPostIds(tid, scanLimit);
-  const rows = await getPostFieldsBatch(pids, ['uid', 'deleted', 'isDeleted', 'deletedAt']);
-
-  for (const fields of rows) {
-    if (uids.length >= maxMembers) break;
-    if (isPostDeletedFields(fields)) continue;
-    addCommenterUid(fields && fields.uid);
-  }
-
-  const users = [];
-  for (const uid of uids.slice(0, maxMembers)) {
-    const u = await fetchNodeBBUserPublic(uid);
-    if (u) users.push(u);
-  }
-  return users;
-}
+// v54: no read-time post scan for card avatars.
+// Latest commenters are maintained when a Wukong topic message is upserted,
+// so /api/wukong/conversations/list only reads cached comment_members.
 
 function stripTopicActiveMemberFields(room) {
   if (!room || typeof room !== 'object' || !room.is_topic) return room;
@@ -963,7 +909,7 @@ async function getTopicPublic(tid) {
 
     const posterUid = String(fields.uid || '').trim();
     const poster = posterUid ? await fetchNodeBBUserPublic(posterUid) : null;
-    const members = await getTopicParticipantUsers(tid, posterUid, TOPIC_COMMENTER_MEMBER_LIMIT);
+    const members = [];
 
     return {
       tid: String(fields.tid),
@@ -973,6 +919,8 @@ async function getTopicPublic(tid) {
       uid: posterUid,
       poster,
       members,
+      comment_members: members,
+      last_commenters: members,
       timestamp: Number(fields.timestamp || 0),
       lastposttime: Number(fields.lastposttime || 0),
       wukong_tag: firstNonEmpty(fields.wukong_tag),
@@ -1028,13 +976,20 @@ async function buildConversationListForUser(current, rawData) {
     }
 
     const unreadByVersion = Math.max(0, globalVersion - readVersion);
+    const mergedCommentMembers = firstTopicCommentMemberList(
+      globalRoom.comment_members,
+      globalRoom.last_commenters
+    );
     userState.rooms[key] = {
-      ...globalRoom,
       ...old,
+      ...globalRoom,
       text: globalRoom.text || old.text || '',
       ts: Number(globalRoom.ts || 0) || Number(old.ts || 0) || Date.now(),
       last_from_uid: globalRoom.last_from_uid || old.last_from_uid || '',
       last_from_name: globalRoom.last_from_name || old.last_from_name || '',
+      comment_members: mergedCommentMembers,
+      last_commenters: mergedCommentMembers,
+      members: mergedCommentMembers,
       unread: unreadByVersion,
       version: globalVersion,
       updated_at: Date.now(),
@@ -1074,9 +1029,21 @@ async function buildConversationListForUser(current, rawData) {
   for (const tid of topicTids) {
     const topic = await getTopicPublic(tid);
     if (topic) {
+      const key = conversationRoomKey(`${TOPIC_CHANNEL_PREFIX}${tid}`, TOPIC_CHANNEL_TYPE);
+      const sourceRoom = globalRooms[key] || (userState.rooms && userState.rooms[key]) || {};
+      const userRoom = (userState.rooms && userState.rooms[key]) || {};
+      const commentMembers = firstTopicCommentMemberList(
+        sourceRoom.comment_members,
+        sourceRoom.last_commenters,
+        userRoom.comment_members,
+        userRoom.last_commenters
+      );
+      topic.members = commentMembers;
+      topic.comment_members = commentMembers;
+      topic.last_commenters = commentMembers;
       topicMap[tid] = topic;
       if (topic.poster && topic.poster.uid) users[String(topic.poster.uid)] = topic.poster;
-      for (const field of ['members', 'recent_members', 'active_members']) {
+      for (const field of ['members', 'comment_members', 'last_commenters']) {
         if (Array.isArray(topic[field])) {
           for (const member of topic[field]) {
             if (member && member.uid) users[String(member.uid)] = member;
@@ -1136,7 +1103,23 @@ function normalizeConversationUpsertBody(body, currentUid) {
   };
 }
 
-function upsertConversationForUser(uid, room, currentUser = null) {
+async function topicCommentMemberFromSender(senderUid, senderName, currentUser) {
+  const uid = String(senderUid || '').trim();
+  if (!/^\d+$/.test(uid)) return null;
+
+  if (currentUser && String(currentUser.uid || '') === uid) {
+    return compactPublicUser(currentUser, uid);
+  }
+
+  const fetched = await fetchNodeBBUserPublic(uid);
+  return compactPublicUser(fetched, uid) || {
+    uid,
+    username: senderName || `user${uid}`,
+    displayname: senderName || '',
+  };
+}
+
+async function upsertConversationForUser(uid, room, currentUser = null) {
   const store = readConversationState();
   const userState = getConversationUserState(store, uid);
   const globalRooms = getConversationGlobalRooms(store);
@@ -1166,23 +1149,35 @@ function upsertConversationForUser(uid, room, currentUser = null) {
     );
     const versionBump = room.text && (room.text !== globalOld.text || roomTs > Number(globalOld.ts || 0)) ? 1 : 0;
     const senderUid = String(room.last_from_uid || (currentUser && currentUser.uid) || '').trim();
-    const senderMember = compactPublicUser(currentUser, senderUid) || (senderUid ? { uid: senderUid, username: senderName || `user${senderUid}`, displayname: senderName || '' } : null);
-    const recentMembers = mergeRecentRoomMembers(globalOld.recent_members || globalOld.active_members || [], senderMember, roomTs);
+    const senderMember = await topicCommentMemberFromSender(senderUid, senderName, currentUser);
+    const existingCommentMembers = firstTopicCommentMemberList(
+      globalOld.comment_members,
+      globalOld.last_commenters
+    );
+    const commentMembers = mergeTopicCommentMembers(existingCommentMembers, senderMember, TOPIC_COMMENTER_MEMBER_LIMIT);
     const globalNext = {
       ...globalOld,
       ...room,
       text: room.text || globalOld.text || '',
       ts: roomTs || Number(globalOld.ts || 0) || Date.now(),
+      last_chat_at: roomTs || Date.now(),
       unread: 0,
       last_from_uid: room.last_from_uid || globalOld.last_from_uid || '',
       last_from_name: senderName || globalOld.last_from_name || '',
-      recent_members: recentMembers,
-      active_members: recentMembers,
-      recent_count: Math.max(recentMembers.length, Number(globalOld.recent_count || globalOld.active_count || recentMembers.length)),
-      active_count: Math.max(recentMembers.length, Number(globalOld.recent_count || globalOld.active_count || recentMembers.length)),
+      comment_members: commentMembers,
+      last_commenters: commentMembers,
+      members: commentMembers,
       version: Number(globalOld.version || 0) + versionBump,
       updated_at: Date.now(),
     };
+    delete globalNext.recent_members;
+    delete globalNext.recentMembers;
+    delete globalNext.active_members;
+    delete globalNext.activeMembers;
+    delete globalNext.recent_count;
+    delete globalNext.recentCount;
+    delete globalNext.active_count;
+    delete globalNext.activeCount;
     delete globalNext.incoming;
     delete globalNext.is_self;
     globalRooms[room.key] = globalNext;
@@ -1950,7 +1945,7 @@ function registerApiRoutes(router, middleware) {
     const room = normalizeConversationUpsertBody(body, current.uid);
     if (!room) return res.status(400).json({ error: 'invalid_conversation' });
 
-    const saved = upsertConversationForUser(String(current.uid), room, current);
+    const saved = await upsertConversationForUser(String(current.uid), room, current);
     res.json({ ok: true, room: saved });
   }));
 
@@ -2027,12 +2022,17 @@ function registerApiRoutes(router, middleware) {
         const globalRooms = getConversationGlobalRooms(store);
         const key = conversationRoomKey(`${TOPIC_CHANNEL_PREFIX}${tid}`, TOPIC_CHANNEL_TYPE);
         globalRooms[key] = topicRoomFromPublicTopic(topic, globalRooms[key]);
-        const creatorMember = compactPublicUser(current, current.uid);
-        const creatorRecentMembers = mergeRecentRoomMembers(globalRooms[key].recent_members || globalRooms[key].active_members || [], creatorMember, Date.now());
-        globalRooms[key].recent_members = creatorRecentMembers;
-        globalRooms[key].active_members = creatorRecentMembers;
-        globalRooms[key].recent_count = creatorRecentMembers.length;
-        globalRooms[key].active_count = creatorRecentMembers.length;
+        globalRooms[key].comment_members = [];
+        globalRooms[key].last_commenters = [];
+        globalRooms[key].members = [];
+        delete globalRooms[key].recent_members;
+        delete globalRooms[key].recentMembers;
+        delete globalRooms[key].active_members;
+        delete globalRooms[key].activeMembers;
+        delete globalRooms[key].recent_count;
+        delete globalRooms[key].recentCount;
+        delete globalRooms[key].active_count;
+        delete globalRooms[key].activeCount;
 
         const userState = getConversationUserState(store, current.uid);
         userState.readAt[key] = Math.max(Number(userState.readAt[key] || 0), Number(globalRooms[key].ts || Date.now()));
