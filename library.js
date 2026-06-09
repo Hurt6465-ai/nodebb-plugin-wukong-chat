@@ -86,7 +86,7 @@ const PRESENCE_TTL_MS = 45000;
 const RECENT_ROOM_MEMBERS_TTL_MS = Number(process.env.WK_RECENT_ROOM_MEMBERS_TTL_MS || 10 * 60 * 1000);
 const RECENT_ROOM_MEMBERS_LIMIT = clampInt(process.env.WK_RECENT_ROOM_MEMBERS_LIMIT, 1, 20, 8);
 const MEDIA_TTL_MS = Number(process.env.WK_MEDIA_TTL_MS || 48 * 60 * 60 * 1000);
-const TOPIC_CONVERSATION_IDLE_DELETE_MS = Number(process.env.WK_TOPIC_CONVERSATION_IDLE_DELETE_MS || 24 * 60 * 60 * 1000);
+const TOPIC_CONVERSATION_IDLE_DELETE_MS = Number(process.env.WK_TOPIC_CONVERSATION_IDLE_DELETE_MS || 3 * 60 * 60 * 1000);
 const TOPIC_CONVERSATION_DELETE_TOPIC = !/^(0|false|no)$/i.test(String(process.env.WK_TOPIC_CONVERSATION_DELETE_TOPIC || 'true'));
 const TOPIC_CONVERSATION_DELETE_MODE = String(process.env.WK_TOPIC_CONVERSATION_DELETE_MODE || 'purge').trim().toLowerCase(); // delete | purge
 const TOPIC_CONVERSATION_DELETE_UID = Number(process.env.WK_TOPIC_CONVERSATION_DELETE_UID || 1);
@@ -101,6 +101,83 @@ const MEDIA_CLEANUP_JITTER_MS = Number(process.env.WK_MEDIA_CLEANUP_JITTER_MS ||
 const MEDIA_CLEANUP_ON_START = /^(1|true|yes)$/i.test(String(process.env.WK_MEDIA_CLEANUP_ON_START || 'false'));
 let mediaCleanupTimer = null;
 let topicConversationCleanupTimer = null;
+
+
+const USER_PROFILE_FIELDS = [
+  'uid',
+  'username',
+  'userslug',
+  'displayname',
+  'fullname',
+  'picture',
+  'uploadedpicture',
+  'icon:text',
+  'icon:bgColor',
+  'icontext',
+  'iconbgColor',
+  'status',
+  'language',
+  'language_flag',
+  'languageFlag',
+  'countryFlag',
+  'country_flag',
+  'flag',
+  'nationality',
+  'country',
+  'localeCountry',
+];
+
+const MAX_BATCH_USERS = 80;
+
+function parseBoolean(value, defaultValue) {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off', 'disabled'].includes(normalized)) return false;
+  return defaultValue;
+}
+
+function parseInteger(value, defaultValue) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
+function configuredTopicCategoryId() {
+  return clampInt(
+    process.env.CP_WK_CATEGORY_ID || process.env.CP_WK_BOARD_ID || TOPIC_PUBLIC_CIDS[0] || 7,
+    1,
+    999999,
+    7
+  );
+}
+
+function normalizeUidList(input, max = MAX_BATCH_USERS) {
+  return String(input || '')
+    .split(/[\s,]+/)
+    .map(uid => parseInteger(uid, 0))
+    .filter((uid, index, arr) => uid > 0 && arr.indexOf(uid) === index)
+    .slice(0, max)
+    .map(uid => String(uid));
+}
+
+function isDeepSeekAIRequest(endpoint, model) {
+  return /deepseek/i.test(String(endpoint || '')) || /deepseek/i.test(String(model || ''));
+}
+
+function buildAIRequestBody({ model, temperature, messages, endpoint }) {
+  const body = {
+    model,
+    temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.3,
+    messages,
+    stream: false,
+  };
+
+  if (isDeepSeekAIRequest(endpoint, model)) {
+    body.thinking = { type: 'disabled' };
+  }
+
+  return body;
+}
 
 // WuKongIM official user registration/login endpoint is POST /user/token.
 // Keep this enabled by default so NodeBB users are provisioned when they register
@@ -405,11 +482,44 @@ function conversationPayload(item) {
 }
 
 
+function normalizeActivityTimestampMs(value) {
+  let n = Number(value || 0);
+  if (!n || !Number.isFinite(n)) return 0;
+  if (n < 10000000000) n *= 1000;
+  return n;
+}
+
+function topicRoomLastActivityAt(room) {
+  if (!room || typeof room !== 'object') return 0;
+
+  // Physical topic cleanup is based on real discussion/chat activity, not on
+  // local cache refresh time. Do not use updated_at here, because sync jobs touch
+  // it even when nobody replied or chatted.
+  const candidates = [
+    room.last_chat_at,
+    room.lastChatAt,
+    room.topic_lastposttime,
+    room.lastposttime,
+    room.lastPostTime,
+    room.ts,
+    room.timestamp,
+    room.created_at,
+    room.createdAt,
+  ];
+
+  for (const value of candidates) {
+    const ts = normalizeActivityTimestampMs(value);
+    if (ts) return ts;
+  }
+
+  return 0;
+}
+
 function isExpiredTopicConversation(room, nowMs = Date.now()) {
   if (!room || !room.is_topic) return false;
   const ttl = Number(TOPIC_CONVERSATION_IDLE_DELETE_MS || 0);
   if (!ttl) return false;
-  const ts = Number(room.ts || room.updated_at || room.last_chat_at || 0);
+  const ts = topicRoomLastActivityAt(room);
   if (!ts) return false;
   return nowMs - ts > ttl;
 }
@@ -1165,35 +1275,51 @@ async function getNodeBBUserByUid(uid) {
   uid = String(uid || '').trim();
   if (!/^\d+$/.test(uid)) return null;
 
-  const fields = await user.getUserFields(uid, [
-    'uid',
-    'username',
-    'userslug',
-    'displayname',
-    'fullname',
-    'picture',
-    'uploadedpicture',
-    'icon:text',
-    'icon:bgColor',
-    'status',
-    'language',
-    'language_flag',
-  ]);
+  let fields = null;
 
-  if (!fields || !fields.uid) return null;
+  if (user && typeof user.getUserFields === 'function') {
+    try {
+      fields = await user.getUserFields(uid, USER_PROFILE_FIELDS);
+    } catch (err) {
+      fields = null;
+    }
+  }
+
+  // Some custom public profile fields, especially language/country flags, can live
+  // directly in user:<uid>. Read only this whitelist and never expose private fields.
+  if (db && typeof db.getObjectFields === 'function') {
+    try {
+      const direct = await db.getObjectFields(`user:${uid}`, USER_PROFILE_FIELDS);
+      fields = Object.assign({}, fields || {}, direct || {});
+    } catch (err) {}
+  }
+
+  if (!fields) return null;
+  fields.uid = fields.uid || uid;
+  if (!fields.uid) return null;
 
   return {
     uid: String(fields.uid),
     username: firstNonEmpty(fields.username, fields.userslug, `user${uid}`),
-    userslug: firstNonEmpty(fields.userslug, fields.username),
+    userslug: firstNonEmpty(fields.userslug, fields.slug, fields.username),
     displayname: firstNonEmpty(fields.displayname, fields.fullname, fields.username, `user${uid}`),
     fullname: firstNonEmpty(fields.fullname),
     picture: firstNonEmpty(fields.picture, fields.uploadedpicture),
-    icontext: firstNonEmpty(fields['icon:text'], fields.icontext, fields.username ? String(fields.username).charAt(0).toUpperCase() : ''),
-    iconbgColor: firstNonEmpty(fields['icon:bgColor'], fields.iconbgColor, '#72a5f2'),
+    icontext: firstNonEmpty(fields.icontext, fields['icon:text'], fields.username ? String(fields.username).charAt(0).toUpperCase() : ''),
+    iconbgColor: firstNonEmpty(fields.iconbgColor, fields['icon:bgColor'], '#72a5f2'),
     status: firstNonEmpty(fields.status),
     language: firstNonEmpty(fields.language),
-    language_flag: firstNonEmpty(fields.language_flag),
+    language_flag: firstNonEmpty(
+      fields.language_flag,
+      fields.languageFlag,
+      fields.countryFlag,
+      fields.country_flag,
+      fields.flag,
+      fields.nationality,
+      fields.country,
+      fields.localeCountry,
+      fields.language
+    ),
   };
 }
 
@@ -1596,6 +1722,22 @@ function registerApiRoutes(router, middleware) {
     });
   });
 
+  router.get('/cp-wukong-topic-chat/health', (req, res) => {
+    res.json({
+      ok: true,
+      plugin: 'nodebb-plugin-wukong-chat',
+      mergedModule: 'cp-wukong-topic-chat-core',
+      enabled: parseBoolean(process.env.CP_WK_TOPIC_CHAT_ENABLED, true),
+      categoryId: configuredTopicCategoryId(),
+      apiBase: api,
+      bridgeCompatibility: true,
+      userBatchApi: true,
+      userCacheTtlMs: USER_PROFILE_CACHE_TTL_MS,
+      topicConversationIdleDeleteMs: TOPIC_CONVERSATION_IDLE_DELETE_MS,
+      topicConversationIdleDeleteHours: TOPIC_CONVERSATION_IDLE_DELETE_MS / (60 * 60 * 1000),
+    });
+  });
+
   router.get(`${api}/page-check`, ensureLogin, asyncHandler(async (req, res) => {
     const current = await getCurrentUser(req);
     res.json({
@@ -1638,25 +1780,19 @@ function registerApiRoutes(router, middleware) {
     });
   }));
 
-  router.get(`${api}/user/:uid`, ensureLogin, asyncHandler(async (req, res) => {
+  async function singleUserHandler(req, res) {
     const uid = String(req.params.uid || '').trim();
     if (!/^\d+$/.test(uid)) return res.status(400).json({ error: 'invalid_uid' });
 
     const u = await fetchNodeBBUserPublic(uid);
     if (!u) return res.status(404).json({ error: 'user_not_found' });
 
+    res.setHeader('Cache-Control', 'private, max-age=60');
     res.json(u);
-  }));
+  }
 
-  router.get(`${api}/users`, ensureLogin, asyncHandler(async (req, res) => {
-    const raw = String(req.query.uids || req.query.uid || '').trim();
-    const uids = raw
-      .split(',')
-      .map(x => String(x || '').trim())
-      .filter(x => /^\d+$/.test(x))
-      .filter((x, i, arr) => arr.indexOf(x) === i)
-      .slice(0, 80);
-
+  async function usersBatchHandler(req, res) {
+    const uids = normalizeUidList(req.query.uids || req.query.uid || '', MAX_BATCH_USERS);
     const users = [];
     for (const uid of uids) {
       const u = await fetchNodeBBUserPublic(uid);
@@ -1665,7 +1801,16 @@ function registerApiRoutes(router, middleware) {
 
     res.setHeader('Cache-Control', 'private, max-age=60');
     res.json({ users, cacheTtlMs: USER_PROFILE_CACHE_TTL_MS });
-  }));
+  }
+
+  router.get(`${api}/user/:uid`, ensureLogin, asyncHandler(singleUserHandler));
+  router.get(`${api}/users`, ensureLogin, asyncHandler(usersBatchHandler));
+
+  // Compatibility aliases for the topic-page chat module and quick browser tests.
+  router.get('/nodebb-user/:uid', ensureLogin, asyncHandler(singleUserHandler));
+  router.get('/nodebb-users', ensureLogin, asyncHandler(usersBatchHandler));
+  router.get('/bridge/nodebb-user/:uid', ensureLogin, asyncHandler(singleUserHandler));
+  router.get('/bridge/nodebb-users', ensureLogin, asyncHandler(usersBatchHandler));
 
   async function historyHandler(req, res) {
     const current = await getCurrentUser(req);
@@ -2182,10 +2327,10 @@ function registerApiRoutes(router, middleware) {
 
   router.post(`${api}/ai/chat`, ensureLogin, asyncHandler(async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const endpoint = String(body.endpoint || AI_PROXY_ENDPOINT || '').trim().replace(/\/+$/, '');
-    const apiKey = String(body.apiKey || AI_PROXY_API_KEY || '').trim();
-    const model = String(body.model || AI_PROXY_MODEL || 'gpt-4o-mini').trim();
-    const temperature = Number.isFinite(Number(body.temperature)) ? Number(body.temperature) : 0.2;
+    const endpoint = String(body.endpoint || process.env.CP_WK_AI_ENDPOINT || AI_PROXY_ENDPOINT || '').trim().replace(/\/+$/, '');
+    const apiKey = String(body.apiKey || process.env.CP_WK_AI_API_KEY || AI_PROXY_API_KEY || '').trim();
+    const model = String(body.model || process.env.CP_WK_AI_MODEL || AI_PROXY_MODEL || 'gpt-4o-mini').trim();
+    const temperature = Number.isFinite(Number(body.temperature)) ? Number(body.temperature) : 0.3;
     const messages = Array.isArray(body.messages) ? body.messages : [];
 
     if (!endpoint) return res.status(400).json({ error: 'missing_endpoint' });
@@ -2202,7 +2347,7 @@ function registerApiRoutes(router, middleware) {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ model, temperature, messages, stream: false }),
+        body: JSON.stringify(buildAIRequestBody({ model, temperature, messages, endpoint })),
       },
       20000
     );
@@ -2213,6 +2358,28 @@ function registerApiRoutes(router, middleware) {
 
     res.json(r.data);
   }));
+
+
+  // Backward-compatible /bridge/* proxy. The old topic-page chat frontend used
+  // /bridge routes; the merged Wukong backend owns /api/wukong/*. Keep this
+  // lightweight rewrite so cached old clients and the next frontend merge keep working.
+  router.use('/bridge', ensureLogin, (req, res, next) => {
+    const originalUrl = req.url || '/';
+    let target = originalUrl;
+
+    if (/^\/nodebb-users(?:$|[/?])/.test(target)) {
+      target = target.replace(/^\/nodebb-users/, '/users');
+    } else if (/^\/nodebb-user\//.test(target)) {
+      target = target.replace(/^\/nodebb-user\//, '/user/');
+    }
+
+    const savedUrl = req.url;
+    req.url = `${api}${target}`;
+    router.handle(req, res, (err) => {
+      req.url = savedUrl;
+      next(err);
+    });
+  });
 }
 
 
@@ -2261,6 +2428,29 @@ plugin.onUserCreate = async function onUserCreate(data) {
   const result = await provisionWukongUser(uid, username, token, 'action:user.create');
   console.log('[wukong-chat] provision on user.create:', { uid, username, ok: result && result.ok, skipped: result && result.skipped });
   return data;
+};
+
+
+plugin.getConfig = async function getConfig(config) {
+  config = config || {};
+  config.cpWukongTopicChat = Object.assign({}, config.cpWukongTopicChat || {}, {
+    enabled: parseBoolean(process.env.CP_WK_TOPIC_CHAT_ENABLED, true),
+    categoryId: configuredTopicCategoryId(),
+    localeFallback: process.env.CP_WK_LOCALE_FALLBACK || 'en-GB',
+    pluginId: 'nodebb-plugin-wukong-chat',
+    apiBase: '/api/wukong',
+    userBatchUrl: '/api/wukong/users',
+    legacyUserBatchUrl: '/nodebb-users',
+    userCacheTtlMs: USER_PROFILE_CACHE_TTL_MS,
+    topicChannelPrefix: TOPIC_CHANNEL_PREFIX,
+    topicChannelType: TOPIC_CHANNEL_TYPE,
+    topicIdleDeleteMs: TOPIC_CONVERSATION_IDLE_DELETE_MS,
+    topicIdleDeleteHours: TOPIC_CONVERSATION_IDLE_DELETE_MS / (60 * 60 * 1000),
+    topicPhysicalDelete: TOPIC_CONVERSATION_DELETE_TOPIC,
+    sdkUrl: '/plugins/nodebb-plugin-wukong-chat/static/vendor/wukongimjssdk.umd.js',
+  });
+
+  return config;
 };
 
 plugin.addNavigation = async function addNavigation(header) {
