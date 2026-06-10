@@ -1,5 +1,5 @@
 /*
- * CP NodeBB Topic WuKong Chat - Wukong merged API - v45-api-perf
+ * CP NodeBB Topic WuKong Chat - Wukong merged API - v55-topic-actions-settings
  * 重点改动：
  * - 保留板块 7 视觉排序 IIFE，但不轮询 /bridge/topic-activity。
  * - 消息列表改为增量渲染，不再 list.innerHTML 重建整个屏幕。
@@ -15,9 +15,10 @@
 (function () {
   "use strict";
 
-  var GLOBAL_KEY = "__cpTopicWukongV45ApiPerfInited";
+  var GLOBAL_KEY = "__cpTopicWukongV55TopicActionsSettingsInited";
   if (window[GLOBAL_KEY]) return;
   window[GLOBAL_KEY] = true;
+  try { if (/\/topic\//i.test(location.pathname || "")) document.documentElement.classList.add("cp-topic-chat-booting"); } catch (_) {}
 
   var SERVER_CFG = (window.config && window.config.cpWukongTopicChat) || {};
   var API_BASE = String(SERVER_CFG.apiBase || "/api/wukong").replace(/\/+$/, "");
@@ -49,7 +50,9 @@
     notifyListUrl: API_BASE + "/topic-notify/list",
     activityTouchUrl: API_BASE + "/topic-activity/touch",
     usersBatchUrl: SERVER_CFG.userBatchUrl || (API_BASE + "/users"),
-    debug: !!SERVER_CFG.debug
+    debug: !!SERVER_CFG.debug,
+    topicActionsUrl: API_BASE + "/topic-actions",
+    topicActionBase: API_BASE + "/topics"
   };
 
   var ROOT_ID = "cp-topic-chat-root";
@@ -153,6 +156,8 @@
     mountSeq: 0,
     bootTimer: null,
     topic: null,
+    topicActions: null,
+    settingsView: "main",
     channelId: "",
     uid: "",
     username: "我",
@@ -1570,23 +1575,177 @@
       return true;
     } catch (e) { warn("save-settings", e); toast("保存失败"); return false; }
   }
-  function openSettings() { var m = byId("cp-topic-settings-mask"); if (m) { syncTranslateUI(); m.hidden = false; } }
+  function showSettingsView(view) {
+    view = view === "translate" ? "translate" : "main";
+    state.settingsView = view;
+    var main = byId("cp-topic-settings-main"), translate = byId("cp-topic-settings-translate");
+    if (main) main.hidden = view !== "main";
+    if (translate) translate.hidden = view !== "translate";
+  }
+
+  function topicActionsQueryUrl() {
+    if (!state.topic || !state.topic.tid) return "";
+    return CONFIG.topicActionsUrl + "?tid=" + encodeURIComponent(state.topic.tid) + "&_=" + Date.now();
+  }
+
+  function topicActionUrl(action) {
+    if (!state.topic || !state.topic.tid) return "";
+    return CONFIG.topicActionBase.replace(/\/+$/, "") + "/" + encodeURIComponent(state.topic.tid) + "/" + action;
+  }
+
+  function refreshTopicActionsUI() {
+    var data = state.topicActions || {};
+    var status = byId("cp-topic-action-status");
+    var pin = byId("cp-topic-pin-action");
+    var del = byId("cp-topic-delete-action");
+    var report = byId("cp-topic-report-action");
+    if (status) status.textContent = data.ok ? (data.canManage ? "管理员操作" : "普通用户") : "权限读取失败";
+    if (pin) {
+      pin.hidden = !data.canPin;
+      pin.setAttribute("data-pinned", data.pinned ? "1" : "0");
+      var label = pin.querySelector("span");
+      var desc = pin.querySelector("em");
+      if (label) label.innerHTML = '<i class="fa fa-thumb-tack"></i>' + (data.pinned ? "取消置顶聊天室" : "置顶聊天室");
+      if (desc) desc.textContent = data.pinned ? "当前已置顶" : "管理员 / 版主";
+    }
+    if (del) del.hidden = !data.canDelete;
+    if (report) report.hidden = data.canReport === false;
+  }
+
+  async function loadTopicActions(force) {
+    if (!state.topic || !state.topic.tid || !CONFIG.topicActionsUrl) return null;
+    if (!force && state.topicActions && state.topicActions.tid === String(state.topic.tid)) return state.topicActions;
+    try {
+      var res = await fetchWithTimeout(topicActionsQueryUrl(), { credentials: "include", cache: "no-store" }, 8000);
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) throw new Error((data && (data.message || data.error)) || ("权限读取失败 " + res.status));
+      state.topicActions = data;
+    } catch (err) {
+      warn("topic-actions", err);
+      state.topicActions = { ok: false, tid: state.topic && state.topic.tid, canReport: true };
+    }
+    refreshTopicActionsUI();
+    return state.topicActions;
+  }
+
+  async function runTopicAction(action) {
+    if (!state.topic || !state.topic.tid) return;
+    try { saveSettingsFromUI(); } catch (_) {}
+    var finalAction = action;
+    if (action === "pin" && state.topicActions && state.topicActions.pinned) finalAction = "unpin";
+    if (finalAction === "delete") {
+      if (!confirm("确定删除这个聊天室和对应话题吗？此操作不可恢复。")) return;
+    }
+    try {
+      toast(finalAction === "delete" ? "正在删除..." : (finalAction === "unpin" ? "正在取消置顶..." : "正在置顶..."));
+      var res = await bridgePost(topicActionUrl(finalAction), {}, 10000);
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) throw new Error((data && (data.message || data.error)) || ("操作失败 " + res.status));
+      if (finalAction === "delete") {
+        toast("聊天室已删除");
+        setTimeout(function () { location.href = topicRoomsListUrl(); }, 450);
+        return;
+      }
+      state.topicActions = data.state || null;
+      await loadTopicActions(true);
+      toast(finalAction === "unpin" ? "已取消置顶" : "已置顶");
+    } catch (err) {
+      warn("topic-action-" + action, err);
+      toast("操作失败：" + String(err.message || err).slice(0, 80));
+    }
+  }
+
+  async function reportTopic() {
+    if (!state.topic || !state.topic.tid) return;
+    var reason = prompt("请简单说明举报原因", "");
+    if (reason === null) return;
+    reason = String(reason || "").trim();
+    if (!reason) reason = "用户举报聊天室";
+    try {
+      var res = await bridgePost(topicActionUrl("report"), { reason: reason }, 10000);
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) throw new Error((data && (data.message || data.error)) || ("举报失败 " + res.status));
+      toast("举报已提交");
+      closeSettings();
+    } catch (err) {
+      warn("topic-report", err);
+      toast("举报失败：" + String(err.message || err).slice(0, 80));
+    }
+  }
+
+  function openSettings() {
+    var m = byId("cp-topic-settings-mask");
+    if (m) {
+      syncTranslateUI();
+      showSettingsView("main");
+      m.hidden = false;
+      loadTopicActions(true);
+    }
+  }
   function closeSettings() { var m = byId("cp-topic-settings-mask"); if (m) m.hidden = true; }
 
   function injectStyle() {
-    if (document.getElementById("cp-topic-runtime-style") || document.getElementById("cp-topic-v37-runtime-fix-style")) return;
-    var style = document.createElement("style");
-    style.id = "cp-topic-runtime-style";
-    style.textContent = [
-      ".cp-at-pill{background:transparent!important;border:0!important;box-shadow:none!important;border-radius:0!important;padding:0!important;color:#2563eb!important;font-weight:700!important;}",
-      ".cp-quote-card{cursor:pointer;}",
-      "body.cp-cat7-hide-replies [component='category/topic'] [component='topic/post-count'],body.cp-cat7-hide-replies [component='category/topic'] [component='topic/reply-count']{display:none!important;}"
-    ].join("\n");
-    document.head.appendChild(style);
+    // v55: styles live in scss/topic-chat-ui.scss and topic-chat-prehide.scss.
+    // Do not inject another runtime override block; repeated style tags caused
+    // hard-to-debug stacking and old-rule leakage in previous builds.
   }
   function injectRoot() {
     if (byId(ROOT_ID)) return;
-    var html = "\n      <div id=\"__CP_TOPIC_ROOT_ID__\" data-v43-scroll-jump-media-cleanup=\"1\">\n        <div class=\"cp-bg\" id=\"cp-topic-bg\"></div><div class=\"cp-bg-mask\"></div>\n        <header class=\"cp-header\">\n          <button type=\"button\" class=\"cp-header-back\" id=\"cp-topic-back\" aria-label=\"返回\">‹</button>\n          <div class=\"cp-header-peer\"><div class=\"cp-peer-avatar\" id=\"cp-topic-avatar\"></div><div class=\"cp-header-center\"><div class=\"cp-topic-title\" id=\"cp-topic-title\">加载中...</div><div class=\"cp-topic-sub\" id=\"cp-topic-sub\"></div></div></div>\n          <div class=\"cp-header-actions\"><button id=\"cp-topic-settings\" type=\"button\" aria-label=\"设置\"><i class=\"fa fa-ellipsis-v\"></i></button></div>\n        </header>\n        <main class=\"cp-main\" id=\"cp-topic-main\">\n          <div class=\"cp-top-spinner\" id=\"cp-topic-load-more\"><button type=\"button\">加载更早消息</button></div>\n          <div id=\"cp-topic-msg-list\"></div><div id=\"cp-topic-empty\" class=\"cp-empty\" hidden>还没有消息，发第一句吧。</div><div id=\"cp-topic-bottom-anchor\"></div>\n        </main>\n        <button id=\"cp-topic-fab\" class=\"cp-fab-bottom\" type=\"button\">⌄<span id=\"cp-topic-badge\" class=\"cp-fab-badge\" hidden>0</span></button>\n        <button id=\"cp-topic-at-banner\" class=\"cp-at-banner\" type=\"button\" hidden><i class=\"fa fa-at\"></i><span id=\"cp-topic-at-banner-text\"></span><em>点击查看</em></button>\n        <footer class=\"cp-footer\" id=\"cp-topic-footer\">\n          <div class=\"cp-translate-shell\"><div class=\"cp-translate-bar\" id=\"cp-topic-translate-bar\">\n            <button class=\"cp-lang-chip\" id=\"cp-topic-src-lang-btn\" type=\"button\"></button><select class=\"cp-lang-select\" id=\"cp-topic-src-lang\"></select>\n            <button class=\"cp-swap-btn\" id=\"cp-topic-lang-swap\" type=\"button\">⇄</button>\n            <button class=\"cp-lang-chip\" id=\"cp-topic-tgt-lang-btn\" type=\"button\"></button><select class=\"cp-lang-select\" id=\"cp-topic-tgt-lang\"></select>\n            <button class=\"cp-translate-toggle\" id=\"cp-topic-send-translate-toggle\" type=\"button\"><span class=\"cp-trans-wa cp-trans-wa-diag\"><span class=\"cp-trans-wen\">文</span><span class=\"cp-trans-a\">A</span></span></button>\n          </div></div>\n          <div class=\"cp-status-line\" id=\"cp-topic-status-line\"></div>\n          <div id=\"cp-topic-quote-preview\" class=\"cp-quote-preview\" hidden><div class=\"cp-quote-preview-bar\"></div><div class=\"cp-quote-preview-body\"><b id=\"cp-topic-quote-name\"></b><span id=\"cp-topic-quote-text\"></span></div><button id=\"cp-topic-quote-close\" type=\"button\">×</button></div>\n          <div class=\"cp-toolbar\" id=\"cp-topic-toolbar\">\n            <div id=\"cp-topic-upload-progress-wrap\" class=\"cp-progress-wrap\" hidden><div id=\"cp-topic-upload-progress-bar\" class=\"cp-progress-bar\"></div></div>\n            <div id=\"cp-topic-toolbar-inputs\" style=\"display:flex;width:100%;align-items:flex-end;\">\n              <button id=\"cp-topic-plus\" class=\"cp-tool-btn\" type=\"button\">＋</button><div class=\"cp-input-box\"><textarea id=\"cp-topic-input\" rows=\"1\" placeholder=\"发送消息...\" autocomplete=\"off\"></textarea></div><button id=\"cp-topic-send\" class=\"cp-primary-btn\" type=\"button\"><span id=\"cp-topic-primary-icon\"><i class=\"fa fa-microphone\"></i></span></button>\n            </div>\n            <div id=\"cp-topic-rec-inline\" class=\"cp-rec-inline\" hidden>\n              <button id=\"cp-topic-rec-cancel\" class=\"cp-rec-btn-icon\" type=\"button\"><i class=\"fa fa-trash-o\" style=\"font-size:20px;\"></i></button><div class=\"cp-rec-vis\"><span class=\"cp-rec-dot\"></span><div class=\"cp-rec-dash\"></div><div class=\"cp-rec-bars\" id=\"cp-topic-rec-bars\"></div></div><button id=\"cp-topic-rec-pause\" class=\"cp-rec-btn-icon\" type=\"button\"><i class=\"fa fa-pause-circle\" style=\"font-size:22px;color:#0ea5e9;\"></i></button><span id=\"cp-topic-rec-time\" style=\"font-size:16px;color:#4b5563;font-family:sans-serif;font-weight:500;width:42px;text-align:center;\">0:00</span><button id=\"cp-topic-rec-send\" class=\"cp-rec-btn-icon\" type=\"button\"><i class=\"fa fa-paper-plane\" style=\"font-size:20px;color:#0ea5e9;\"></i></button>\n            </div>\n          </div>\n          <div class=\"cp-media-pop\" id=\"cp-topic-media-pop\" hidden><button id=\"cp-topic-pick-camera\" type=\"button\"><i class=\"fa fa-camera\"></i><span>拍照</span></button><button id=\"cp-topic-pick-album\" type=\"button\"><i class=\"fa fa-picture-o\"></i><span>相册图片/视频</span></button></div>\n        </footer>\n        <input id=\"cp-topic-media-file\" type=\"file\" accept=\"image/*,video/*\" multiple hidden><input id=\"cp-topic-camera-file\" type=\"file\" accept=\"image/*,video/*\" capture=\"environment\" hidden><input id=\"cp-topic-bg-file\" type=\"file\" accept=\"image/*\" hidden>\n        <div class=\"cp-toast\" id=\"cp-topic-toast\"></div>\n        <div class=\"cp-preview-mask\" id=\"cp-topic-preview-mask\" hidden><div id=\"cp-topic-preview-body\" class=\"cp-preview-body\"></div></div>\n        <div id=\"cp-topic-context-overlay\" class=\"cp-context-overlay\" hidden><div id=\"cp-topic-context-menu\" class=\"cp-context-menu\"></div></div>\n        <div id=\"cp-topic-lang-mask\" class=\"cp-lang-mask\" hidden><div class=\"cp-lang-panel\"><div class=\"cp-lang-title\" id=\"cp-topic-lang-title\">选择语言</div><div class=\"cp-lang-grid2\" id=\"cp-topic-lang-grid\"></div></div></div>\n        <div class=\"cp-modal-mask\" id=\"cp-topic-settings-mask\" hidden><div class=\"cp-modal\"><div class=\"cp-modal-head\" style=\"display:none\"><button class=\"cp-modal-close\" id=\"cp-topic-settings-close\" type=\"button\">×</button></div><div class=\"cp-modal-body\">\n          <div class=\"cp-section cp-section-flat\"><div class=\"cp-section-title\"><span>自动翻译</span></div><label class=\"cp-toggle-row\"><span>自动翻译对方消息</span><input id=\"cp-topic-auto-translate\" type=\"checkbox\"></label><div class=\"cp-section-title cp-subtitle\"><span>翻译接口</span></div><div class=\"cp-provider-tabs\"><button class=\"cp-provider-tab\" id=\"cp-topic-provider-google\" type=\"button\">机翻</button><button class=\"cp-provider-tab\" id=\"cp-topic-provider-ai\" type=\"button\">AI 翻译</button></div><label class=\"cp-field cp-google-field\"><span>翻译地址</span><input id=\"cp-topic-google-endpoint\" type=\"text\"></label><div id=\"cp-topic-ai-pane\" class=\"cp-ai-pane\"><label class=\"cp-field\"><span>AI 接口 URL</span><input id=\"cp-topic-ai-endpoint\" type=\"text\"></label><label class=\"cp-field\"><span>API Key</span><input id=\"cp-topic-ai-key\" type=\"password\"></label><label class=\"cp-field\"><span>模型</span><input id=\"cp-topic-ai-model\" type=\"text\"></label></div></div>\n          <div class=\"cp-section cp-section-flat\"><div class=\"cp-section-title\"><span>聊天背景</span></div><div class=\"cp-bg-actions\"><button class=\"cp-bg-btn\" id=\"cp-topic-bg-upload\" type=\"button\">选择本地背景</button><button class=\"cp-bg-btn\" id=\"cp-topic-bg-clear\" type=\"button\">清除背景</button></div><label class=\"cp-field\"><span>背景暗度 <em id=\"cp-topic-bg-op-val\">8%</em></span><input id=\"cp-topic-bg-opacity\" type=\"range\" min=\"0\" max=\"0.45\" step=\"0.01\"></label><label class=\"cp-field\"><span>毛玻璃模糊 <em id=\"cp-topic-bg-blur-val\">0px</em></span><input id=\"cp-topic-bg-blur\" type=\"range\" min=\"0\" max=\"18\" step=\"1\"></label></div>\n          <div class=\"cp-modal-actions\"><button class=\"cp-btn-secondary\" id=\"cp-topic-settings-cancel\" type=\"button\">关闭</button><button class=\"cp-btn-primary\" id=\"cp-topic-settings-save\" type=\"button\">保存</button></div>\n        </div></div></div>\n      </div>".replace("__CP_TOPIC_ROOT_ID__", ROOT_ID);
+    var html = `
+      <div id="${ROOT_ID}" data-v55-topic-actions="1">
+        <div class="cp-bg" id="cp-topic-bg"></div><div class="cp-bg-mask"></div>
+        <header class="cp-header">
+          <button type="button" class="cp-header-back" id="cp-topic-back" aria-label="返回">‹</button>
+          <div class="cp-header-peer"><div class="cp-peer-avatar" id="cp-topic-avatar"></div><div class="cp-header-center"><div class="cp-topic-title" id="cp-topic-title">加载中...</div><div class="cp-topic-sub" id="cp-topic-sub"></div></div></div>
+          <div class="cp-header-actions"><button id="cp-topic-settings" type="button" aria-label="设置"><i class="fa fa-ellipsis-v"></i></button></div>
+        </header>
+        <main class="cp-main" id="cp-topic-main">
+          <div class="cp-top-spinner" id="cp-topic-load-more"><button type="button">加载更早消息</button></div>
+          <div id="cp-topic-msg-list"></div><div id="cp-topic-empty" class="cp-empty" hidden>还没有消息，发第一句吧。</div><div id="cp-topic-bottom-anchor"></div>
+        </main>
+        <button id="cp-topic-fab" class="cp-fab-bottom" type="button">⌄<span id="cp-topic-badge" class="cp-fab-badge" hidden>0</span></button>
+        <button id="cp-topic-at-banner" class="cp-at-banner" type="button" hidden><i class="fa fa-at"></i><span id="cp-topic-at-banner-text"></span><em>点击查看</em></button>
+        <footer class="cp-footer" id="cp-topic-footer">
+          <div class="cp-translate-shell"><div class="cp-translate-bar" id="cp-topic-translate-bar">
+            <button class="cp-lang-chip" id="cp-topic-src-lang-btn" type="button"></button><select class="cp-lang-select" id="cp-topic-src-lang"></select>
+            <button class="cp-swap-btn" id="cp-topic-lang-swap" type="button">⇄</button>
+            <button class="cp-lang-chip" id="cp-topic-tgt-lang-btn" type="button"></button><select class="cp-lang-select" id="cp-topic-tgt-lang"></select>
+            <button class="cp-translate-toggle" id="cp-topic-send-translate-toggle" type="button"><span class="cp-trans-wa cp-trans-wa-diag"><span class="cp-trans-wen">文</span><span class="cp-trans-a">A</span></span></button>
+          </div></div>
+          <div class="cp-status-line" id="cp-topic-status-line"></div>
+          <div id="cp-topic-quote-preview" class="cp-quote-preview" hidden><div class="cp-quote-preview-bar"></div><div class="cp-quote-preview-body"><b id="cp-topic-quote-name"></b><span id="cp-topic-quote-text"></span></div><button id="cp-topic-quote-close" type="button">×</button></div>
+          <div class="cp-toolbar" id="cp-topic-toolbar">
+            <div id="cp-topic-upload-progress-wrap" class="cp-progress-wrap" hidden><div id="cp-topic-upload-progress-bar" class="cp-progress-bar"></div></div>
+            <div id="cp-topic-toolbar-inputs" style="display:flex;width:100%;align-items:flex-end;">
+              <button id="cp-topic-plus" class="cp-tool-btn" type="button">＋</button><div class="cp-input-box"><textarea id="cp-topic-input" rows="1" placeholder="发送消息..." autocomplete="off"></textarea></div><button id="cp-topic-send" class="cp-primary-btn" type="button"><span id="cp-topic-primary-icon"><i class="fa fa-microphone"></i></span></button>
+            </div>
+            <div id="cp-topic-rec-inline" class="cp-rec-inline" hidden>
+              <button id="cp-topic-rec-cancel" class="cp-rec-btn-icon" type="button"><i class="fa fa-trash-o" style="font-size:20px;"></i></button><div class="cp-rec-vis"><span class="cp-rec-dot"></span><div class="cp-rec-dash"></div><div class="cp-rec-bars" id="cp-topic-rec-bars"></div></div><button id="cp-topic-rec-pause" class="cp-rec-btn-icon" type="button"><i class="fa fa-pause-circle" style="font-size:22px;color:#0ea5e9;"></i></button><span id="cp-topic-rec-time" style="font-size:16px;color:#4b5563;font-family:sans-serif;font-weight:500;width:42px;text-align:center;">0:00</span><button id="cp-topic-rec-send" class="cp-rec-btn-icon" type="button"><i class="fa fa-paper-plane" style="font-size:20px;color:#0ea5e9;"></i></button>
+            </div>
+          </div>
+          <div class="cp-media-pop" id="cp-topic-media-pop" hidden><button id="cp-topic-pick-camera" type="button"><i class="fa fa-camera"></i><span>拍照</span></button><button id="cp-topic-pick-album" type="button"><i class="fa fa-picture-o"></i><span>相册图片/视频</span></button></div>
+        </footer>
+        <input id="cp-topic-media-file" type="file" accept="image/*,video/*" multiple hidden><input id="cp-topic-camera-file" type="file" accept="image/*,video/*" capture="environment" hidden><input id="cp-topic-bg-file" type="file" accept="image/*" hidden>
+        <div class="cp-toast" id="cp-topic-toast"></div>
+        <div class="cp-preview-mask" id="cp-topic-preview-mask" hidden><div id="cp-topic-preview-body" class="cp-preview-body"></div></div>
+        <div id="cp-topic-context-overlay" class="cp-context-overlay" hidden><div id="cp-topic-context-menu" class="cp-context-menu"></div></div>
+        <div id="cp-topic-lang-mask" class="cp-lang-mask" hidden><div class="cp-lang-panel"><div class="cp-lang-title" id="cp-topic-lang-title">选择语言</div><div class="cp-lang-grid2" id="cp-topic-lang-grid"></div></div></div>
+        <div class="cp-modal-mask" id="cp-topic-settings-mask" hidden><div class="cp-modal cp-settings-modal"><div class="cp-modal-head" style="display:none"><button class="cp-modal-close" id="cp-topic-settings-close" type="button">×</button></div><div class="cp-modal-body">
+          <section class="cp-settings-view" id="cp-topic-settings-main" data-settings-view="main">
+            <div class="cp-settings-title"><span>聊天室设置</span></div>
+            <div class="cp-settings-list">
+              <button class="cp-settings-row" id="cp-topic-open-translate-settings" type="button"><span><i class="fa fa-language"></i>翻译设置</span><em>语言、接口、自动翻译</em><b>›</b></button>
+            </div>
+            <div class="cp-section cp-section-flat"><div class="cp-section-title"><span>聊天背景</span></div><div class="cp-bg-actions"><button class="cp-bg-btn" id="cp-topic-bg-upload" type="button">选择本地背景</button><button class="cp-bg-btn" id="cp-topic-bg-clear" type="button">清除背景</button></div><label class="cp-field"><span>背景暗度 <em id="cp-topic-bg-op-val">8%</em></span><input id="cp-topic-bg-opacity" type="range" min="0" max="0.45" step="0.01"></label><label class="cp-field"><span>毛玻璃模糊 <em id="cp-topic-bg-blur-val">0px</em></span><input id="cp-topic-bg-blur" type="range" min="0" max="18" step="1"></label></div>
+            <div class="cp-section cp-section-flat"><div class="cp-section-title"><span>话题管理</span><em id="cp-topic-action-status">正在读取权限...</em></div><div class="cp-settings-list"><button class="cp-settings-row" id="cp-topic-pin-action" type="button" hidden><span><i class="fa fa-thumb-tack"></i>置顶聊天室</span><em></em></button><button class="cp-settings-row danger" id="cp-topic-delete-action" type="button" hidden><span><i class="fa fa-trash"></i>删除聊天室</span><em>管理员 / 版主</em></button><button class="cp-settings-row" id="cp-topic-report-action" type="button"><span><i class="fa fa-flag"></i>举报聊天室</span><em>提交给管理员处理</em></button></div></div>
+          </section>
+          <section class="cp-settings-view" id="cp-topic-settings-translate" data-settings-view="translate" hidden>
+            <div class="cp-settings-title"><button type="button" id="cp-topic-settings-back" class="cp-settings-back">‹</button><span>翻译设置</span></div>
+            <div class="cp-section cp-section-flat"><div class="cp-section-title"><span>自动翻译</span></div><label class="cp-toggle-row"><span>自动翻译对方消息</span><input id="cp-topic-auto-translate" type="checkbox"></label><div class="cp-section-title cp-subtitle"><span>翻译接口</span></div><div class="cp-provider-tabs"><button class="cp-provider-tab" id="cp-topic-provider-google" type="button">机翻</button><button class="cp-provider-tab" id="cp-topic-provider-ai" type="button">AI 翻译</button></div><label class="cp-field cp-google-field"><span>翻译地址</span><input id="cp-topic-google-endpoint" type="text"></label><div id="cp-topic-ai-pane" class="cp-ai-pane"><label class="cp-field"><span>AI 接口 URL</span><input id="cp-topic-ai-endpoint" type="text"></label><label class="cp-field"><span>API Key</span><input id="cp-topic-ai-key" type="password"></label><label class="cp-field"><span>模型</span><input id="cp-topic-ai-model" type="text"></label></div></div>
+          </section>
+          <div class="cp-modal-actions"><button class="cp-btn-secondary" id="cp-topic-settings-cancel" type="button">关闭</button><button class="cp-btn-primary" id="cp-topic-settings-save" type="button">保存</button></div>
+        </div></div></div>
+      </div>`;
     document.body.insertAdjacentHTML("beforeend", html);
     ["cp-topic-src-lang","cp-topic-tgt-lang"].forEach(function (id) {
       var el = byId(id);
@@ -1637,6 +1796,11 @@
     byId("cp-topic-settings-cancel").onclick = closeSettings;
     byId("cp-topic-settings-save").onclick = function () { if (saveSettingsFromUI()) { closeSettings(); toast("设置已保存"); } };
     byId("cp-topic-settings-mask").addEventListener("click", function (e) { if (e.target === this) closeSettings(); });
+    byId("cp-topic-open-translate-settings").onclick = function () { showSettingsView("translate"); };
+    byId("cp-topic-settings-back").onclick = function () { showSettingsView("main"); };
+    byId("cp-topic-pin-action").onclick = function () { runTopicAction("pin"); };
+    byId("cp-topic-delete-action").onclick = function () { runTopicAction("delete"); };
+    byId("cp-topic-report-action").onclick = reportTopic;
     byId("cp-topic-quote-close").onclick = hideQuoteBar;
     byId("cp-topic-provider-google").onclick = function () { if (forceAITranslateForCurrentUser()) { state.cfg.translateProvider = "ai"; toast("中国用户仅支持 AI 翻译"); } else state.cfg.translateProvider = "google"; saveJSON(KEY_CFG, state.cfg); syncTranslateUI(); };
     byId("cp-topic-provider-ai").onclick = function () { state.cfg.translateProvider = "ai"; saveJSON(KEY_CFG, state.cfg); syncTranslateUI(); };
@@ -3121,7 +3285,7 @@
       state.cfg = normalizeConfig(await loadJSON(KEY_CFG, DEFAULT_CFG)); if (!alive()) return;
       state.bg = await loadJSON(KEY_BG, DEFAULT_BG); if (!alive()) return;
       await loadUserCacheLocal(); if (!alive()) return;
-      injectStyle(); injectRoot(); bindUI(); applyBackground(); renderRecBars(); document.body.classList.add(BODY_CLASS, "cp-topic-chat-mounted");
+      injectStyle(); injectRoot(); bindUI(); applyBackground(); renderRecBars(); document.documentElement.classList.remove("cp-topic-chat-booting"); document.body.classList.add(BODY_CLASS, "cp-topic-chat-mounted");
       state.mounted = true; initLazyObserver(); updateViewport(); updateFooterHeight(); updateHeader();
       await loadCacheDbAndMerge(); if (!alive()) return;
       queueResolveUsersFromMessages(state.messages); queueRender("bottom");
@@ -3141,7 +3305,7 @@
   function unmount() {
     state.mountSeq++;
     state.mounting = false;
-    if (!state.mounted) { var r0 = byId(ROOT_ID); if (r0) r0.remove(); document.body.classList.remove("cp-topic-chat-mounted"); return; }
+    if (!state.mounted) { var r0 = byId(ROOT_ID); if (r0) r0.remove(); document.documentElement.classList.remove("cp-topic-chat-booting"); document.body.classList.remove("cp-topic-chat-mounted"); return; }
     saveCacheDb(); stopPresence(); stopNotifyPolling();
     if (state.uiAbort) { try { state.uiAbort.abort(); } catch (_) {} state.uiAbort = null; }
     clearTimeout(state.userBatchTimer); clearTimeout(state.visibleNoticeTimer); clearTimeout(state.lazyObserveTimer); clearTimeout(cacheTimer); clearTimeout(footerTimer); clearTimeout(state.bootTimer);
@@ -3161,7 +3325,7 @@
       });
       root.remove();
     }
-    document.body.classList.remove(BODY_CLASS, "cp-topic-chat-on-v13", "cp-topic-chat-on-v14", "cp-topic-chat-on-v18", "cp-topic-chat-on-v20", "cp-topic-chat-mounted", "cp-topic-has-bg");
+    document.documentElement.classList.remove("cp-topic-chat-booting"); document.body.classList.remove(BODY_CLASS, "cp-topic-chat-on-v13", "cp-topic-chat-on-v14", "cp-topic-chat-on-v18", "cp-topic-chat-on-v20", "cp-topic-chat-mounted", "cp-topic-has-bg");
     state.mounted = false;
   }
   function boot() {
