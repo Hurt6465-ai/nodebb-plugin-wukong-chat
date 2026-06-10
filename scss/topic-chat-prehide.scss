@@ -1,11 +1,11 @@
-/* CP Wukong Topic Chat prehide - v46
+/* CP Wukong Topic Chat prehide - v55
  * Purpose: hide the original NodeBB topic only for the target room category
  * before topic-chat.js mounts the chat shell. Keep a short fallback so a JS
  * error does not leave the topic invisible forever.
  */
 
 $cp-topic-category-id: 7 !default;
-$cp-prehide-timeout: 1.8s !default;
+$cp-prehide-timeout: 4s !default;
 
 @mixin cp-topic-prehide-target($cid) {
   body.page-topic.page-topic-category-#{$cid}:not(.cp-topic-chat-mounted) [component="topic"],
@@ -39,6 +39,13 @@ $cp-prehide-timeout: 1.8s !default;
 }
 
 @include cp-topic-prehide-target($cp-topic-category-id);
+
+html.cp-topic-chat-booting body.page-topic.page-topic-category-#{$cp-topic-category-id}:not(.cp-topic-chat-mounted) [component="topic"],
+html.cp-topic-chat-booting body.page-topic.page-topic-category-#{$cp-topic-category-id}:not(.cp-topic-chat-mounted) .topic,
+html.cp-topic-chat-booting body.page-topic.page-topic-category-#{$cp-topic-category-id}:not(.cp-topic-chat-mounted) .posts {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 
 body.cp-topic-chat-mounted::before,
 body.cp-topic-chat-on-v20::before {
