@@ -1,7 +1,7 @@
 {
   "name": "nodebb-plugin-wukong-chat",
-  "version": "0.19.0",
-  "description": "悟空独立聊天窗口、会话列表、一对一 WebRTC 通话和板块话题群聊核心后端",
+  "version": "0.19.1",
+  "description": "悟空独立聊天窗口、会话列表、一对一 WebRTC 通话和板块话题群聊核心后端（v55 聊天室设置与管理）",
   "main": "library.js",
   "keywords": [
     "nodebb",
