@@ -7,14 +7,37 @@
 ## 安装
 
 ```bash
-cd /path/to/nodebb/node_modules
-unzip /path/to/nodebb-plugin-wukong-chat-v2.zip
+docker update --restart=no nodebb
 
-cd /path/to/nodebb
-npm install ./node_modules/nodebb-plugin-wukong-chat
-./nodebb activate nodebb-plugin-wukong-chat
-./nodebb build
-./nodebb restart
+if docker exec nodebb sh -lc '
+set -e
+cd /usr/src/app
+
+if [ -f /opt/config/config.json ]; then
+  CFG=/opt/config/config.json
+elif [ -f /usr/src/app/config.json ]; then
+  CFG=/usr/src/app/config.json
+else
+  echo "找不到 NodeBB config.json，停止执行，避免启动 web installer。"
+  exit 1
+fi
+
+echo "使用配置文件: $CFG"
+
+npm uninstall nodebb-plugin-wukong-chat || true
+npm cache clean --force
+
+npm install --legacy-peer-deps --force https://github.com/Hurt6465-ai/nodebb-plugin-wukong-chat/archive/refs/heads/main.tar.gz
+
+./nodebb build --config="$CFG"
+'; then
+  docker restart nodebb
+  docker update --restart=always nodebb
+  docker logs --tail 120 -f nodebb
+else
+  echo "插件安装或 NodeBB build 失败，未重启 nodebb。"
+  docker update --restart=always nodebb
+fi
 ```
 
 也可以在后台插件页启用。
