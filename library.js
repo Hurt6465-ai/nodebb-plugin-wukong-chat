@@ -56,11 +56,26 @@ try {
   console.warn('[wukong-chat] privileges module unavailable:', err.message);
 }
 
+let topicTools = null;
+try {
+  topicTools = require.main.require('./src/topics/tools');
+} catch (err) {
+  // Older/newer NodeBB builds expose topic tools differently; fallbacks below handle this.
+}
+
+let flags = null;
+try {
+  flags = require.main.require('./src/flags');
+} catch (err) {
+  // Report route stores a local report record when NodeBB flags API is unavailable.
+}
+
 const plugin = {};
 
 const PLUGIN_ROOT = __dirname;
 const ACTIVITY_FILE = path.join(PLUGIN_ROOT, 'topic-chat-activity.json');
 const NOTIFY_FILE = path.join(PLUGIN_ROOT, 'topic-chat-notify.json');
+const TOPIC_REPORTS_FILE = path.join(PLUGIN_ROOT, 'topic-chat-reports.json');
 const CONVERSATION_STATE_FILE = path.join(PLUGIN_ROOT, 'wukong-conversations-state.json');
 
 const DEFAULT_FORUM_URL = 'https://bbs.886.best';
@@ -525,19 +540,20 @@ function normalizeActivityTimestampMs(value) {
 function topicRoomLastActivityAt(room) {
   if (!room || typeof room !== 'object') return 0;
 
-  // Physical topic cleanup is based on real discussion/chat activity, not on
-  // local cache refresh time. Do not use updated_at here, because sync jobs touch
-  // it even when nobody replied or chatted.
+  // Physical topic cleanup means: delete after 3 hours with no Wukong chat
+  // activity. A real chat message writes last_chat_at. If no chat has happened,
+  // fall back to the topic creation time. Do not use topic_lastposttime here,
+  // because a native NodeBB reply/edit must not silently extend chat room life.
+  const chatTs = normalizeActivityTimestampMs(room.last_chat_at || room.lastChatAt);
+  if (chatTs) return chatTs;
+
   const candidates = [
-    room.last_chat_at,
-    room.lastChatAt,
-    room.topic_lastposttime,
-    room.lastposttime,
-    room.lastPostTime,
-    room.ts,
+    room.topic_timestamp,
+    room.topicTimestamp,
     room.timestamp,
     room.created_at,
     room.createdAt,
+    room.ts,
   ];
 
   for (const value of candidates) {
@@ -555,6 +571,222 @@ function isExpiredTopicConversation(room, nowMs = Date.now()) {
   const ts = topicRoomLastActivityAt(room);
   if (!ts) return false;
   return nowMs - ts > ttl;
+}
+
+function normalizeTopicActionTid(value) {
+  const tid = String(value || '').trim();
+  return /^\d+$/.test(tid) ? tid : '';
+}
+
+function parsePinnedValue(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || '').trim());
+}
+
+async function getTopicPinState(tid) {
+  tid = normalizeTopicActionTid(tid);
+  if (!tid || !db || typeof db.getObjectFields !== 'function') return { pinned: false, pinExpiry: 0 };
+  try {
+    const fields = await db.getObjectFields(`topic:${tid}`, ['pinned', 'pinExpiry', 'pinned_at', 'pinnedAt']);
+    return {
+      pinned: parsePinnedValue(fields && fields.pinned),
+      pinExpiry: Number(fields && fields.pinExpiry || 0) || 0,
+      pinnedAt: Number(fields && (fields.pinned_at || fields.pinnedAt) || 0) || 0,
+    };
+  } catch (err) {
+    return { pinned: false, pinExpiry: 0 };
+  }
+}
+
+async function isGlobalAdmin(uid) {
+  uid = String(uid || '').trim();
+  if (!uid) return false;
+  try {
+    if (user && typeof user.isAdministrator === 'function' && await user.isAdministrator(uid)) return true;
+  } catch (err) {}
+  try {
+    if (user && typeof user.isAdmin === 'function' && await user.isAdmin(uid)) return true;
+  } catch (err) {}
+  try {
+    if (user && typeof user.getUserFields === 'function') {
+      const fields = await user.getUserFields(uid, ['administrator', 'admin', 'isAdmin']);
+      if (fields && (parsePinnedValue(fields.administrator) || parsePinnedValue(fields.admin) || parsePinnedValue(fields.isAdmin))) return true;
+    }
+  } catch (err) {}
+  return Number(uid) === 1;
+}
+
+async function canManageTopic(uid, tid) {
+  uid = String(uid || '').trim();
+  tid = normalizeTopicActionTid(tid);
+  if (!uid || !tid) return false;
+  if (await isGlobalAdmin(uid)) return true;
+  const topic = await getTopicPublic(tid);
+  const cid = topic && topic.cid ? String(topic.cid) : '';
+
+  const categoryChecks = ['moderate', 'admin', 'topics:delete', 'topics:pin', 'topics:edit'];
+  if (cid && privileges && privileges.categories && typeof privileges.categories.can === 'function') {
+    for (const name of categoryChecks) {
+      try { if (await privileges.categories.can(name, cid, Number(uid))) return true; } catch (err) {}
+      try { if (await privileges.categories.can(name, Number(cid), Number(uid))) return true; } catch (err) {}
+    }
+  }
+
+  const topicChecks = ['topics:delete', 'topics:pin', 'topics:edit', 'moderate'];
+  if (privileges && privileges.topics && typeof privileges.topics.can === 'function') {
+    for (const name of topicChecks) {
+      try { if (await privileges.topics.can(name, tid, Number(uid))) return true; } catch (err) {}
+      try { if (await privileges.topics.can(name, Number(tid), Number(uid))) return true; } catch (err) {}
+    }
+  }
+
+  return false;
+}
+
+async function getTopicActionState(current, tid) {
+  tid = normalizeTopicActionTid(tid);
+  if (!current || !current.uid || !tid) return null;
+  const topic = await getTopicPublic(tid);
+  if (!topic) return null;
+  const pin = await getTopicPinState(tid);
+  const canManage = await canManageTopic(current.uid, tid);
+  return {
+    ok: true,
+    tid,
+    cid: topic.cid || '',
+    title: topic.title || '',
+    pinned: !!pin.pinned,
+    pinExpiry: pin.pinExpiry || 0,
+    canManage: !!canManage,
+    canPin: !!canManage,
+    canDelete: !!canManage,
+    canReport: true,
+  };
+}
+
+async function callTopicTool(methods, tid, uid) {
+  const tried = [];
+  for (const item of methods) {
+    const target = item && item[0];
+    const method = item && item[1];
+    const args = item && item[2];
+    if (!target || typeof target[method] !== 'function') continue;
+    tried.push(method);
+    try {
+      const out = await target[method].apply(target, args);
+      return { ok: true, method, result: out };
+    } catch (err) {
+      tried.push(`${method}:${err.message}`);
+    }
+  }
+  return { ok: false, tried };
+}
+
+async function setTopicPinnedState(tid, pinned, uid) {
+  tid = normalizeTopicActionTid(tid);
+  uid = String(uid || '').trim();
+  if (!tid) return { ok: false, error: 'invalid_tid' };
+  const tools = topicTools || (topics && topics.tools) || null;
+  const methods = pinned ? [
+    [tools, 'pin', [tid, uid]],
+    [tools, 'pin', [Number(tid), Number(uid)]],
+    [topics, 'pin', [tid, uid]],
+    [topics, 'pinTopic', [tid, uid]],
+    [topics, 'setPinned', [tid, true, uid]],
+  ] : [
+    [tools, 'unpin', [tid, uid]],
+    [tools, 'unpin', [Number(tid), Number(uid)]],
+    [topics, 'unpin', [tid, uid]],
+    [topics, 'unpinTopic', [tid, uid]],
+    [topics, 'setPinned', [tid, false, uid]],
+  ];
+  const called = await callTopicTool(methods, tid, uid);
+  if (called.ok) return { ok: true, pinned: !!pinned, method: called.method };
+
+  if (topics && typeof topics.setTopicField === 'function') {
+    await topics.setTopicField(tid, 'pinned', pinned ? 1 : 0);
+    return { ok: true, pinned: !!pinned, method: 'topics.setTopicField' };
+  }
+
+  if (db && typeof db.setObjectField === 'function') {
+    await db.setObjectField(`topic:${tid}`, 'pinned', pinned ? 1 : 0);
+    if (typeof db.setObjectField === 'function') await db.setObjectField(`topic:${tid}`, 'pinExpiry', 0);
+    return { ok: true, pinned: !!pinned, method: 'db.setObjectField' };
+  }
+
+  return { ok: false, error: 'no_pin_api', tried: called.tried };
+}
+
+function removeTopicConversationState(tid) {
+  tid = normalizeTopicActionTid(tid);
+  if (!tid) return { removedRooms: 0 };
+  const store = readConversationState();
+  const key = conversationRoomKey(`${TOPIC_CHANNEL_PREFIX}${tid}`, TOPIC_CHANNEL_TYPE);
+  let removedRooms = 0;
+  const globalRooms = getConversationGlobalRooms(store);
+  if (globalRooms[key]) { delete globalRooms[key]; removedRooms += 1; }
+  for (const userState of Object.values(store.users || {})) {
+    if (!userState || typeof userState !== 'object') continue;
+    if (userState.rooms && userState.rooms[key]) { delete userState.rooms[key]; removedRooms += 1; }
+    if (userState.readAt) delete userState.readAt[key];
+    if (userState.readVersions) delete userState.readVersions[key];
+  }
+  writeConversationState(store);
+  return { removedRooms };
+}
+
+async function deleteTopicByModerator(tid, actorUid) {
+  tid = normalizeTopicActionTid(tid);
+  if (!tid) return { ok: false, error: 'invalid_tid' };
+  const result = await deleteNodeBBTopicForExpiredConversation({ tid, uid: actorUid });
+  if (result && result.ok) {
+    const cleanup = removeTopicConversationState(tid);
+    return { ...result, cleanup };
+  }
+  if (db && typeof db.setObjectField === 'function') {
+    await db.setObjectField(`topic:${tid}`, 'deleted', 1);
+    const cleanup = removeTopicConversationState(tid);
+    return { ok: true, tid, mode: 'db.deleted', fallbackFrom: result, cleanup };
+  }
+  return result || { ok: false, error: 'delete_failed' };
+}
+
+function readTopicReports() {
+  const data = readJsonFile(TOPIC_REPORTS_FILE, []);
+  return Array.isArray(data) ? data : [];
+}
+
+function writeTopicReports(list) {
+  writeJsonFile(TOPIC_REPORTS_FILE, (list || []).slice(-5000));
+}
+
+async function createTopicReportRecord(tid, reporter, reason) {
+  tid = normalizeTopicActionTid(tid);
+  const item = {
+    id: `r_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+    type: 'topic',
+    tid,
+    uid: String(reporter && reporter.uid || ''),
+    username: String(reporter && (reporter.displayname || reporter.username) || ''),
+    reason: String(reason || '').trim().slice(0, 500),
+    ts: Date.now(),
+    status: 'open',
+  };
+  const list = readTopicReports();
+  list.push(item);
+  writeTopicReports(list);
+
+  // Optional best-effort bridge to NodeBB flags. We keep the local report either way
+  // so this route is stable across NodeBB versions.
+  let nodebbFlag = { skipped: true };
+  try {
+    if (flags && typeof flags.create === 'function') {
+      nodebbFlag = await flags.create('topic', tid, item.uid, item.reason);
+    }
+  } catch (err) {
+    nodebbFlag = { ok: false, error: err.message };
+  }
+
+  return { ok: true, report: item, nodebbFlag };
 }
 
 
@@ -757,6 +989,8 @@ function topicRoomFromPublicTopic(topic, oldRoom) {
     wukong_lang: topic.wukong_lang || oldRoom.wukong_lang || '',
     ts: Math.max(Number(oldRoom.ts || 0), topicTs),
     topic_lastposttime: topicTs,
+    topic_timestamp: Number(topic.timestamp || oldRoom.topic_timestamp || oldRoom.timestamp || topicTs || Date.now()),
+    created_at: Number(oldRoom.created_at || oldRoom.createdAt || topic.timestamp || topicTs || Date.now()),
     text: conversationPayloadText(oldRoom.text || ''),
     last_from_uid: String(oldRoom.last_from_uid || topic.uid || ''),
     last_from_name: String(oldRoom.last_from_name || (topic.poster && (topic.poster.displayname || topic.poster.username)) || ''),
@@ -1161,6 +1395,8 @@ async function upsertConversationForUser(uid, room, currentUser = null) {
       text: room.text || globalOld.text || '',
       ts: roomTs || Number(globalOld.ts || 0) || Date.now(),
       last_chat_at: roomTs || Date.now(),
+      topic_timestamp: Number(globalOld.topic_timestamp || room.topic_timestamp || room.timestamp || globalOld.timestamp || roomTs || Date.now()),
+      created_at: Number(globalOld.created_at || globalOld.createdAt || room.created_at || room.createdAt || room.timestamp || roomTs || Date.now()),
       unread: 0,
       last_from_uid: room.last_from_uid || globalOld.last_from_uid || '',
       last_from_name: senderName || globalOld.last_from_name || '',
@@ -1855,6 +2091,62 @@ function registerApiRoutes(router, middleware) {
   router.get('/nodebb-users', ensureLogin, asyncHandler(usersBatchHandler));
   router.get('/bridge/nodebb-user/:uid', ensureLogin, asyncHandler(singleUserHandler));
   router.get('/bridge/nodebb-users', ensureLogin, asyncHandler(usersBatchHandler));
+
+  router.get(`${api}/topic-actions`, ensureLogin, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ ok: false, error: 'unauthorized' });
+    const tid = normalizeTopicActionTid(req.query.tid || req.query.topic_id || req.query.topicId);
+    if (!tid) return res.status(400).json({ ok: false, error: 'invalid_tid' });
+    const state = await getTopicActionState(current, tid);
+    if (!state) return res.status(404).json({ ok: false, error: 'topic_not_found' });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(state);
+  }));
+
+  router.post(`${api}/topics/:tid/pin`, ensureLogin, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ ok: false, error: 'unauthorized' });
+    const tid = normalizeTopicActionTid(req.params.tid);
+    if (!tid) return res.status(400).json({ ok: false, error: 'invalid_tid' });
+    if (!await canManageTopic(current.uid, tid)) return res.status(403).json({ ok: false, error: 'no_privilege' });
+    const result = await setTopicPinnedState(tid, true, current.uid);
+    const state = await getTopicActionState(current, tid);
+    res.json({ ok: !!result.ok, action: 'pin', result, state });
+  }));
+
+  router.post(`${api}/topics/:tid/unpin`, ensureLogin, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ ok: false, error: 'unauthorized' });
+    const tid = normalizeTopicActionTid(req.params.tid);
+    if (!tid) return res.status(400).json({ ok: false, error: 'invalid_tid' });
+    if (!await canManageTopic(current.uid, tid)) return res.status(403).json({ ok: false, error: 'no_privilege' });
+    const result = await setTopicPinnedState(tid, false, current.uid);
+    const state = await getTopicActionState(current, tid);
+    res.json({ ok: !!result.ok, action: 'unpin', result, state });
+  }));
+
+  router.post(`${api}/topics/:tid/delete`, ensureLogin, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ ok: false, error: 'unauthorized' });
+    const tid = normalizeTopicActionTid(req.params.tid);
+    if (!tid) return res.status(400).json({ ok: false, error: 'invalid_tid' });
+    if (!await canManageTopic(current.uid, tid)) return res.status(403).json({ ok: false, error: 'no_privilege' });
+    const result = await deleteTopicByModerator(tid, current.uid);
+    res.json({ ok: !!(result && result.ok), action: 'delete', result });
+  }));
+
+  router.post(`${api}/topics/:tid/report`, ensureLogin, asyncHandler(async (req, res) => {
+    const current = await getCurrentUser(req);
+    if (!current) return res.status(401).json({ ok: false, error: 'unauthorized' });
+    const tid = normalizeTopicActionTid(req.params.tid);
+    if (!tid) return res.status(400).json({ ok: false, error: 'invalid_tid' });
+    const topic = await getTopicPublic(tid);
+    if (!topic) return res.status(404).json({ ok: false, error: 'topic_not_found' });
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const reason = firstNonEmpty(body.reason, body.text, '用户举报聊天室');
+    const result = await createTopicReportRecord(tid, current, reason);
+    res.json({ ok: true, action: 'report', result });
+  }));
 
   async function historyHandler(req, res) {
     const current = await getCurrentUser(req);
